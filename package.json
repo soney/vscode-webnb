@@ -3,6 +3,12 @@
     "displayName": "Web Notebook",
     "description": "A notebook renderer for basic web code (HTML/CSS/JavaScript)",
     "version": "0.0.1",
+    "publisher": "oney",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/soney/vscode-webnb.git"
+    },
+    "license": "MIT",
     "engines": {
         "vscode": "^1.97.0"
     },

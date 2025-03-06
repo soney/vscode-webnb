@@ -1,4 +1,4 @@
-# practical-javascript-reading-notebook README
+# README
 
 ⚠️ Work-in-progress starter code for custom notebook renderers in VS Code. Expect this to change as notebooks matures. ⚠️
 
