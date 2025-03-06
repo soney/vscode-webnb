@@ -49,7 +49,8 @@ const ALWAYS_RECOMPILIE_VSCODE = false;
         await fs.promises.copyFile(path.resolve(rootDir, "workbench.ts"), path.resolve(fullVSCodeDir, "src", "vs", "code", "browser", "workbench", "workbench.ts"));
 
         // await exec(`${yarnPath} --cwd ${fullVSCodeDir} gulp vscode-web-min`);
-        await exec(`npm run gulp vscode-web-min`);
+        // await exec(`npm run gulp vscode-web-min`);
+        await exec(`npm run compile-web`);
 
         if(await deleteDirectoryIfExists(fullVSCodeDistDir)) { console.log(`Found directory ${fullVSCodeDistDir}; deleting`); }
 

@@ -11,3 +11,5 @@ vsc-extension-quickstart.md
 **/*.ts
 **/*.tsbuildinfo
 **/.vscode-test.*
+**/vscode-web
+*.graffle
