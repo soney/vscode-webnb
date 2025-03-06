@@ -13,7 +13,7 @@ const args = process.argv.slice(2);
 const ALWAYS_RECOMPILIE_VSCODE = false;
 
 (async function() {
-    const vscodeVersion = "1.97.2";
+    const vscodeVersion = "1.98.0";
     const vscodeDir = `vscode-source-${vscodeVersion}`;
     const vscodeDistDir = `vscode-web-dist`;
     const tempDir = os.tmpdir();
@@ -50,7 +50,8 @@ const ALWAYS_RECOMPILIE_VSCODE = false;
 
         // await exec(`${yarnPath} --cwd ${fullVSCodeDir} gulp vscode-web-min`);
         // await exec(`npm run gulp vscode-web-min`);
-        await exec(`npm run compile-web`);
+        // await exec(`npm run compile-web`);
+        await exec(`npm run gulp vscode-web`);
 
         if(await deleteDirectoryIfExists(fullVSCodeDistDir)) { console.log(`Found directory ${fullVSCodeDistDir}; deleting`); }
 
