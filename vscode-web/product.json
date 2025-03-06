@@ -1,0 +1,27 @@
+{
+	"productConfiguration": {
+		"nameShort": "Code Web",
+		"nameLong": "Code Web",
+		"applicationName": "code-web",
+		"dataFolderName": ".vscode-web",
+		"version": "1.79.0",
+		"extensionEnabledApiProposals": {
+			"vscode.vscode-web-playground": [
+				"fileSearchProvider",
+				"textSearchProvider"
+			]
+		}
+	},
+	"folderUri": {
+		"scheme": "gsfs",
+		"path": "/samples"
+	},
+	"additionalBuiltinExtensions": [ {
+			"scheme": "https",
+			"path": "/gamma-samples-extension"
+		}, {
+			"scheme": "https",
+			"path": "/gamma"
+		}
+	]
+}

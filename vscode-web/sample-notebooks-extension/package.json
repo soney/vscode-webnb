@@ -1,0 +1,86 @@
+{
+	"name": "vscode-gsfs",
+	"displayName": "GSFS - a file system provider sample",
+	"description": "Showcase for the file system provider API, also useful for testing again document that are not on disk.",
+	"version": "0.0.3",
+	"publisher": "vscode-samples",
+	"private": true,
+	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/Microsoft/vscode-extension-samples"
+	},
+	"engines": {
+		"vscode": "^1.66.0"
+	},
+	"categories": [
+		"Other"
+	],
+	"activationEvents": [
+		"onFileSystem:gsfs"
+	],
+	"main": "./dist/extension",
+	"browser": "./dist/extension",
+	"contributes": {
+		"commands": [
+			{
+				"command": "gsfs.workspaceInit",
+				"title": "Setup Workspace",
+				"category": "GSFS"
+			},
+			{
+				"command": "gsfs.init",
+				"title": "Create Files",
+				"category": "GSFS"
+			},
+			{
+				"command": "gsfs.reset",
+				"title": "Delete Files",
+				"category": "GSFS"
+			},
+			{
+				"command": "gsfs.deleteFile",
+				"title": "Delete \"file.txt\"",
+				"category": "GSFS"
+			},
+			{
+				"command": "gsfs.addFile",
+				"title": "Add \"file.txt\"",
+				"category": "GSFS"
+			}
+		],
+		"menus": {
+			"commandPalette": [
+				{
+					"command": "gsfs.init",
+					"when": "workbenchState == workspace"
+				},
+				{
+					"command": "gsfs.reset",
+					"when": "workbenchState == workspace"
+				},
+				{
+					"command": "gsfs.deleteFile",
+					"when": "workbenchState == workspace"
+				},
+				{
+					"command": "gsfs.addFile",
+					"when": "workbenchState == workspace"
+				},
+				{
+					"command": "gsfs.workspaceInit",
+					"when": "workbenchState != workspace"
+				}
+			]
+		}
+	},
+	"scripts": {
+		"compile": "npx webpack --config ./extension.webpack.config.js --mode production"
+	},
+	"devDependencies": {
+		"@types/node": "^16.18.34",
+		"@types/vscode": "^1.73.0",
+		"eslint": "^8.26.0",
+		"typescript": "^5.1.3"
+	}
+}
