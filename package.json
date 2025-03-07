@@ -10,7 +10,7 @@
     },
     "license": "MIT",
     "engines": {
-        "vscode": "^1.73.0"
+        "vscode": "^1.98.0"
     },
     "keywords": [
         "notebookRenderer",
@@ -56,6 +56,12 @@
                     "dark": "./icons/webnb-icon.svg"
                 }
             }
+        ],
+        "commands": [
+            {
+                "command": "webnb.focusSingleFile",
+                "title": "Focus on a single file"
+            }
         ]
     },
     "scripts": {
@@ -72,7 +78,7 @@
     "devDependencies": {
         "@types/mocha": "^10.0.10",
         "@types/node": "20.x",
-        "@types/vscode": "^1.97.0",
+        "@types/vscode": "^1.98.0",
         "@types/vscode-notebook-renderer": "^1.72.3",
         "@types/webpack-env": "^1.18.8",
         "@typescript-eslint/eslint-plugin": "^8.22.0",
