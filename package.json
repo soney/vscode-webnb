@@ -2,7 +2,7 @@
     "name": "web-notebook",
     "displayName": "Web Notebook",
     "description": "A notebook renderer for basic web code (HTML/CSS/JavaScript)",
-    "version": "0.0.1",
+    "version": "0.0.2",
     "publisher": "oney",
     "repository": {
         "type": "git",
@@ -10,7 +10,7 @@
     },
     "license": "MIT",
     "engines": {
-        "vscode": "^1.98.0"
+        "vscode": "^1.97.2"
     },
     "keywords": [
         "notebookRenderer",
@@ -19,7 +19,9 @@
     "categories": [
         "Other"
     ],
-    "activationEvents": [],
+    "activationEvents": [
+        "onStartupFinished"
+    ],
     "main": "./out/extension/extension.js",
     "browser": "./out/extension/extension.web.js",
     "contributes": {
@@ -62,7 +64,17 @@
                 "command": "webnb.focusSingleFile",
                 "title": "Focus on a single file"
             }
-        ]
+        ],
+        "configuration": {
+            "title": "Web-Notebook",
+            "properties": {
+                "webnb.focusSingleFileAutomatically": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Auto-focus whenever opening a directory with a single .webnb file"
+                }
+            }
+        }
     },
     "scripts": {
         "vscode:prepublish": "npm run compile",
@@ -73,12 +85,12 @@
         "pretest": "webpack --mode development && npm run lint",
         "in-browser": "vscode-test-web --browserType=chromium --extensionDevelopmentPath=. ./samplenotebooks",
         "test": "vscode-test",
-        "gen-vsix": "npx vsce package"
+        "gen-vsix": "npx vsce package -o web-notebook.vsix"
     },
     "devDependencies": {
         "@types/mocha": "^10.0.10",
         "@types/node": "20.x",
-        "@types/vscode": "^1.98.0",
+        "@types/vscode": "^1.97.0",
         "@types/vscode-notebook-renderer": "^1.72.3",
         "@types/webpack-env": "^1.18.8",
         "@typescript-eslint/eslint-plugin": "^8.22.0",
