@@ -132,3 +132,5 @@ dist
 .DS_Store
 *.vsix
 .vscode-test-web
+
+.vscode-test
