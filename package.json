@@ -68,11 +68,6 @@
         "configuration": {
             "title": "Web-Notebook",
             "properties": {
-                "webnb.focusSingleFileAutomatically": {
-                    "type": "boolean",
-                    "default": false,
-                    "description": "Auto-focus whenever opening a directory with a single .webnb file"
-                }
             }
         }
     },

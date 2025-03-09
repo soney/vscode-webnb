@@ -11,38 +11,6 @@ declare const window: any;
 export function activate(context: vscode.ExtensionContext) {
     activateSerializer(context);
     activateKernel(context);
-
-    const config = vscode.workspace.getConfiguration("webnb");
-    const autoFocus = config.get<boolean>("focusSingleFileAutomatically", false);
-
-    if(autoFocus) {
-        async function onDidChangeWorkspaceFolders() {
-            const webnbFiles = await getWebNBFilesInCurrentDirectory();
-            if(webnbFiles.length === 1) {
-                // open the first file
-                const uri = vscode.Uri.joinPath(vscode.workspace.workspaceFolders![0].uri, webnbFiles[0]);
-                // open the file
-                vscode.commands.executeCommand('vscode.open', uri);
-                // await vscode.workspace.openNotebookDocument(uri);
-
-                // hide the tab bar
-                // vscode.commands.executeCommand('workbench.action.toggleEditorVisibility');
-                // enter zen mode
-                // vscode.commands.executeCommand('workbench.action.toggleZenMode');
-            }
-        }
-        // if a folder is already opened
-        if(vscode.workspace.workspaceFolders) {
-            onDidChangeWorkspaceFolders();
-        } else {
-            vscode.workspace.onDidChangeWorkspaceFolders(onDidChangeWorkspaceFolders);
-        }
-    }
-
-    context.subscriptions.push(
-        vscode.commands.registerCommand('webnb.focusSingleFile', async () => {
-        })
-    );
 }
 
 // This method is called when your extension is deactivated
