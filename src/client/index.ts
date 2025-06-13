@@ -1,6 +1,7 @@
 import { render } from './render';
 import errorOverlay from 'vscode-notebook-error-overlay';
 import type { ActivationFunction } from 'vscode-notebook-renderer';
+import styleCss from './style.css';
 
 // Fix the public path so that any async import()'s work as expected.
 declare const __webpack_relative_entrypoint_to_root__: string;
@@ -16,11 +17,18 @@ __webpack_public_path__ = new URL(scriptUrl.replace(/[^/]+$/, '') + __webpack_re
 // ----------------------------------------------------------------------------
 
 export const activate: ActivationFunction = (context) => {
+    console.log(styleCss);
+    const style = document.createElement('style');
+	style.setAttribute('type', 'text/css');
+	style.textContent = styleCss;
+
     return {
         renderOutputItem(outputItem, element) {
             let shadow = element.shadowRoot;
             if (!shadow) {
                 shadow = element.attachShadow({ mode: 'open' });
+                shadow.append(style.cloneNode(true));
+
                 const root = document.createElement('div');
                 root.id = 'root';
                 shadow.append(root);
@@ -30,10 +38,12 @@ export const activate: ActivationFunction = (context) => {
             errorOverlay.wrap(root, () => {
                 root.innerHTML = '';
 
+                const feedback = document.createElement('div');
+                feedback.classList.add('feedback');
                 const node = document.createElement('div');
-                root.appendChild(node);
+                root.append(feedback, node);
 
-                render({ container: node, mime: outputItem.mime, value: outputItem.json(), context });
+                render({ feedback, container: node, mime: outputItem.mime, value: outputItem.json(), context });
             });
         },
         disposeOutputItem(outputId) {

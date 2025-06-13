@@ -1,4 +1,5 @@
 declare module '*.css' {
-    const classes: { [className: string]: string };
+    const classes: string;
+    // { [className: string]: string };
     export = classes;
 }

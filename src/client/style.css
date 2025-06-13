@@ -3,3 +3,15 @@
   font-size: 12px;
   color: lightblue;
 }
+.feedback .info::before {
+  content: "ℹ️";
+  margin-right: 5px;
+}
+.feedback .error::before {
+  content: "❌";
+  margin-right: 5px;
+}
+.feedback .success::before {
+  content: "✅";
+  margin-right: 5px;
+}

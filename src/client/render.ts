@@ -3,21 +3,54 @@
 // You can configure or change this in the webpack.config.js file.
 import * as style from './style.css';
 import type { RendererContext } from 'vscode-notebook-renderer';
+import cy from './lite-cy';
 // import * as css from "css";
 
 interface IRenderInfo {
     container: HTMLElement;
+    feedback: HTMLElement;
     mime: string;
     value: any;
     context: RendererContext<unknown>;
 }
 
 // This function is called to render your contents.
-export function render({ container, mime, value }: IRenderInfo) {
+export function render({ container, feedback, mime, value }: IRenderInfo) {
     const { language, source } = value;
 
     if(language === 'html') {
+        function addFeedback(message: string, category:'info' | 'success' | 'error' = 'info') {
+            const el = document.createElement('div');
+            el.classList.add(category);
+
+            el.innerText = message;
+            feedback.append(el);
+        }
         container.innerHTML = source;
+        addFeedback(`Rendered HTML with ${source.length} characters.`);
+        try {
+            cy(container).get('h1').should('exist');
+            addFeedback('Cypress assertion: h1 exists', 'success');
+        } catch (error) {
+            addFeedback(`Error in Cypress assertion: ${error}`, 'error');
+        }
+//         `<h1>Output!:</h1>
+// <div id="outp"></div>
+// ${source}
+// <script>
+// function addToOutput(message) {
+// console.log(message);
+// const h1 = document.querySelector('h1');
+// h1.textContent = 'Output from the web notebook renderer:';
+//     const outputDiv = document.querySelector('#outp');
+//     if (outputDiv) {
+//         const pre = document.createElement('pre');
+//         pre.append(message);
+//         outputDiv.appendChild(pre);
+//     }
+// }
+// addToOutput('This is a message from the web notebook renderer.');
+// </script>`;
     // } else if(language === 'css') {
     //     const ast = css.parse(source);
         
@@ -37,7 +70,7 @@ export function render({ container, mime, value }: IRenderInfo) {
     //     container.innerText = `CSS with ${numRules} rules`;
     } else {
         const pre = document.createElement('pre');
-        pre.classList.add(style.json);
+        // pre.classList.add(style.json);
         const code = document.createElement('code');
         code.textContent = `mime type: ${mime}\n\n${JSON.stringify(value, null, 2)}`;
         pre.appendChild(code);

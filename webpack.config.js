@@ -43,6 +43,8 @@ const makeConfig = (argv, { entry, out, target, library = 'commonjs' }) => ({
             // Allow importing CSS modules:
             {
                 test: /\.css$/,
+                type: 'asset/source',
+                /*
                 use: [
                     'style-loader',
                     {
@@ -53,6 +55,7 @@ const makeConfig = (argv, { entry, out, target, library = 'commonjs' }) => ({
                         },
                     },
                 ],
+                */
             },
         ],
     },
