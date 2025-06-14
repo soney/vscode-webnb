@@ -16,9 +16,27 @@ interface IRenderInfo {
 
 // This function is called to render your contents.
 export function render({ container, feedback, mime, value }: IRenderInfo) {
-    const { language, source } = value;
+    const { language, source, addons } = value;
 
     if(language === 'html') {
+        container.innerHTML = source;
+
+        for(const {type, content} of addons) {
+            if(type === 'test') {
+                eval(content);
+            }
+        }
+
+        function assert(selector: string, passMessage: string, failMessage: string) {
+            return cy(container, (passed: boolean, message: string, trace: string[]) => {
+                if(passed) {
+                    addFeedback(`${message}`, 'success');
+                } else {
+                    addFeedback(`${message}`, 'error');
+                }
+            }).get(selector);
+        }
+
         function addFeedback(message: string, category:'info' | 'success' | 'error' = 'info') {
             const el = document.createElement('div');
             el.classList.add(category);
@@ -26,14 +44,13 @@ export function render({ container, feedback, mime, value }: IRenderInfo) {
             el.innerText = message;
             feedback.append(el);
         }
-        container.innerHTML = source;
-        addFeedback(`Rendered HTML with ${source.length} characters.`);
-        try {
-            cy(container).get('h1').should('exist');
-            addFeedback('Cypress assertion: h1 exists', 'success');
-        } catch (error) {
-            addFeedback(`Error in Cypress assertion: ${error}`, 'error');
-        }
+        // addFeedback(`Rendered HTML with ${source.length} characters.`);
+        // try {
+        //     cy(container).get('h1').should('exist');
+        //     addFeedback('Cypress assertion: h1 exists', 'success');
+        // } catch (error) {
+        //     addFeedback(`Error in Cypress assertion: ${error}`, 'error');
+        // }
 //         `<h1>Output!:</h1>
 // <div id="outp"></div>
 // ${source}

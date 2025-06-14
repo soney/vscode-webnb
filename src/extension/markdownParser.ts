@@ -13,6 +13,7 @@ export interface RawNotebookCell {
 	language: string;
 	content: string;
 	kind: vscode.NotebookCellKind;
+	addons?: {type: string, content: string}[];
 }
 
 const LANG_IDS = new Map([
@@ -26,7 +27,8 @@ const LANG_ABBREVS = new Map(
 
 interface ICodeBlockStart {
 	langId: string;
-	indentation: string
+	indentation: string;
+	blockType: 'user-code' | 'addon-code';
 }
 
 /**
@@ -34,11 +36,22 @@ interface ICodeBlockStart {
  * between the start and end blocks, etc. This is good enough for typical use cases.
  */
 function parseCodeBlockStart(line: string): ICodeBlockStart | null {
-	const match = line.match(/(    |\t)?```\{(\S*)\}/);
-	return match && {
-		indentation: match[1],
-		langId: match[2]
-	};
+	const userCodeBlockMatch = line.match(/(    |\t)?```\{(\S*)\}/);
+	if(userCodeBlockMatch) {
+		return {
+			indentation: userCodeBlockMatch[1],
+			langId: userCodeBlockMatch[2],
+			blockType: 'user-code'
+		};
+	} else {
+		const addonCodeMatch = line.match(/(    |\t)?```\+(\S*)(\s+(\S*))?/);
+		return addonCodeMatch && {
+			indentation: addonCodeMatch[1],
+			langId: addonCodeMatch[2],
+			blockType: 'addon-code'
+		};
+	}
+
 }
 
 function isCodeBlockStart(line: string): boolean {
@@ -104,14 +117,31 @@ export function parseMarkdown(content: string): RawNotebookCell[] {
 			.map(line => line.replace(new RegExp('^' + codeBlockStart.indentation), ''))
 			.join('\n');
 		const trailingWhitespace = parseWhitespaceLines(false);
-		cells.push({
-			language,
-			content,
-			kind: vscode.NotebookCellKind.Code,
-			leadingWhitespace: leadingWhitespace,
-			trailingWhitespace: trailingWhitespace,
-			indentation: codeBlockStart.indentation
-		});
+
+		if(codeBlockStart.blockType === 'user-code') {
+			cells.push({
+				language,
+				content,
+				kind: vscode.NotebookCellKind.Code,
+				leadingWhitespace: leadingWhitespace,
+				trailingWhitespace: trailingWhitespace,
+				indentation: codeBlockStart.indentation,
+				addons: []
+			});
+		} else if(codeBlockStart.blockType === 'addon-code') {
+			const codeCells = cells.filter(c => c.kind === vscode.NotebookCellKind.Code);
+			const lastCodeCell = codeCells.pop();
+			if(!lastCodeCell) {
+				throw new Error('Addon code block found without a preceding user code block');
+			}
+
+			if(!lastCodeCell.addons) {
+				lastCodeCell.addons = [];
+			}
+			lastCodeCell.addons.push({type: codeBlockStart.langId, content});
+		} else {
+			throw new Error(`Unknown code block type: ${codeBlockStart.blockType}`);
+		}
 	}
 
 	function parseMarkdownParagraph(leadingWhitespace: string): void {
@@ -161,6 +191,16 @@ export function writeCellsToMarkdown(cells: ReadonlyArray<vscode.NotebookCellDat
 			const codeSuffix = '\n' + indentation + '```';
 
 			result += codePrefix + contents + codeSuffix;
+
+			if(cell.metadata?.addons && cell.metadata.addons.length > 0) {
+				for(const addon of cell.metadata.addons) {
+					const addonPrefix = '\n' + indentation + '```+' + addon.type + '\n';
+					const addonContents = addon.content.split(/\r?\n/g).map((line:string) => indentation + line).join('\n');
+					const addonSuffix = '\n' + indentation + '```';
+
+					result += addonPrefix + addonContents + addonSuffix;
+				}
+			}
 		} else {
 			result += cell.value;
 		}

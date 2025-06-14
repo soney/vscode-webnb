@@ -17,13 +17,23 @@ __webpack_public_path__ = new URL(scriptUrl.replace(/[^/]+$/, '') + __webpack_re
 // ----------------------------------------------------------------------------
 
 export const activate: ActivationFunction = (context) => {
-    console.log(styleCss);
     const style = document.createElement('style');
 	style.setAttribute('type', 'text/css');
 	style.textContent = styleCss;
 
     return {
         renderOutputItem(outputItem, element) {
+            const value = outputItem.json();
+
+            const { addons } = value;
+            if(addons && addons.length > 0) {
+                for(const { type, content } of addons) {
+                    if(type === 'css') {
+                        style.textContent += '\n\n' + content;
+                    }
+                }
+            }
+
             let shadow = element.shadowRoot;
             if (!shadow) {
                 shadow = element.attachShadow({ mode: 'open' });
@@ -41,9 +51,10 @@ export const activate: ActivationFunction = (context) => {
                 const feedback = document.createElement('div');
                 feedback.classList.add('feedback');
                 const node = document.createElement('div');
+                node.setAttribute('id', 'html-output');
                 root.append(feedback, node);
 
-                render({ feedback, container: node, mime: outputItem.mime, value: outputItem.json(), context });
+                render({ feedback, container: node, mime: outputItem.mime, value, context });
             });
         },
         disposeOutputItem(outputId) {

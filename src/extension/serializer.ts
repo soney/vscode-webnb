@@ -50,7 +50,7 @@ function rawToNotebookCellData(data: RawNotebookCell): vscode.NotebookCellData {
 	return <vscode.NotebookCellData>{
 		kind: data.kind,
 		languageId: data.language,
-		metadata: { leadingWhitespace: data.leadingWhitespace, trailingWhitespace: data.trailingWhitespace, indentation: data.indentation },
+		metadata: { leadingWhitespace: data.leadingWhitespace, trailingWhitespace: data.trailingWhitespace, indentation: data.indentation, addons: data.addons },
 		// outputs: []
 		// new vscode.NotebookCellOutput([
 		// 	vscode.NotebookCellOutputItem.text("dummy output text", 'text/plain')

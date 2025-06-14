@@ -71,7 +71,8 @@ export class WebNotebookKernel implements vscode.Disposable, vscode.NotebookCont
             const output = new vscode.NotebookCellOutput([
                 vscode.NotebookCellOutputItem.json({
                     source,
-                    language: languageId
+                    language: languageId,
+                    addons: cell.metadata.addons || [],
                 }, 'x-application/webnb-output')
             ]);
             exec.replaceOutput(output);

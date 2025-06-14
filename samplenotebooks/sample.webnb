@@ -1,10 +1,30 @@
 # Sample Notebook
 
 This is an example of a notebook.
+
 ```{html}
-<h2>Hello</h2>
+
 ```
 
 ```{html}
+
+```
+
+```{html}
+<h1>Hello</h1>
+<button>Click me</button>
+```
+```+test
+assert('h1').should('exist').run('Failed; could not find h1 element', 'Created h1 element');
+```
+```+css
+h2 {
+  color: blue;
+}
+```
+
+```{html}
+
+```
 
 ```
