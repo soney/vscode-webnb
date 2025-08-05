@@ -24,15 +24,12 @@ export const activate: ActivationFunction = (context) => {
     return {
         renderOutputItem(outputItem, element) {
             const value = outputItem.json();
+            console.log(value);
 
-            const { addons } = value;
-            if(addons && addons.length > 0) {
-                for(const { type, content } of addons) {
-                    if(type === 'css') {
-                        style.textContent += '\n\n' + content;
-                    }
-                }
+            if(!value.addons || !Array.isArray(value.addons)) {
+                value.addons = [];
             }
+
 
             let shadow = element.shadowRoot;
             if (!shadow) {
@@ -54,7 +51,7 @@ export const activate: ActivationFunction = (context) => {
                 node.setAttribute('id', 'html-output');
                 root.append(feedback, node);
 
-                render({ feedback, container: node, mime: outputItem.mime, value, context });
+                render({ feedback, container: node, mime: outputItem.mime, style, value, context });
             });
         },
         disposeOutputItem(outputId) {

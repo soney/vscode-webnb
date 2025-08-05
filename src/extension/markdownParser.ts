@@ -14,6 +14,9 @@ export interface RawNotebookCell {
 	content: string;
 	kind: vscode.NotebookCellKind;
 	addons?: {type: string, content: string}[];
+	id?: string;
+	rawCode?: string;
+	rawCodeLanguage?: string;
 }
 
 const LANG_IDS = new Map([
@@ -28,7 +31,8 @@ const LANG_ABBREVS = new Map(
 interface ICodeBlockStart {
 	langId: string;
 	indentation: string;
-	blockType: 'user-code' | 'addon-code';
+	blockType: 'user-code' | 'addon-code' | 'addon-reference' | 'code-with-id';
+	id?: string;
 }
 
 /**
@@ -36,22 +40,51 @@ interface ICodeBlockStart {
  * between the start and end blocks, etc. This is good enough for typical use cases.
  */
 function parseCodeBlockStart(line: string): ICodeBlockStart | null {
-	const userCodeBlockMatch = line.match(/(    |\t)?```\{(\S*)\}/);
+	// Match user code blocks with optional ID: ```{html id=5}
+	const userCodeBlockMatch = line.match(/(    |\t)?```\{(\S*)(\s+id=(\S+))?\}/);
 	if(userCodeBlockMatch) {
 		return {
 			indentation: userCodeBlockMatch[1],
 			langId: userCodeBlockMatch[2],
-			blockType: 'user-code'
+			blockType: 'user-code',
+			id: userCodeBlockMatch[4]
 		};
 	} else {
-		const addonCodeMatch = line.match(/(    |\t)?```\+(\S*)(\s+(\S*))?/);
-		return addonCodeMatch && {
-			indentation: addonCodeMatch[1],
-			langId: addonCodeMatch[2],
-			blockType: 'addon-code'
-		};
-	}
+		
+		// Match addon references: ```+id=5
+		const addonRefMatch = line.match(/(    |\t)?```\+id=(\S+)/);
+		if (addonRefMatch) {
+			return {
+				indentation: addonRefMatch[1],
+				langId: 'reference',
+				blockType: 'addon-reference',
+				id: addonRefMatch[2]
+			};
+		}
 
+		// Match code blocks with type ```html id=5
+		const codeWithIdMatch = line.match(/(    |\t)?```(\S+)(\s+id\s*=\s*(\S+))/);
+		if(codeWithIdMatch) {
+			return {
+				indentation: codeWithIdMatch[1],
+				langId: codeWithIdMatch[2],
+				blockType: 'code-with-id',
+				id: codeWithIdMatch[4]
+			};
+		}
+
+		// Match addon code blocks: ```+test
+		const addonCodeMatch = line.match(/(    |\t)?```\+(\S*)(\s+(\S*))?/);
+		if (addonCodeMatch) {
+			return {
+				indentation: addonCodeMatch[1],
+				langId: addonCodeMatch[2],
+				blockType: 'addon-code'
+			};
+		}
+	}
+	
+	return null;
 }
 
 function isCodeBlockStart(line: string): boolean {
@@ -80,6 +113,7 @@ export function parseMarkdown(content: string): RawNotebookCell[] {
 			parseMarkdownParagraph(leadingWhitespace);
 		}
 	}
+	console.log(cells);
 
 	function parseWhitespaceLines(isFirst: boolean): string {
 		let start = i;
@@ -126,9 +160,12 @@ export function parseMarkdown(content: string): RawNotebookCell[] {
 				leadingWhitespace: leadingWhitespace,
 				trailingWhitespace: trailingWhitespace,
 				indentation: codeBlockStart.indentation,
-				addons: []
+				addons: [],
+				id: codeBlockStart.id,
+				rawCode: content,
+				rawCodeLanguage: language
 			});
-		} else if(codeBlockStart.blockType === 'addon-code') {
+		} else if(codeBlockStart.blockType === 'addon-code' || codeBlockStart.blockType === 'addon-reference') {
 			const codeCells = cells.filter(c => c.kind === vscode.NotebookCellKind.Code);
 			const lastCodeCell = codeCells.pop();
 			if(!lastCodeCell) {
@@ -138,7 +175,33 @@ export function parseMarkdown(content: string): RawNotebookCell[] {
 			if(!lastCodeCell.addons) {
 				lastCodeCell.addons = [];
 			}
-			lastCodeCell.addons.push({type: codeBlockStart.langId, content});
+			console.log(codeBlockStart);
+
+			if(codeBlockStart.blockType === 'addon-code') {
+				lastCodeCell.addons.push({type: codeBlockStart.langId, content});
+			} else {
+				// Find the cell with the specified ID
+				const referencedCell = cells.find(c => c.id === codeBlockStart.id);
+				if(!referencedCell) {
+					throw new Error(`Referenced cell with id="${codeBlockStart.id}" not found`);
+				}
+				console.log(referencedCell);
+
+				const content = referencedCell.rawCode || referencedCell.content;
+				const type = referencedCell.rawCodeLanguage || referencedCell.language;
+				lastCodeCell.addons.push({type, content});
+			}
+		} else if(codeBlockStart.blockType === 'code-with-id') {
+			cells.push({
+				language: 'markdown',
+				content: `\`\`\`${language}\n${content}\n\`\`\``,
+				kind: vscode.NotebookCellKind.Markup,
+				leadingWhitespace: leadingWhitespace,
+				trailingWhitespace: trailingWhitespace,
+				rawCode: content,
+				rawCodeLanguage: language,
+				id: codeBlockStart.id
+			});
 		} else {
 			throw new Error(`Unknown code block type: ${codeBlockStart.blockType}`);
 		}
@@ -184,7 +247,8 @@ export function writeCellsToMarkdown(cells: ReadonlyArray<vscode.NotebookCellDat
 		if (cell.kind === vscode.NotebookCellKind.Code) {
 			const indentation = cell.metadata?.indentation || '';
 			const languageAbbrev = LANG_ABBREVS.get(cell.languageId) ?? cell.languageId;
-			const codePrefix = indentation + '```{' + languageAbbrev + '}\n';
+			const idPart = cell.metadata?.id ? ` id=${cell.metadata.id}` : '';
+			const codePrefix = indentation + '```{' + languageAbbrev + idPart + '}\n';
 			const contents = cell.value.split(/\r?\n/g)
 				.map(line => indentation + line)
 				.join('\n');

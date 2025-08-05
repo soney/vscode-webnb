@@ -9,22 +9,35 @@ import cy from './lite-cy';
 interface IRenderInfo {
     container: HTMLElement;
     feedback: HTMLElement;
+    style: HTMLStyleElement;
     mime: string;
     value: any;
     context: RendererContext<unknown>;
 }
 
 // This function is called to render your contents.
-export function render({ container, feedback, mime, value }: IRenderInfo) {
+export function render({ container, feedback, mime, value, style }: IRenderInfo) {
     const { language, source, addons } = value;
+    console.log(language);
+
+    function addFeedback(message: string, category:'info' | 'success' | 'error' = 'info') {
+        const el = document.createElement('div');
+        el.classList.add(category);
+
+        el.innerText = message;
+        feedback.append(el);
+    }
 
     if(language === 'html') {
         container.innerHTML = source;
 
         for(const {type, content} of addons) {
-            if(type === 'test') {
+            if(type === 'test' || type === 'javascript' || type === 'js') {
                 eval(content);
+            } else if(type === 'css') {
+                style.textContent += '\n\n' + content;
             }
+
         }
 
         function assert(selector: string, passMessage: string, failMessage: string) {
@@ -37,13 +50,6 @@ export function render({ container, feedback, mime, value }: IRenderInfo) {
             }).get(selector);
         }
 
-        function addFeedback(message: string, category:'info' | 'success' | 'error' = 'info') {
-            const el = document.createElement('div');
-            el.classList.add(category);
-
-            el.innerText = message;
-            feedback.append(el);
-        }
         // addFeedback(`Rendered HTML with ${source.length} characters.`);
         // try {
         //     cy(container).get('h1').should('exist');
@@ -68,23 +74,58 @@ export function render({ container, feedback, mime, value }: IRenderInfo) {
 // }
 // addToOutput('This is a message from the web notebook renderer.');
 // </script>`;
-    // } else if(language === 'css') {
-    //     const ast = css.parse(source);
+    } else if(language === 'css') {
+        for(const {type, content} of addons) {
+            if(type === 'html') {
+                container.innerHTML = content;
+            } else if(type === 'css') {
+                style.textContent += '\n\n' + content;
+            } else if(type === 'test' || type === 'javascript' || type === 'js') {
+                eval(content);
+            }
+        }
+        /*
+        const ast = css.parse(source);
         
-    //     let numSelectors: number = 0;
-    //     let numRules: number = 0;
-    //     if(ast.stylesheet) {
-    //         numSelectors = ast.stylesheet.rules.length;
-    //         for (const rule of ast.stylesheet.rules) {
-    //             if (rule.type === 'rule') {
-    //                 if(rule.selectors) {
-    //                     numRules += rule.selectors.length;
-    //                 }
-    //             }
-    //         }
-    //     }
+        let numSelectors: number = 0;
+        let numRules: number = 0;
+        if(ast.stylesheet) {
+            numSelectors = ast.stylesheet.rules.length;
+            for (const rule of ast.stylesheet.rules) {
+                if (rule.type === 'rule') {
+                    if(rule.selectors) {
+                        numRules += rule.selectors.length;
+                    }
+                }
+            }
+        }
 
-    //     container.innerText = `CSS with ${numRules} rules`;
+        container.innerText = `CSS with ${numRules} rules`;
+        */
+    } else if (language === 'javascript' || language === 'js') {
+        console.log(addons);
+        for(const {type, content} of addons) {
+            if(type === 'html') {
+                container.innerHTML = content;
+            } else if(type === 'css') {
+                style.textContent += '\n\n' + content;
+            } else if(type === 'test' || type === 'javascript' || type === 'js') {
+                eval(content);
+            }
+        }
+        // const console = {
+        //     log: (msg: any) => {
+        //         addFeedback(String(msg), 'info');
+        //     },
+        //     error: (msg: any) => {
+        //         addFeedback(String(msg), 'error');
+        //     }
+        // };
+        try {
+            eval(source);
+        } catch (error) {
+            addFeedback(`Error in JavaScript code: ${error}`, 'error');
+        }
     } else {
         const pre = document.createElement('pre');
         // pre.classList.add(style.json);

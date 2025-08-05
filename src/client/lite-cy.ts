@@ -13,7 +13,7 @@
  *   </script>
  */
 
-type Assertion = 'exist' | 'have.text' | 'have.class' | 'have.attribute';
+type Assertion = 'exist' | 'have.text' | 'have.class' | 'have.attribute' | 'have.css';
 
 interface Chainable {
     failed: boolean;
@@ -65,6 +65,19 @@ function createChain(elements: Element[], onResult: (passed: boolean, message: s
                     if (!(el instanceof HTMLElement) || !el.hasAttribute(expected!)) {
                         return createChain(this.elements, this.onResult, messageTrace.concat(`Expected element to have attribute "${expected}"`), true);
                         // throw new Error(`Expected element to have attribute "${expected}"`);
+                    }
+                } else if(assertion === 'have.css') {
+                    const [prop, expectedValue] = expected?.split(':').map(s => s.trim()) ?? [];
+                    if (!prop || expectedValue === undefined) {
+                        return createChain(this.elements, this.onResult, messageTrace.concat(`Invalid CSS assertion syntax. Use "property: value"`), true);
+                    }
+                    if (!(el instanceof HTMLElement)) {
+                        continue;
+                    }
+                    const computed = window.getComputedStyle(el);
+                    const actualValue = computed.getPropertyValue(prop);
+                    if (actualValue.trim() !== expectedValue) {
+                        return createChain(this.elements, this.onResult, messageTrace.concat(`Expected CSS "${prop}: ${expectedValue}", got "${actualValue}"`), true);
                     }
                 }
             }

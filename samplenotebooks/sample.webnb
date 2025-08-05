@@ -2,13 +2,14 @@
 
 This is an example of a notebook.
 
-```{html}
-
+```html id=blahblah
+<html>
+  <body>
+    <h1>Hello</h1>
+  </body>
+</html>
 ```
 
-```{html}
-
-```
 
 ```{html}
 <h1>Hello</h1>
@@ -18,13 +19,14 @@ This is an example of a notebook.
 assert('h1').should('exist').run('Failed; could not find h1 element', 'Created h1 element');
 ```
 ```+css
-h2 {
+h1 {
   color: blue;
 }
 ```
 
-```{html}
-
+```{javascript}
+const x = 1;
+console.log(x);
 ```
-
+```+id=blahblah
 ```
