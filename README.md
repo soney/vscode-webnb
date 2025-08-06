@@ -1,27 +1,78 @@
-# README
+# Web Notebook
 
-⚠️ Work-in-progress starter code for custom notebook renderers in VS Code. Expect this to change as notebooks matures. ⚠️
+Creating a user-editable code cell:
 
-This starter includes:
+````
+```{lang}
+content
+```
+````
 
- - 🖥️ TypeScript code to create a simple `NotebookOutputRenderer`
- - 📦 A Webpack build for renderer client code
- - ⚡ Support for hot module reloading and safe boilerplate
- - 🎨 CSS modules support
+For example, for a user-editable HTML cell:
 
-## Running this Sample
+````
+```{html}
+<h1>Hello</h1>
+<button>Click me</button>
+```
+````
 
- 1. `code-insiders practical-javascript-reading-notebook`: Open the folder in VS Code Insiders
- 1. Hit `F5` to build+debug
 
-## Structure
+You can add CSS styles to HTML via an "addon" cell:
 
-A Notebook Renderer consists of code that runs in the VS Code Extension Host (Node.js), which registers the renderer and passes data into the UI code running inside a WebView (Browser/DOM).
+````
+```{html}
+<h1>Hello</h1>
+<button>Click me</button>
+```
+```+css
+h1 {
+  color: blue;
+}
+```
+````
 
-This uses TypeScript project references. There are three projects in the `src` directory:
 
- - `extension` contains the code running in Node.js extension host. It's compiled with `tsc`.
- - `client` is the UI code, built by Webpack, with access to the DOM.
- - `common` contains code shared between the extension and client.
+You can also add tests:
 
-When you run `watch`, `compile`, or `dev`, we invoke both `tsc` and `webpack` to compile the extension and the client portion of the code.
+````
+```{html}
+<h1>Hello</h1>
+<button>Click me</button>
+```
+```+test
+assert('h1').should('exist').run('Failed; could not find h1 element', 'Created h1 element');
+```
+````
+
+
+For letting users write JavaScript code, you can use:
+
+````
+```{javascript}
+const x = 1;
+console.log(x);
+```
+```+test
+wrap(x).should('equal', 1).run('Failed; x should be 1', 'x is 1');
+```
+````
+
+
+You can also have cells with IDs that are referenced in other cells:
+
+````
+```html id=mainpage
+<h1>Main Page</h1>
+```
+
+Write code that fetches the h1 element:
+```{javascript}
+const h1 = null; // replace
+```
+```+id=mainpage
+```
+```+test
+wrap(h1.innerText).should('equal', 'Main Page').run('Failed; h1 should be "Main Page"', 'h1 is "Main Page"');
+```
+````
