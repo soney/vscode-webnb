@@ -33,5 +33,6 @@ console.log("OK");
 
 ```
 ```+test
-wrap(x).should('equal', 2).run('Failed; x should be 1', 'x is 1');
+console.log("x is", x);
+wrap(x).should('equal', 1).run('Failed; x should be 1', 'x is 1');
 ```

@@ -40,44 +40,51 @@ function createChain(elements: Element[], onResult: (passed: boolean, message: s
         messageTrace,
         failed,
         onResult,
+        subject,
 
         should(assertion: Assertion, expected?: string): Chainable {
             if(failed) { return this; }
-            console.log(this.elements);
+
+            console.log(this.subject, assertion, expected);
 
             if(this.subject !== undefined) {
                 if(assertion === 'equal') {
-                    deepEqual(this.subject, expected);
+                    console.log('Checking equality', this.subject, expected);
+                    if(deepEqual(this.subject, expected)) {
+                        return createChain(this.elements, this.onResult, messageTrace.concat(`Assertion passed: ${assertion} with value "${expected}"`), this.failed, this.subject);
+                    } else {
+                        return createChain(this.elements, this.onResult, messageTrace.concat(`Expected ${this.subject} to equal ${expected}`), true, this.subject);
+                    }
                 }
             }
 
             if(assertion === 'exist') {
                 if(this.elements.length === 0) {
-                    return createChain([], this.onResult, messageTrace.concat('Expected at least one element to exist, but found none'), true);
+                    return createChain([], this.onResult, messageTrace.concat('Expected at least one element to exist, but found none'), true, this.subject);
                 } else {
-                    return createChain(this.elements, this.onResult, messageTrace.concat(`Assertion passed: ${assertion}`), this.failed);
+                    return createChain(this.elements, this.onResult, messageTrace.concat(`Assertion passed: ${assertion}`), this.failed, this.subject);
                 }
             }
 
             for (const el of this.elements) {
                 if(assertion === 'have.text') {
                     if(el.textContent !== expected) {
-                        return createChain(this.elements, this.onResult, messageTrace.concat(`Expected text "${expected}", got "${el.textContent}"`), true);
+                        return createChain(this.elements, this.onResult, messageTrace.concat(`Expected text "${expected}", got "${el.textContent}"`), true, this.subject);
                     }
                 } else if(assertion === 'have.class') {
                     if (!(el instanceof HTMLElement) || !el.classList.contains(expected!)) {
-                        return createChain(this.elements, this.onResult, messageTrace.concat(`Expected element to have class "${expected}"`), true);
+                        return createChain(this.elements, this.onResult, messageTrace.concat(`Expected element to have class "${expected}"`), true, this.subject);
                         // throw new Error(`Expected element to have class "${expected}"`);
                     }
                 } else if(assertion === 'have.attribute') {
                     if (!(el instanceof HTMLElement) || !el.hasAttribute(expected!)) {
-                        return createChain(this.elements, this.onResult, messageTrace.concat(`Expected element to have attribute "${expected}"`), true);
+                        return createChain(this.elements, this.onResult, messageTrace.concat(`Expected element to have attribute "${expected}"`), true, this.subject);
                         // throw new Error(`Expected element to have attribute "${expected}"`);
                     }
                 } else if(assertion === 'have.css') {
                     const [prop, expectedValue] = expected?.split(':').map(s => s.trim()) ?? [];
                     if (!prop || expectedValue === undefined) {
-                        return createChain(this.elements, this.onResult, messageTrace.concat(`Invalid CSS assertion syntax. Use "property: value"`), true);
+                        return createChain(this.elements, this.onResult, messageTrace.concat(`Invalid CSS assertion syntax. Use "property: value"`), true, this.subject);
                     }
                     if (!(el instanceof HTMLElement)) {
                         continue;
@@ -85,11 +92,11 @@ function createChain(elements: Element[], onResult: (passed: boolean, message: s
                     const computed = window.getComputedStyle(el);
                     const actualValue = computed.getPropertyValue(prop);
                     if (actualValue.trim() !== expectedValue) {
-                        return createChain(this.elements, this.onResult, messageTrace.concat(`Expected CSS "${prop}: ${expectedValue}", got "${actualValue}"`), true);
+                        return createChain(this.elements, this.onResult, messageTrace.concat(`Expected CSS "${prop}: ${expectedValue}", got "${actualValue}"`), true, this.subject);
                     }
                 }
             }
-            return createChain(this.elements, this.onResult, messageTrace.concat(`Assertion passed: ${assertion}${expected ? ` with value "${expected}"` : ''}`), this.failed);
+            return createChain(this.elements, this.onResult, messageTrace.concat(`Assertion passed: ${assertion}${expected ? ` with value "${expected}"` : ''}`), this.failed, this.subject);
         },
 
         click(): Chainable {
@@ -133,7 +140,7 @@ function createChain(elements: Element[], onResult: (passed: boolean, message: s
             this.elements.forEach(el => {
                 found = found.concat(Array.from(el.querySelectorAll(selector)));
             });
-            return createChain(found, this.onResult, this.messageTrace, this.failed);
+            return createChain(found, this.onResult, this.messageTrace, this.failed, this.subject);
         },
 
         get(selector: string): Chainable {
