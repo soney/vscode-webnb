@@ -23,10 +23,15 @@ h1 {
   color: blue;
 }
 ```
-
 ```{javascript}
 const x = 1;
 console.log(x);
+console.log({hello: 'world'}, 'This is a test', {x: 1, y: 2}, [1,2,3]);
+console.log("OK");
 ```
 ```+id=blahblah
+
+```
+```+test
+wrap(x).should('equal', 2).run('Failed; x should be 1', 'x is 1');
 ```

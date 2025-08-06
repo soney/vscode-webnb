@@ -21,3 +21,14 @@ div#html-output {
   color: black;
   font-family:'Times New Roman', Times, serif;
 }
+
+.console {
+  font-family:'Courier New', Courier, monospace;
+}
+.console-message > * {
+  margin-left: 10px;
+  margin-right: 10px;
+}
+.console-message > :first-child {
+  margin-left: 0px;
+}

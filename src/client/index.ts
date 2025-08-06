@@ -24,7 +24,6 @@ export const activate: ActivationFunction = (context) => {
     return {
         renderOutputItem(outputItem, element) {
             const value = outputItem.json();
-            console.log(value);
 
             if(!value.addons || !Array.isArray(value.addons)) {
                 value.addons = [];
@@ -47,11 +46,14 @@ export const activate: ActivationFunction = (context) => {
 
                 const feedback = document.createElement('div');
                 feedback.classList.add('feedback');
+                const consoleElement = document.createElement('div');
+                consoleElement.classList.add('console');
+
                 const node = document.createElement('div');
                 node.setAttribute('id', 'html-output');
-                root.append(feedback, node);
+                root.append(feedback, node, consoleElement);
 
-                render({ feedback, container: node, mime: outputItem.mime, style, value, context });
+                render({ feedback, container: node, mime: outputItem.mime, style, value, context, console: consoleElement });
             });
         },
         disposeOutputItem(outputId) {

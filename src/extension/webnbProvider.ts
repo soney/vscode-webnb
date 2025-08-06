@@ -53,6 +53,7 @@ export class WebNotebookKernel implements vscode.Disposable, vscode.NotebookCont
         exec.start(Date.now());
         let success:boolean = true;
 
+        /*
         if(languageId === 'javascript') {
             try {
                 // eslint-disable-next-line no-eval
@@ -77,6 +78,15 @@ export class WebNotebookKernel implements vscode.Disposable, vscode.NotebookCont
             ]);
             exec.replaceOutput(output);
         }
+            */
+        const output = new vscode.NotebookCellOutput([
+            vscode.NotebookCellOutputItem.json({
+                source,
+                language: languageId,
+                addons: cell.metadata.addons || [],
+            }, 'x-application/webnb-output')
+        ]);
+        exec.replaceOutput(output);
 
         exec.end(success, Date.now());
     }

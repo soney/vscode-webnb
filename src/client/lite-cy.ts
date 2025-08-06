@@ -1,3 +1,4 @@
+import { deepEqual } from './utils';
 /**
  * lite-cypress.ts
  * A minimal, standalone Cypress-like testing utility for the browser, written in TypeScript.
@@ -13,7 +14,7 @@
  *   </script>
  */
 
-type Assertion = 'exist' | 'have.text' | 'have.class' | 'have.attribute' | 'have.css';
+type Assertion = 'exist' | 'have.text' | 'have.class' | 'have.attribute' | 'have.css' | 'equal';
 
 interface Chainable {
     failed: boolean;
@@ -29,10 +30,11 @@ interface Chainable {
     get(selector: string): Chainable;
     contains(text: string): Chainable;
     run(failMessage?: string, successMessage?: string): void;
+    subject?: any;
     // result(onPass: (message: string, trace: string[]) => void, onFail: (message: string, trace: string[]) => void): void;
 }
 
-function createChain(elements: Element[], onResult: (passed: boolean, message: string, trace: string[]) => void = () => {},  messageTrace: string[]=[], failed: boolean = false): Chainable {
+function createChain(elements: Element[], onResult: (passed: boolean, message: string, trace: string[]) => void = () => {},  messageTrace: string[]=[], failed: boolean = false, subject?: any): Chainable {
     const chain: Chainable = {
         elements,
         messageTrace,
@@ -42,6 +44,12 @@ function createChain(elements: Element[], onResult: (passed: boolean, message: s
         should(assertion: Assertion, expected?: string): Chainable {
             if(failed) { return this; }
             console.log(this.elements);
+
+            if(this.subject !== undefined) {
+                if(assertion === 'equal') {
+                    deepEqual(this.subject, expected);
+                }
+            }
 
             if(assertion === 'exist') {
                 if(this.elements.length === 0) {
@@ -159,18 +167,31 @@ declare global {
 }
 */
 
-function sy(el: string|Element|Element[], onResult?: (passed: boolean, message: string, trace: string[]) => void): Chainable {
-    if (typeof el === 'string') {
-        const nodes = Array.from(document.querySelectorAll(el));
-        return createChain(nodes, onResult);
-    } else if (el instanceof Element) {
-        return createChain([el], onResult);
-    } else if (Array.isArray(el)) {
-        return createChain(el, onResult);
-    } else {
-        throw new Error('Invalid argument: must be a string selector, Element, or array of Elements');
+const sy = Object.assign(
+    function (el: string|Element|Element[], onResult?: (passed: boolean, message: string, trace: string[]) => void): Chainable {
+        if (typeof el === 'string') {
+            const nodes = Array.from(document.querySelectorAll(el));
+            return createChain(nodes, onResult);
+        } else if (el instanceof Element) {
+            return createChain([el], onResult);
+        } else if (Array.isArray(el)) {
+            return createChain(el, onResult);
+        } else {
+            throw new Error('Invalid argument: must be a string selector, Element, or array of Elements');
+        }
+    }, { 
+        wrap: (object: any, onResult?: (passed: boolean, message: string, trace: string[]) => void) => {
+            return createChain([], onResult, [], false, object);
+        }
     }
-}
+);
+
+// ——— support cy.wrap(obj) ———
+// function wrap<T>(subject: T, onResult?: (passed: boolean, message: string, trace: string[]) => void): Chainable {
+//   return createChain([], onResult, [], false, subject);
+// }
+// (sy as any).wrap = wrap;
+// export { wrap };
 
 export default sy;
 

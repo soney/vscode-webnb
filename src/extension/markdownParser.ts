@@ -13,7 +13,7 @@ export interface RawNotebookCell {
 	language: string;
 	content: string;
 	kind: vscode.NotebookCellKind;
-	addons?: {type: string, content: string}[];
+	addons?: {type: string, content: string, id?: string}[];
 	id?: string;
 	rawCode?: string;
 	rawCodeLanguage?: string;
@@ -50,7 +50,6 @@ function parseCodeBlockStart(line: string): ICodeBlockStart | null {
 			id: userCodeBlockMatch[4]
 		};
 	} else {
-		
 		// Match addon references: ```+id=5
 		const addonRefMatch = line.match(/(    |\t)?```\+id=(\S+)/);
 		if (addonRefMatch) {
@@ -113,7 +112,6 @@ export function parseMarkdown(content: string): RawNotebookCell[] {
 			parseMarkdownParagraph(leadingWhitespace);
 		}
 	}
-	console.log(cells);
 
 	function parseWhitespaceLines(isFirst: boolean): string {
 		let start = i;
@@ -175,7 +173,6 @@ export function parseMarkdown(content: string): RawNotebookCell[] {
 			if(!lastCodeCell.addons) {
 				lastCodeCell.addons = [];
 			}
-			console.log(codeBlockStart);
 
 			if(codeBlockStart.blockType === 'addon-code') {
 				lastCodeCell.addons.push({type: codeBlockStart.langId, content});
@@ -185,11 +182,10 @@ export function parseMarkdown(content: string): RawNotebookCell[] {
 				if(!referencedCell) {
 					throw new Error(`Referenced cell with id="${codeBlockStart.id}" not found`);
 				}
-				console.log(referencedCell);
 
 				const content = referencedCell.rawCode || referencedCell.content;
 				const type = referencedCell.rawCodeLanguage || referencedCell.language;
-				lastCodeCell.addons.push({type, content});
+				lastCodeCell.addons.push({type, content, id: codeBlockStart.id});
 			}
 		} else if(codeBlockStart.blockType === 'code-with-id') {
 			cells.push({
@@ -258,15 +254,27 @@ export function writeCellsToMarkdown(cells: ReadonlyArray<vscode.NotebookCellDat
 
 			if(cell.metadata?.addons && cell.metadata.addons.length > 0) {
 				for(const addon of cell.metadata.addons) {
-					const addonPrefix = '\n' + indentation + '```+' + addon.type + '\n';
-					const addonContents = addon.content.split(/\r?\n/g).map((line:string) => indentation + line).join('\n');
-					const addonSuffix = '\n' + indentation + '```';
+					if(addon.id) {
+						result += '\n' + indentation + '```+id=' + addon.id + '\n';
+						result += '\n' + indentation + '```';
+					} else {
+						const addonPrefix = '\n' + indentation + '```+' + addon.type + '\n';
+						const addonContents = addon.content.split(/\r?\n/g).map((line:string) => indentation + line).join('\n');
+						const addonSuffix = '\n' + indentation + '```';
 
-					result += addonPrefix + addonContents + addonSuffix;
+						result += addonPrefix + addonContents + addonSuffix;
+					}
 				}
 			}
 		} else {
-			result += cell.value;
+			console.log(cell);
+			if(cell.metadata?.id && cell.value.startsWith('```')) {
+				const addedid = cell.value.replace(/```([^\s\n]+)([^\n]*)\n/g,
+												(_match, lang, rest) => `\`\`\`${lang} id=${cell.metadata?.id}${rest}\n`);
+				result += addedid;
+			} else {
+				result += cell.value;
+			}
 		}
 
 		result += getBetweenCellsWhitespace(cells, i);

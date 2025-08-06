@@ -4,28 +4,39 @@
 import * as style from './style.css';
 import type { RendererContext } from 'vscode-notebook-renderer';
 import cy from './lite-cy';
+import ConsoleObjectView from './consoleobjectview';
 // import * as css from "css";
 
 interface IRenderInfo {
     container: HTMLElement;
     feedback: HTMLElement;
+    console: HTMLElement;
     style: HTMLStyleElement;
     mime: string;
     value: any;
     context: RendererContext<unknown>;
 }
+type messageType = 'info' | 'success' | 'error';
 
 // This function is called to render your contents.
-export function render({ container, feedback, mime, value, style }: IRenderInfo) {
+export function render({ container, feedback, mime, value, style, console: consoleElement }: IRenderInfo) {
     const { language, source, addons } = value;
-    console.log(language);
 
-    function addFeedback(message: string, category:'info' | 'success' | 'error' = 'info') {
+    function addFeedback(message: string, category: messageType = 'info') {
         const el = document.createElement('div');
         el.classList.add(category);
 
         el.innerText = message;
         feedback.append(el);
+    }
+    function addConsoleMessage(objects: ConsoleObjectView[], category: messageType = 'info') {
+        const el = document.createElement('div');
+        el.classList.add(category, 'console-message');
+        for(const obj of objects) {
+            const view = obj.getElement();
+            el.append(view);
+        }
+        consoleElement.append(el);
     }
 
     if(language === 'html') {
@@ -103,26 +114,56 @@ export function render({ container, feedback, mime, value, style }: IRenderInfo)
         container.innerText = `CSS with ${numRules} rules`;
         */
     } else if (language === 'javascript' || language === 'js') {
-        console.log(addons);
         for(const {type, content} of addons) {
             if(type === 'html') {
                 container.innerHTML = content;
             } else if(type === 'css') {
                 style.textContent += '\n\n' + content;
-            } else if(type === 'test' || type === 'javascript' || type === 'js') {
-                eval(content);
+            // } else if(type === 'test' || type === 'javascript' || type === 'js') {
+            //     eval(content);
             }
         }
-        // const console = {
-        //     log: (msg: any) => {
-        //         addFeedback(String(msg), 'info');
-        //     },
-        //     error: (msg: any) => {
-        //         addFeedback(String(msg), 'error');
-        //     }
-        // };
+        const oldConsole = window.console;
+        const console = {
+            doLog: (method: "log"|"trace"|"error", ...args: any[]) => {
+                let cls: messageType = "info";
+                if (method === 'log' || method === 'trace') { cls = "info"; }
+                else if (method === 'error') { cls = "error"; }
+
+                addConsoleMessage(args.map(a => new ConsoleObjectView(a)), cls);
+                oldConsole.log(...args);
+            },
+            log: (...args: any[]) => {
+                console.doLog('log', ...args);
+            },
+            error: (...args: any[]) => {
+                console.doLog('error', ...args);
+            },
+            trace: (...args: any[]) => {
+                console.doLog('trace', ...args);
+            }
+        };
+        const document = container;
+        (document as any).body = container;
+        const sy = cy;
+        function wrap(object: any, passMessage: string, failMessage: string) {
+            return cy.wrap(object, (passed: boolean, message: string, trace: string[]) => {
+                if(passed) {
+                    addFeedback(`${message}`, 'success');
+                } else {
+                    addFeedback(`${message}`, 'error');
+                }
+            });
+        }
         try {
-            eval(source);
+            let toEval = source;
+            for(const {type, content} of addons) {
+                if(type === 'test' || type === 'javascript' || type === 'js') {
+                    toEval += '\n\n' + content;
+                }
+            }
+            window.console.log(toEval);
+            eval(toEval);
         } catch (error) {
             addFeedback(`Error in JavaScript code: ${error}`, 'error');
         }
