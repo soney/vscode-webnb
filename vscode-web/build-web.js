@@ -61,15 +61,17 @@ const ALWAYS_RECOMPILIE_VSCODE = false;
 
     const extensionDir = path.resolve(rootDir, "..");
     const extensionDestDir = path.resolve(rootDir, "webnb");
-    const extensionDestDistDir = path.resolve(extensionDestDir, "dist");
+    const extensionDestOutDir = path.resolve(extensionDestDir, "out");
     process.chdir(extensionDir);
     await exec(`npm run compile`);
 
     if(await deleteDirectoryIfExists(extensionDestDir)) { console.log(`Found directory ${extensionDestDir}; deleting`); }
 
-    await fs.promises.mkdir(extensionDestDistDir, { recursive: true });
-    await fse.copy(path.resolve(extensionDir, "dist"), extensionDestDistDir);
+    await fs.promises.mkdir(extensionDestOutDir, { recursive: true });
+    await fse.copy(path.resolve(extensionDir, "out"), extensionDestOutDir);
     await fse.copy(path.resolve(extensionDir, "package.json"), path.resolve(extensionDestDir, "package.json"));
+    await fse.copy(path.resolve(extensionDir, "package.nls.json"), path.resolve(extensionDestDir, "package.nls.json"));
+    await fse.copy(path.resolve(extensionDir, "icons"), path.resolve(extensionDestDir, "icons"));
 
     const cnameDest = path.resolve(rootDir, "CNAME");
     if(await deleteFileIfExists(cnameDest)) { console.log(`Found file ${cnameDest}; deleting`); }

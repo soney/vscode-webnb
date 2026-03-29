@@ -20,6 +20,8 @@ type messageType = 'info' | 'success' | 'error';
 interface McqOption {
     text: string;
     correct: boolean;
+    correctFeedback?: string;
+    wrongFeedback?: string;
 }
 interface ParsedMcq {
     question: string;
@@ -35,16 +37,32 @@ function parseMcqSource(source: string): ParsedMcq {
     let correctFeedback: string | undefined;
     let wrongFeedback: string | undefined;
     let sawOption = false;
+    let currentOption: McqOption | undefined;
 
     for (const line of lines) {
         const optionMatch = line.match(/^\s*(?:-\s*)?\[([ xX])\]\s*(.*)$/);
         if (optionMatch) {
             sawOption = true;
-            options.push({
+            currentOption = {
                 text: optionMatch[2].trim(),
                 correct: optionMatch[1].toLowerCase() === 'x'
-            });
+            };
+            options.push(currentOption);
             continue;
+        }
+
+        if (currentOption) {
+            const optionCorrectMatch = line.match(/^[ \t]+correct\s*:\s*(.*)$/i);
+            if (optionCorrectMatch) {
+                currentOption.correctFeedback = optionCorrectMatch[1].trim();
+                continue;
+            }
+
+            const optionWrongMatch = line.match(/^[ \t]+(?:wrong|incorrect)\s*:\s*(.*)$/i);
+            if (optionWrongMatch) {
+                currentOption.wrongFeedback = optionWrongMatch[1].trim();
+                continue;
+            }
         }
 
         if (!sawOption) {
@@ -186,7 +204,12 @@ export function render({ container, feedback, mime, value, style, console: conso
         questionEl.textContent = question;
         form.appendChild(questionEl);
 
+        const optionFeedbackEls: HTMLDivElement[] = [];
+
         options.forEach((opt, index) => {
+            const optionRow = document.createElement('div');
+            optionRow.classList.add('mcq-option-row');
+
             const label = document.createElement('label');
             label.classList.add('mcq-option');
             
@@ -197,9 +220,16 @@ export function render({ container, feedback, mime, value, style, console: conso
             
             label.appendChild(input);
             const span = document.createElement('span');
-            span.innerHTML = ' ' + opt.text;
+            span.textContent = opt.text;
             label.appendChild(span);
-            form.appendChild(label);
+
+            const optionFeedbackEl = document.createElement('div');
+            optionFeedbackEl.classList.add('mcq-option-feedback');
+            optionFeedbackEl.hidden = true;
+
+            optionFeedbackEls.push(optionFeedbackEl);
+            optionRow.append(label, optionFeedbackEl);
+            form.appendChild(optionRow);
         });
 
         const checkBtn = document.createElement('button');
@@ -210,6 +240,13 @@ export function render({ container, feedback, mime, value, style, console: conso
         checkBtn.addEventListener('click', () => {
             const inputs = form.querySelectorAll<HTMLInputElement>('input');
             const checkedInputs = Array.from(inputs).filter(input => input.checked);
+
+            optionFeedbackEls.forEach(el => {
+                el.hidden = true;
+                el.className = 'mcq-option-feedback';
+                el.textContent = '';
+            });
+
             if (checkedInputs.length === 0) {
                 addFeedback('Select at least one answer before checking.', 'error');
                 return;
@@ -219,8 +256,17 @@ export function render({ container, feedback, mime, value, style, console: conso
 
             inputs.forEach((input, index) => {
                 const opt = options[index];
-                if (input.checked !== opt.correct) {
+                const itemIsCorrect = input.checked === opt.correct;
+                if (!itemIsCorrect) {
                     allCorrect = false;
+                }
+
+                const itemFeedback = itemIsCorrect ? opt.correctFeedback : opt.wrongFeedback;
+                if (itemFeedback) {
+                    const optionFeedbackEl = optionFeedbackEls[index];
+                    optionFeedbackEl.hidden = false;
+                    optionFeedbackEl.classList.add(itemIsCorrect ? 'success' : 'error');
+                    optionFeedbackEl.textContent = itemFeedback;
                 }
             });
 

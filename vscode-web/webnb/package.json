@@ -20,7 +20,6 @@
         "Other"
     ],
     "activationEvents": [
-        "onNotebook:web-notebook",
         "onStartupFinished"
     ],
     "main": "./out/extension/extension.js",

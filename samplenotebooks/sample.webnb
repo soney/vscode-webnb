@@ -60,17 +60,26 @@ wrong: Not quite. Paris is the capital of France.
 [ ] London
 [x] Paris
 [ ] Berlin
+  wrong: Berlin is the capital of Germany, not France.
 ```
 
 Multiple Correct Options:
 ```{mcq}
 Which of the following are fruits? (Select all that apply)
 correct: Correct. Apples and bananas are both fruits.
-wrong: Try again. The correct choices are Apple and Banana.
+wrong: Try again. Check the per-item feedback for each choice.
 [x] Apple
+  correct: Apple is a fruit, so this should be selected.
+  wrong: Apple is a fruit, so you should select it.
 [ ] Carrot
+  correct: Right. Carrot is a vegetable, so leave it unchecked.
+  wrong: Carrot is a vegetable, so this should stay unchecked.
 [x] Banana
+  correct: Banana is a fruit, so this should be selected.
+  wrong: Banana is a fruit, so you should select it.
 [ ] Celery
+  correct: Right. Celery is a vegetable, so leave it unchecked.
+  wrong: Celery is a vegetable, so this should stay unchecked.
 ```
 
 Question with default feedback:

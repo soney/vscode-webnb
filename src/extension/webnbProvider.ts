@@ -17,25 +17,35 @@ export class WebNotebookKernel implements vscode.Disposable, vscode.NotebookCont
     private readonly _controller: vscode.NotebookController;
     private readonly _disposables: vscode.Disposable[] = [];
 
+    private readonly _autorunExecutedNotebooks = new Set<string>();
+    private readonly _autorunPendingNotebooks = new Set<string>();
+
     public constructor() {
         this._controller = vscode.notebooks.createNotebookController(this.id, this.notebookType, this.label);
         this._controller.supportedLanguages = ['javascript', 'html', 'css', 'js', 'mcq'];
         this._controller.description = "Web Notebook";
         this._controller.supportsExecutionOrder = true;
         this._controller.executeHandler = this.executeHandler.bind(this);
-        const runAutorunCells = (notebook: vscode.NotebookDocument) => {
-            if (notebook.notebookType === this.notebookType) {
-                const cellsToRun = notebook.getCells().filter(c =>
-                    c.kind === vscode.NotebookCellKind.Code &&
-                    (c.metadata?.autorun || c.document.languageId === 'mcq')
-                );
-                if (cellsToRun.length > 0) {
-                    // Slight delay to allow the kernel to associate with the notebook
-                    setTimeout(() => {
-                        this.executeHandler(cellsToRun, notebook, this._controller);
-                    }, 500);
-                }
+        const runAutorunCells = (editor: vscode.NotebookEditor) => {
+            const { notebook } = editor;
+            if (notebook.notebookType !== this.notebookType) {
+                return;
             }
+
+            const notebookKey = notebook.uri.toString();
+            if (this._autorunExecutedNotebooks.has(notebookKey) || this._autorunPendingNotebooks.has(notebookKey)) {
+                return;
+            }
+
+            const cellsToRun = this._getAutorunCellRanges(notebook);
+            if (cellsToRun.length === 0) {
+                return;
+            }
+
+            this._autorunPendingNotebooks.add(notebookKey);
+            setTimeout(() => {
+                void this._executeAutorunCells(editor, cellsToRun);
+            }, 0);
         };
         const collapseMcqCells = (editor: vscode.NotebookEditor) => {
             if (editor.notebook.notebookType !== this.notebookType) {
@@ -56,7 +66,19 @@ export class WebNotebookKernel implements vscode.Disposable, vscode.NotebookCont
         };
 
         this._disposables.push(
-            vscode.workspace.onDidOpenNotebookDocument(runAutorunCells),
+            vscode.workspace.onDidCloseNotebookDocument(notebook => {
+                const notebookKey = notebook.uri.toString();
+                this._autorunExecutedNotebooks.delete(notebookKey);
+                this._autorunPendingNotebooks.delete(notebookKey);
+            }),
+            vscode.window.onDidChangeActiveNotebookEditor(editor => {
+                if (!editor) {
+                    return;
+                }
+
+                collapseMcqCells(editor);
+                runAutorunCells(editor);
+            }),
             vscode.window.onDidChangeVisibleNotebookEditors(editors => {
                 for (const editor of editors) {
                     collapseMcqCells(editor);
@@ -64,11 +86,11 @@ export class WebNotebookKernel implements vscode.Disposable, vscode.NotebookCont
             })
         );
 
-        for (const notebook of vscode.workspace.notebookDocuments) {
-            runAutorunCells(notebook);
-        }
         for (const editor of vscode.window.visibleNotebookEditors) {
             collapseMcqCells(editor);
+        }
+        if (vscode.window.activeNotebookEditor) {
+            runAutorunCells(vscode.window.activeNotebookEditor);
         }
     }
     createNotebookCellExecution(cell: vscode.NotebookCell): vscode.NotebookCellExecution {
@@ -91,6 +113,41 @@ export class WebNotebookKernel implements vscode.Disposable, vscode.NotebookCont
     public executeHandler(cells: vscode.NotebookCell[], notebook: vscode.NotebookDocument, controller: vscode.NotebookController): void {
         for (const cell of cells) {
             this._doExecuteCell(cell);
+        }
+    }
+
+    private _getAutorunCellRanges(notebook: vscode.NotebookDocument): vscode.NotebookRange[] {
+        return notebook.getCells()
+            .map((cell, index) =>
+                cell.kind === vscode.NotebookCellKind.Code &&
+                    (cell.metadata?.autorun || cell.document.languageId === 'mcq')
+                    ? new vscode.NotebookRange(index, index + 1)
+                    : undefined
+            )
+            .filter((range): range is vscode.NotebookRange => !!range);
+    }
+
+    private async _executeAutorunCells(editor: vscode.NotebookEditor, ranges: vscode.NotebookRange[]): Promise<void> {
+        const notebookKey = editor.notebook.uri.toString();
+        try {
+            if (vscode.window.activeNotebookEditor?.notebook.uri.toString() !== notebookKey) {
+                return;
+            }
+
+            const originalSelection = editor.selection;
+            const originalSelections = editor.selections;
+
+            try {
+                editor.selection = ranges[0];
+                editor.selections = ranges;
+                await vscode.commands.executeCommand('notebook.cell.execute');
+                this._autorunExecutedNotebooks.add(notebookKey);
+            } finally {
+                editor.selection = originalSelection;
+                editor.selections = originalSelections;
+            }
+        } finally {
+            this._autorunPendingNotebooks.delete(notebookKey);
         }
     }
 
