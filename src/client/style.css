@@ -22,6 +22,62 @@ div#html-output {
   font-family:'Times New Roman', Times, serif;
 }
 
+.feedback {
+  margin-bottom: 12px;
+}
+
+.feedback .info,
+.feedback .error,
+.feedback .success {
+  margin: 0;
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+.mcq-form {
+  border: 1px solid #d7dbe2;
+  border-radius: 12px;
+  padding: 16px;
+  background: linear-gradient(180deg, #ffffff 0%, #f7f9fc 100%);
+  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.08);
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+.mcq-question {
+  margin: 0 0 14px 0;
+  white-space: pre-wrap;
+  font-size: 15px;
+  line-height: 1.45;
+  font-weight: 600;
+}
+
+.mcq-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  cursor: pointer;
+  margin: 10px 0;
+  line-height: 1.4;
+}
+
+.mcq-option input {
+  margin-top: 2px;
+}
+
+.mcq-check-button {
+  margin-top: 12px;
+  padding: 8px 14px;
+  border: 0;
+  border-radius: 999px;
+  background: #0f172a;
+  color: white;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.mcq-check-button:hover {
+  background: #1e293b;
+}
+
 .console {
   font-family:'Courier New', Courier, monospace;
 }

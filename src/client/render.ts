@@ -17,12 +17,67 @@ interface IRenderInfo {
     context: RendererContext<unknown>;
 }
 type messageType = 'info' | 'success' | 'error';
+interface McqOption {
+    text: string;
+    correct: boolean;
+}
+interface ParsedMcq {
+    question: string;
+    options: McqOption[];
+    correctFeedback?: string;
+    wrongFeedback?: string;
+}
+
+function parseMcqSource(source: string): ParsedMcq {
+    const lines = source.split(/\r?\n/);
+    const options: McqOption[] = [];
+    const questionLines: string[] = [];
+    let correctFeedback: string | undefined;
+    let wrongFeedback: string | undefined;
+    let sawOption = false;
+
+    for (const line of lines) {
+        const optionMatch = line.match(/^\s*(?:-\s*)?\[([ xX])\]\s*(.*)$/);
+        if (optionMatch) {
+            sawOption = true;
+            options.push({
+                text: optionMatch[2].trim(),
+                correct: optionMatch[1].toLowerCase() === 'x'
+            });
+            continue;
+        }
+
+        if (!sawOption) {
+            const correctMatch = line.match(/^\s*correct\s*:\s*(.*)$/i);
+            if (correctMatch) {
+                correctFeedback = correctMatch[1].trim();
+                continue;
+            }
+
+            const wrongMatch = line.match(/^\s*(?:wrong|incorrect)\s*:\s*(.*)$/i);
+            if (wrongMatch) {
+                wrongFeedback = wrongMatch[1].trim();
+                continue;
+            }
+        }
+
+        questionLines.push(line);
+    }
+
+    return {
+        question: questionLines.join('\n').trim(),
+        options,
+        correctFeedback,
+        wrongFeedback
+    };
+}
 
 // This function is called to render your contents.
 export function render({ container, feedback, mime, value, style, console: consoleElement }: IRenderInfo) {
     const { language, source, addons } = value;
 
     function addFeedback(message: string, category: messageType = 'info') {
+        feedback.innerHTML = '';
         const el = document.createElement('div');
         el.classList.add(category);
 
@@ -113,6 +168,72 @@ export function render({ container, feedback, mime, value, style, console: conso
 
         container.innerText = `CSS with ${numRules} rules`;
         */
+    } else if (language === 'mcq') {
+        const { question, options, correctFeedback, wrongFeedback } = parseMcqSource(source);
+        if (!question || options.length === 0) {
+            addFeedback('MCQ cells need a question plus at least one option.', 'error');
+            return;
+        }
+
+        const numCorrect = options.filter(o => o.correct).length;
+        const inputType = numCorrect > 1 ? 'checkbox' : 'radio';
+
+        const form = document.createElement('form');
+        form.classList.add('mcq-form');
+
+        const questionEl = document.createElement('p');
+        questionEl.classList.add('mcq-question');
+        questionEl.textContent = question;
+        form.appendChild(questionEl);
+
+        options.forEach((opt, index) => {
+            const label = document.createElement('label');
+            label.classList.add('mcq-option');
+            
+            const input = document.createElement('input');
+            input.type = inputType;
+            input.name = 'mcq-option';
+            input.value = index.toString();
+            
+            label.appendChild(input);
+            const span = document.createElement('span');
+            span.innerHTML = ' ' + opt.text;
+            label.appendChild(span);
+            form.appendChild(label);
+        });
+
+        const checkBtn = document.createElement('button');
+        checkBtn.textContent = 'Check Answer';
+        checkBtn.type = 'button';
+        checkBtn.classList.add('mcq-check-button');
+        
+        checkBtn.addEventListener('click', () => {
+            const inputs = form.querySelectorAll<HTMLInputElement>('input');
+            const checkedInputs = Array.from(inputs).filter(input => input.checked);
+            if (checkedInputs.length === 0) {
+                addFeedback('Select at least one answer before checking.', 'error');
+                return;
+            }
+
+            let allCorrect = true;
+
+            inputs.forEach((input, index) => {
+                const opt = options[index];
+                if (input.checked !== opt.correct) {
+                    allCorrect = false;
+                }
+            });
+
+            if (allCorrect) {
+                addFeedback(correctFeedback || 'Correct!', 'success');
+            } else {
+                addFeedback(wrongFeedback || 'Incorrect. Try again.', 'error');
+            }
+        });
+
+        form.appendChild(checkBtn);
+        container.appendChild(form);
+
     } else if (language === 'javascript' || language === 'js') {
         for(const {type, content} of addons) {
             if(type === 'html') {

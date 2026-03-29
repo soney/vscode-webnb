@@ -4,7 +4,7 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(new WebNotebookKernel());
 }
 
-export function deactivate() {}
+export function deactivate() { }
 
 export class WebNotebookKernel implements vscode.Disposable, vscode.NotebookController {
     public readonly id = 'webnb-kernel';
@@ -15,13 +15,61 @@ export class WebNotebookKernel implements vscode.Disposable, vscode.NotebookCont
 
 
     private readonly _controller: vscode.NotebookController;
+    private readonly _disposables: vscode.Disposable[] = [];
 
-    public constructor () {
+    public constructor() {
         this._controller = vscode.notebooks.createNotebookController(this.id, this.notebookType, this.label);
-        this._controller.supportedLanguages = ['javascript', 'html', 'css', 'js'];
+        this._controller.supportedLanguages = ['javascript', 'html', 'css', 'js', 'mcq'];
         this._controller.description = "Web Notebook";
         this._controller.supportsExecutionOrder = true;
         this._controller.executeHandler = this.executeHandler.bind(this);
+        const runAutorunCells = (notebook: vscode.NotebookDocument) => {
+            if (notebook.notebookType === this.notebookType) {
+                const cellsToRun = notebook.getCells().filter(c =>
+                    c.kind === vscode.NotebookCellKind.Code &&
+                    (c.metadata?.autorun || c.document.languageId === 'mcq')
+                );
+                if (cellsToRun.length > 0) {
+                    // Slight delay to allow the kernel to associate with the notebook
+                    setTimeout(() => {
+                        this.executeHandler(cellsToRun, notebook, this._controller);
+                    }, 500);
+                }
+            }
+        };
+        const collapseMcqCells = (editor: vscode.NotebookEditor) => {
+            if (editor.notebook.notebookType !== this.notebookType) {
+                return;
+            }
+
+            const mcqIndexes = editor.notebook.getCells()
+                .map((cell, index) => cell.document.languageId === 'mcq' ? index : -1)
+                .filter(index => index >= 0);
+
+            if (mcqIndexes.length === 0) {
+                return;
+            }
+
+            setTimeout(() => {
+                void this._collapseCellInputs(editor, mcqIndexes);
+            }, 700);
+        };
+
+        this._disposables.push(
+            vscode.workspace.onDidOpenNotebookDocument(runAutorunCells),
+            vscode.window.onDidChangeVisibleNotebookEditors(editors => {
+                for (const editor of editors) {
+                    collapseMcqCells(editor);
+                }
+            })
+        );
+
+        for (const notebook of vscode.workspace.notebookDocuments) {
+            runAutorunCells(notebook);
+        }
+        for (const editor of vscode.window.visibleNotebookEditors) {
+            collapseMcqCells(editor);
+        }
     }
     createNotebookCellExecution(cell: vscode.NotebookCell): vscode.NotebookCellExecution {
         throw new Error('Method not implemented.');
@@ -37,11 +85,28 @@ export class WebNotebookKernel implements vscode.Disposable, vscode.NotebookCont
 
     public dispose(): void {
         this._controller.dispose();
+        this._disposables.forEach(d => d.dispose());
     }
 
     public executeHandler(cells: vscode.NotebookCell[], notebook: vscode.NotebookDocument, controller: vscode.NotebookController): void {
         for (const cell of cells) {
             this._doExecuteCell(cell);
+        }
+    }
+
+    private async _collapseCellInputs(editor: vscode.NotebookEditor, indexes: number[]): Promise<void> {
+        const originalSelection = editor.selection;
+        const originalSelections = editor.selections;
+
+        try {
+            for (const index of indexes) {
+                editor.selection = new vscode.NotebookRange(index, index + 1);
+                editor.selections = [editor.selection];
+                await vscode.commands.executeCommand('notebook.cell.collapseCellInput');
+            }
+        } finally {
+            editor.selection = originalSelection;
+            editor.selections = originalSelections;
         }
     }
 
@@ -51,7 +116,7 @@ export class WebNotebookKernel implements vscode.Disposable, vscode.NotebookCont
 
         const exec = this._controller.createNotebookCellExecution(cell);
         exec.start(Date.now());
-        let success:boolean = true;
+        let success: boolean = true;
 
         /*
         if(languageId === 'javascript') {

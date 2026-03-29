@@ -36,3 +36,47 @@ console.log("OK");
 console.log("x is", x);
 wrap(x).should('equal', 1).run('Failed; x should be 1', 'x is 1');
 ```
+
+## Autorun Example
+
+Here is a cell that runs automatically when you open the notebook:
+
+```{javascript autorun}
+console.log("Welcome to the notebook! This cell ran automatically.");
+```
+
+```{html autorun}
+<h1>Welcome to the notebook!</h1>
+<p>This cell ran automatically.</p>
+```
+
+## Multiple Choice Examples
+
+Single Correct Option with custom feedback:
+```{mcq}
+What is the capital of France?
+correct: Nice work. Paris is the capital of France.
+wrong: Not quite. Paris is the capital of France.
+[ ] London
+[x] Paris
+[ ] Berlin
+```
+
+Multiple Correct Options:
+```{mcq}
+Which of the following are fruits? (Select all that apply)
+correct: Correct. Apples and bananas are both fruits.
+wrong: Try again. The correct choices are Apple and Banana.
+[x] Apple
+[ ] Carrot
+[x] Banana
+[ ] Celery
+```
+
+Question with default feedback:
+```{mcq}
+Which language runs in the browser in this notebook example?
+[x] JavaScript
+[ ] Rust
+[ ] Go
+```

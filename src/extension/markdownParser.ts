@@ -15,6 +15,7 @@ export interface RawNotebookCell {
 	kind: vscode.NotebookCellKind;
 	addons?: {type: string, content: string, id?: string}[];
 	id?: string;
+	autorun?: boolean;
 	rawCode?: string;
 	rawCodeLanguage?: string;
 }
@@ -22,7 +23,8 @@ export interface RawNotebookCell {
 const LANG_IDS = new Map([
 	['javascript', 'javascript'],
 	['css', 'css'],
-	['html', 'html']
+	['html', 'html'],
+	['mcq', 'mcq']
 ]);
 const LANG_ABBREVS = new Map(
 	Array.from(LANG_IDS.keys()).map(k => [LANG_IDS.get(k), k])
@@ -33,6 +35,7 @@ interface ICodeBlockStart {
 	indentation: string;
 	blockType: 'user-code' | 'addon-code' | 'addon-reference' | 'code-with-id';
 	id?: string;
+	autorun?: boolean;
 }
 
 /**
@@ -40,14 +43,26 @@ interface ICodeBlockStart {
  * between the start and end blocks, etc. This is good enough for typical use cases.
  */
 function parseCodeBlockStart(line: string): ICodeBlockStart | null {
-	// Match user code blocks with optional ID: ```{html id=5}
-	const userCodeBlockMatch = line.match(/(    |\t)?```\{(\S*)(\s+id=(\S+))?\}/);
+	// Match user code blocks with optional ID and autorun: ```{html id=5 autorun}
+	const userCodeBlockMatch = line.match(/(    |\t)?```\{([^\}\s]+)(.*?)\}/);
 	if(userCodeBlockMatch) {
+		const langId = userCodeBlockMatch[2];
+		const rest = userCodeBlockMatch[3] || '';
+		let id, autorun;
+		const idMatch = rest.match(/id=(\S+)/);
+		if (idMatch) {
+			id = idMatch[1];
+		}
+		if (/\bautorun\b/.test(rest)) {
+			autorun = true;
+		}
+
 		return {
 			indentation: userCodeBlockMatch[1],
-			langId: userCodeBlockMatch[2],
+			langId,
 			blockType: 'user-code',
-			id: userCodeBlockMatch[4]
+			id,
+			autorun
 		};
 	} else {
 		// Match addon references: ```+id=5
@@ -61,15 +76,28 @@ function parseCodeBlockStart(line: string): ICodeBlockStart | null {
 			};
 		}
 
-		// Match code blocks with type ```html id=5
-		const codeWithIdMatch = line.match(/(    |\t)?```(\S+)(\s+id\s*=\s*(\S+))/);
-		if(codeWithIdMatch) {
-			return {
-				indentation: codeWithIdMatch[1],
-				langId: codeWithIdMatch[2],
-				blockType: 'code-with-id',
-				id: codeWithIdMatch[4]
-			};
+		// Match code blocks with type ```html id=5 or ```html autorun
+		const codeWithIdMatch = line.match(/(    |\t)?```([^\s+]\S*)(?:\s+(.+))?/);
+		if(codeWithIdMatch && codeWithIdMatch[3]) {
+			const rest = codeWithIdMatch[3];
+			let id, autorun;
+			const idMatch = rest.match(/id\s*=\s*(\S+)/);
+			if (idMatch) {
+				id = idMatch[1];
+			}
+			if (/\bautorun\b/.test(rest)) {
+				autorun = true;
+			}
+			
+			if (id || autorun) {
+				return {
+					indentation: codeWithIdMatch[1],
+					langId: codeWithIdMatch[2],
+					blockType: 'code-with-id',
+					id,
+					autorun
+				};
+			}
 		}
 
 		// Match addon code blocks: ```+test
@@ -160,6 +188,7 @@ export function parseMarkdown(content: string): RawNotebookCell[] {
 				indentation: codeBlockStart.indentation,
 				addons: [],
 				id: codeBlockStart.id,
+				autorun: codeBlockStart.autorun,
 				rawCode: content,
 				rawCodeLanguage: language
 			});
@@ -196,7 +225,8 @@ export function parseMarkdown(content: string): RawNotebookCell[] {
 				trailingWhitespace: trailingWhitespace,
 				rawCode: content,
 				rawCodeLanguage: language,
-				id: codeBlockStart.id
+				id: codeBlockStart.id,
+				autorun: codeBlockStart.autorun
 			});
 		} else {
 			throw new Error(`Unknown code block type: ${codeBlockStart.blockType}`);
@@ -244,7 +274,8 @@ export function writeCellsToMarkdown(cells: ReadonlyArray<vscode.NotebookCellDat
 			const indentation = cell.metadata?.indentation || '';
 			const languageAbbrev = LANG_ABBREVS.get(cell.languageId) ?? cell.languageId;
 			const idPart = cell.metadata?.id ? ` id=${cell.metadata.id}` : '';
-			const codePrefix = indentation + '```{' + languageAbbrev + idPart + '}\n';
+			const autorunPart = cell.metadata?.autorun ? ' autorun' : '';
+			const codePrefix = indentation + '```{' + languageAbbrev + idPart + autorunPart + '}\n';
 			const contents = cell.value.split(/\r?\n/g)
 				.map(line => indentation + line)
 				.join('\n');
@@ -267,10 +298,14 @@ export function writeCellsToMarkdown(cells: ReadonlyArray<vscode.NotebookCellDat
 				}
 			}
 		} else {
-			console.log(cell);
-			if(cell.metadata?.id && cell.value.startsWith('```')) {
+			if((cell.metadata?.id || cell.metadata?.autorun) && cell.value.startsWith('```')) {
+				const idPart = cell.metadata?.id ? ` id=${cell.metadata.id}` : '';
+				const autorunPart = cell.metadata?.autorun ? ' autorun' : '';
 				const addedid = cell.value.replace(/```([^\s\n]+)([^\n]*)\n/g,
-												(_match, lang, rest) => `\`\`\`${lang} id=${cell.metadata?.id}${rest}\n`);
+												(_match, lang, rest) => {
+													let newRest = rest.replace(/\s+id=\S+/g, '').replace(/\bautorun\b/g, '');
+													return `\`\`\`${lang}${idPart}${autorunPart}${newRest}\n`;
+												});
 				result += addedid;
 			} else {
 				result += cell.value;
