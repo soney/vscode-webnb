@@ -1,9 +1,10 @@
 // We've set up this sample using CSS modules, which lets you import class
 // names into JavaScript: https://github.com/css-modules/css-modules
 // You can configure or change this in the webpack.config.js file.
-import * as style from './style.css';
+// import * as style from './style.css';
 import type { RendererContext } from 'vscode-notebook-renderer';
 import cy from './lite-cy';
+import { marked } from 'marked';
 import ConsoleObjectView from './consoleobjectview';
 // import * as css from "css";
 
@@ -12,6 +13,7 @@ interface IRenderInfo {
     feedback: HTMLElement;
     console: HTMLElement;
     style: HTMLStyleElement;
+    addStyle: (css: string) => void;
     mime: string;
     value: any;
     context: RendererContext<unknown>;
@@ -91,47 +93,61 @@ function parseMcqSource(source: string): ParsedMcq {
 }
 
 // This function is called to render your contents.
-export function render({ container, feedback, mime, value, style, console: consoleElement }: IRenderInfo) {
+export function render({ container, feedback, mime, value, style, addStyle, console: consoleElement }: IRenderInfo) {
     const { language, source, addons } = value;
 
-    function addFeedback(message: string, category: messageType = 'info') {
+    function addFeedback(message: string, category: messageType = 'info', isHtml: boolean = false) {
         feedback.innerHTML = '';
         const el = document.createElement('div');
         el.classList.add(category);
 
-        el.innerText = message;
+        if (isHtml) {
+            el.innerHTML = message;
+        } else {
+            el.innerText = message;
+        }
         feedback.append(el);
     }
     function addConsoleMessage(objects: ConsoleObjectView[], category: messageType = 'info') {
         const el = document.createElement('div');
         el.classList.add(category, 'console-message');
-        for(const obj of objects) {
+        for (const obj of objects) {
             const view = obj.getElement();
             el.append(view);
         }
         consoleElement.append(el);
     }
 
-    if(language === 'html') {
+    if (language === 'html') {
         container.innerHTML = source;
 
-        for(const {type, content} of addons) {
-            if(type === 'test' || type === 'javascript' || type === 'js') {
+        for (const { type, content } of addons) {
+            if (type === 'test' || type === 'javascript' || type === 'js') {
                 eval(content);
-            } else if(type === 'css') {
-                style.textContent += '\n\n' + content;
+            } else if (type === 'css') {
+                addStyle(content);
             }
 
         }
 
         function assert(selector: string, passMessage: string, failMessage: string) {
             return cy(container, (passed: boolean, message: string, trace: string[]) => {
-                if(passed) {
+                if (passed) {
                     addFeedback(`${message}`, 'success');
                 } else {
                     addFeedback(`${message}`, 'error');
                 }
             }).get(selector);
+        }
+
+        function assertRule(selector: string) {
+            return cy.getRule(selector, (passed: boolean, message: string, trace: string[]) => {
+                if (passed) {
+                    addFeedback(`${message}`, 'success');
+                } else {
+                    addFeedback(`${message}`, 'error');
+                }
+            });
         }
 
         // addFeedback(`Rendered HTML with ${source.length} characters.`);
@@ -141,30 +157,31 @@ export function render({ container, feedback, mime, value, style, console: conso
         // } catch (error) {
         //     addFeedback(`Error in Cypress assertion: ${error}`, 'error');
         // }
-//         `<h1>Output!:</h1>
-// <div id="outp"></div>
-// ${source}
-// <script>
-// function addToOutput(message) {
-// console.log(message);
-// const h1 = document.querySelector('h1');
-// h1.textContent = 'Output from the web notebook renderer:';
-//     const outputDiv = document.querySelector('#outp');
-//     if (outputDiv) {
-//         const pre = document.createElement('pre');
-//         pre.append(message);
-//         outputDiv.appendChild(pre);
-//     }
-// }
-// addToOutput('This is a message from the web notebook renderer.');
-// </script>`;
-    } else if(language === 'css') {
-        for(const {type, content} of addons) {
-            if(type === 'html') {
+        //         `<h1>Output!:</h1>
+        // <div id="outp"></div>
+        // ${source}
+        // <script>
+        // function addToOutput(message) {
+        // console.log(message);
+        // const h1 = document.querySelector('h1');
+        // h1.textContent = 'Output from the web notebook renderer:';
+        //     const outputDiv = document.querySelector('#outp');
+        //     if (outputDiv) {
+        //         const pre = document.createElement('pre');
+        //         pre.append(message);
+        //         outputDiv.appendChild(pre);
+        //     }
+        // }
+        // addToOutput('This is a message from the web notebook renderer.');
+        // </script>`;
+    } else if (language === 'css') {
+        addStyle(source);
+        for (const { type, content } of addons) {
+            if (type === 'html') {
                 container.innerHTML = content;
-            } else if(type === 'css') {
-                style.textContent += '\n\n' + content;
-            } else if(type === 'test' || type === 'javascript' || type === 'js') {
+            } else if (type === 'css') {
+                addStyle(content);
+            } else if (type === 'test' || type === 'javascript' || type === 'js') {
                 eval(content);
             }
         }
@@ -199,9 +216,9 @@ export function render({ container, feedback, mime, value, style, console: conso
         const form = document.createElement('form');
         form.classList.add('mcq-form');
 
-        const questionEl = document.createElement('p');
+        const questionEl = document.createElement('div');
         questionEl.classList.add('mcq-question');
-        questionEl.textContent = question;
+        questionEl.innerHTML = marked.parse(question) as string;
         form.appendChild(questionEl);
 
         const optionFeedbackEls: HTMLDivElement[] = [];
@@ -212,15 +229,15 @@ export function render({ container, feedback, mime, value, style, console: conso
 
             const label = document.createElement('label');
             label.classList.add('mcq-option');
-            
+
             const input = document.createElement('input');
             input.type = inputType;
             input.name = 'mcq-option';
             input.value = index.toString();
-            
+
             label.appendChild(input);
             const span = document.createElement('span');
-            span.textContent = opt.text;
+            span.innerHTML = marked.parseInline(opt.text) as string;
             label.appendChild(span);
 
             const optionFeedbackEl = document.createElement('div');
@@ -236,7 +253,7 @@ export function render({ container, feedback, mime, value, style, console: conso
         checkBtn.textContent = 'Check Answer';
         checkBtn.type = 'button';
         checkBtn.classList.add('mcq-check-button');
-        
+
         checkBtn.addEventListener('click', () => {
             const inputs = form.querySelectorAll<HTMLInputElement>('input');
             const checkedInputs = Array.from(inputs).filter(input => input.checked);
@@ -266,14 +283,14 @@ export function render({ container, feedback, mime, value, style, console: conso
                     const optionFeedbackEl = optionFeedbackEls[index];
                     optionFeedbackEl.hidden = false;
                     optionFeedbackEl.classList.add(itemIsCorrect ? 'success' : 'error');
-                    optionFeedbackEl.textContent = itemFeedback;
+                    optionFeedbackEl.innerHTML = marked.parseInline(itemFeedback) as string;
                 }
             });
 
             if (allCorrect) {
-                addFeedback(correctFeedback || 'Correct!', 'success');
+                addFeedback(marked.parseInline(correctFeedback || 'Correct!') as string, 'success', true);
             } else {
-                addFeedback(wrongFeedback || 'Incorrect. Try again.', 'error');
+                addFeedback(marked.parseInline(wrongFeedback || 'Incorrect. Try again.') as string, 'error', true);
             }
         });
 
@@ -281,18 +298,18 @@ export function render({ container, feedback, mime, value, style, console: conso
         container.appendChild(form);
 
     } else if (language === 'javascript' || language === 'js') {
-        for(const {type, content} of addons) {
-            if(type === 'html') {
+        for (const { type, content } of addons) {
+            if (type === 'html') {
                 container.innerHTML = content;
-            } else if(type === 'css') {
+            } else if (type === 'css') {
                 style.textContent += '\n\n' + content;
-            // } else if(type === 'test' || type === 'javascript' || type === 'js') {
-            //     eval(content);
+                // } else if(type === 'test' || type === 'javascript' || type === 'js') {
+                //     eval(content);
             }
         }
         const oldConsole = window.console;
         const console = {
-            doLog: (method: "log"|"trace"|"error", ...args: any[]) => {
+            doLog: (method: "log" | "trace" | "error", ...args: any[]) => {
                 let cls: messageType = "info";
                 if (method === 'log' || method === 'trace') { cls = "info"; }
                 else if (method === 'error') { cls = "error"; }
@@ -315,7 +332,7 @@ export function render({ container, feedback, mime, value, style, console: conso
         const sy = cy;
         function wrap(object: any, passMessage: string, failMessage: string) {
             return cy.wrap(object, (passed: boolean, message: string, trace: string[]) => {
-                if(passed) {
+                if (passed) {
                     addFeedback(`${message}`, 'success');
                 } else {
                     addFeedback(`${message}`, 'error');
@@ -324,8 +341,8 @@ export function render({ container, feedback, mime, value, style, console: conso
         }
         try {
             let toEval = source;
-            for(const {type, content} of addons) {
-                if(type === 'test' || type === 'javascript' || type === 'js') {
+            for (const { type, content } of addons) {
+                if (type === 'test' || type === 'javascript' || type === 'js') {
                     toEval += '\n\n' + content;
                 }
             }

@@ -83,6 +83,7 @@
         "gen-vsix": "npx vsce package -o web-notebook.vsix"
     },
     "devDependencies": {
+        "@types/marked": "^5.0.2",
         "@types/mocha": "^10.0.10",
         "@types/node": "20.x",
         "@types/vscode": "^1.97.0",
@@ -107,5 +108,8 @@
         "webpack": "^5.97.1",
         "webpack-cli": "^6.0.1",
         "yarn": "^1.22.22"
+    },
+    "dependencies": {
+        "marked": "^17.0.5"
     }
 }

@@ -23,6 +23,9 @@ h1 {
   color: blue;
 }
 ```
+```+test
+assert('h1').should('exist').should('have.css', 'color: blue').run('Failed to find blue h1 rule', 'Found blue h1 rule');
+```
 ```{javascript}
 const x = 1;
 console.log(x);
@@ -35,6 +38,17 @@ console.log("OK");
 ```+test
 console.log("x is", x);
 wrap(x).should('equal', 1).run('Failed; x should be 1', 'x is 1');
+```
+
+```{css}
+h1 {
+  color: red;
+}
+```
+```+html
+<h1>Goodbye</h1>
+```
+```+test
 ```
 
 ## Autorun Example
@@ -88,4 +102,17 @@ Which language runs in the browser in this notebook example?
 [x] JavaScript
 [ ] Rust
 [ ] Go
+```
+
+Markdown Example:
+```{mcq}
+Which of the following creates a **bold** `text` element in HTML?
+correct: Correct! The `<strong>` tag renders text strongly, typically in **bold**.
+wrong: Nope! Try looking for a tag that implies *strong* importance.
+[ ] `<em>text</em>`
+  correct: `<em>` implies emphasis (often *italic*), not bold.
+[x] `<strong>text</strong>`
+  correct: Correct!
+[ ] `<br>`
+  correct: `<br>` is just a line break!
 ```

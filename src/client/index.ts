@@ -18,14 +18,15 @@ __webpack_public_path__ = new URL(scriptUrl.replace(/[^/]+$/, '') + __webpack_re
 
 export const activate: ActivationFunction = (context) => {
     const style = document.createElement('style');
-	style.setAttribute('type', 'text/css');
-	style.textContent = styleCss;
+    style.setAttribute('type', 'text/css');
+    style.textContent = styleCss;
+
 
     return {
         renderOutputItem(outputItem, element) {
             const value = outputItem.json();
 
-            if(!value.addons || !Array.isArray(value.addons)) {
+            if (!value.addons || !Array.isArray(value.addons)) {
                 value.addons = [];
             }
 
@@ -40,6 +41,7 @@ export const activate: ActivationFunction = (context) => {
                 shadow.append(root);
             }
 
+
             const root = shadow.querySelector<HTMLElement>('#root')!;
             errorOverlay.wrap(root, () => {
                 root.innerHTML = '';
@@ -53,7 +55,16 @@ export const activate: ActivationFunction = (context) => {
                 node.setAttribute('id', 'html-output');
                 root.append(feedback, node, consoleElement);
 
-                render({ feedback, container: node, mime: outputItem.mime, style, value, context, console: consoleElement });
+                function addStyle(css: string) {
+                    const style = document.createElement('style');
+                    style.setAttribute('type', 'text/css');
+                    style.textContent = css;
+                    if (shadow) {
+                        shadow.insertBefore(style, root);
+                    }
+                }
+
+                render({ feedback, container: node, mime: outputItem.mime, style, value, context, console: consoleElement, addStyle });
             });
         },
         disposeOutputItem(outputId) {

@@ -31,10 +31,24 @@ interface Chainable {
     contains(text: string): Chainable;
     run(failMessage?: string, successMessage?: string): void;
     subject?: any;
-    // result(onPass: (message: string, trace: string[]) => void, onFail: (message: string, trace: string[]) => void): void;
 }
 
-function createChain(elements: Element[], onResult: (passed: boolean, message: string, trace: string[]) => void = () => {},  messageTrace: string[]=[], failed: boolean = false, subject?: any): Chainable {
+function normalizeCssValue(prop: string, value: string, tagName: string = 'div', parentElement?: Element | null): string {
+    const dummy = document.createElement(tagName);
+    dummy.style.setProperty(prop, value);
+    dummy.style.display = 'none';
+    const container = parentElement || document.body;
+    if (container) {
+        container.appendChild(dummy);
+    }
+    const computed = window.getComputedStyle(dummy).getPropertyValue(prop);
+    if (container) {
+        container.removeChild(dummy);
+    }
+    return computed;
+}
+
+function createChain(elements: Element[], onResult: (passed: boolean, message: string, trace: string[]) => void = () => { }, messageTrace: string[] = [], failed: boolean = false, subject?: any): Chainable {
     const chain: Chainable = {
         elements,
         messageTrace,
@@ -43,14 +57,12 @@ function createChain(elements: Element[], onResult: (passed: boolean, message: s
         subject,
 
         should(assertion: Assertion, expected?: string): Chainable {
-            if(failed) { return this; }
+            if (failed) { return this; }
 
-            console.log(this.subject, assertion, expected);
-
-            if(this.subject !== undefined) {
-                if(assertion === 'equal') {
+            if (this.subject !== undefined) {
+                if (assertion === 'equal') {
                     console.log('Checking equality', this.subject, expected);
-                    if(deepEqual(this.subject, expected)) {
+                    if (deepEqual(this.subject, expected)) {
                         return createChain(this.elements, this.onResult, messageTrace.concat(`Assertion passed: ${assertion} with value "${expected}"`), this.failed, this.subject);
                     } else {
                         return createChain(this.elements, this.onResult, messageTrace.concat(`Expected ${this.subject} to equal ${expected}`), true, this.subject);
@@ -58,31 +70,67 @@ function createChain(elements: Element[], onResult: (passed: boolean, message: s
                 }
             }
 
-            if(assertion === 'exist') {
-                if(this.elements.length === 0) {
+            if (assertion === 'exist') {
+                if (this.subject !== undefined) {
+                    if (this.subject === null || (this.subject.length !== undefined && this.subject.length === 0)) {
+                        return createChain(this.elements, this.onResult, messageTrace.concat('Expected subject to exist, but it was null or empty'), true, this.subject);
+                    } else {
+                        return createChain(this.elements, this.onResult, messageTrace.concat(`Assertion passed: ${assertion}`), this.failed, this.subject);
+                    }
+                }
+
+                if (this.elements.length === 0) {
                     return createChain([], this.onResult, messageTrace.concat('Expected at least one element to exist, but found none'), true, this.subject);
                 } else {
                     return createChain(this.elements, this.onResult, messageTrace.concat(`Assertion passed: ${assertion}`), this.failed, this.subject);
                 }
             }
 
+            if (this.subject !== undefined && assertion === 'have.css') {
+                const [prop, ...valParts] = expected?.split(':').map(s => s.trim()) ?? [];
+                const expectedValue = valParts.join(':').trim();
+                if (!prop || expectedValue === undefined) {
+                    return createChain(this.elements, this.onResult, messageTrace.concat(`Invalid CSS assertion syntax. Use "property: value"`), true, this.subject);
+                }
+
+                if (this.subject instanceof Element) {
+                    const computed = window.getComputedStyle(this.subject);
+                    const actualValue = computed.getPropertyValue(prop);
+                    const computedExpected = normalizeCssValue(prop, expectedValue, this.subject.tagName, this.subject.parentElement);
+
+                    if (actualValue.trim() !== expectedValue && actualValue.trim() !== computedExpected.trim()) {
+                        return createChain(this.elements, this.onResult, messageTrace.concat(`Expected CSS "${prop}: ${expectedValue}", got "${actualValue}"`), true, this.subject);
+                    }
+                } else if (this.subject.style) { // It's a CSSStyleRule
+                    const actualValue = this.subject.style.getPropertyValue(prop).trim();
+                    const computedActual = document.body ? normalizeCssValue(prop, actualValue) : actualValue;
+                    const computedExpected = document.body ? normalizeCssValue(prop, expectedValue) : expectedValue;
+
+                    if (actualValue !== expectedValue && computedActual !== computedExpected) {
+                        return createChain(this.elements, this.onResult, messageTrace.concat(`Expected CSS rule "${prop}: ${expectedValue}", got "${actualValue}"`), true, this.subject);
+                    }
+                } else {
+                    return createChain(this.elements, this.onResult, messageTrace.concat(`Subject does not have a style property to check CSS against`), true, this.subject);
+                }
+                return createChain(this.elements, this.onResult, messageTrace.concat(`Assertion passed: ${assertion}${expected ? ` with value "${expected}"` : ''}`), this.failed, this.subject);
+            }
+
             for (const el of this.elements) {
-                if(assertion === 'have.text') {
-                    if(el.textContent !== expected) {
+                if (assertion === 'have.text') {
+                    if (el.textContent !== expected) {
                         return createChain(this.elements, this.onResult, messageTrace.concat(`Expected text "${expected}", got "${el.textContent}"`), true, this.subject);
                     }
-                } else if(assertion === 'have.class') {
+                } else if (assertion === 'have.class') {
                     if (!(el instanceof HTMLElement) || !el.classList.contains(expected!)) {
                         return createChain(this.elements, this.onResult, messageTrace.concat(`Expected element to have class "${expected}"`), true, this.subject);
-                        // throw new Error(`Expected element to have class "${expected}"`);
                     }
-                } else if(assertion === 'have.attribute') {
+                } else if (assertion === 'have.attribute') {
                     if (!(el instanceof HTMLElement) || !el.hasAttribute(expected!)) {
                         return createChain(this.elements, this.onResult, messageTrace.concat(`Expected element to have attribute "${expected}"`), true, this.subject);
-                        // throw new Error(`Expected element to have attribute "${expected}"`);
                     }
-                } else if(assertion === 'have.css') {
-                    const [prop, expectedValue] = expected?.split(':').map(s => s.trim()) ?? [];
+                } else if (assertion === 'have.css') {
+                    const [prop, ...valParts] = expected?.split(':').map(s => s.trim()) ?? [];
+                    const expectedValue = valParts.join(':').trim();
                     if (!prop || expectedValue === undefined) {
                         return createChain(this.elements, this.onResult, messageTrace.concat(`Invalid CSS assertion syntax. Use "property: value"`), true, this.subject);
                     }
@@ -91,7 +139,10 @@ function createChain(elements: Element[], onResult: (passed: boolean, message: s
                     }
                     const computed = window.getComputedStyle(el);
                     const actualValue = computed.getPropertyValue(prop);
-                    if (actualValue.trim() !== expectedValue) {
+
+                    const computedExpected = normalizeCssValue(prop, expectedValue, el.tagName, el.parentElement);
+
+                    if (actualValue.trim() !== expectedValue && actualValue.trim() !== computedExpected.trim()) {
                         return createChain(this.elements, this.onResult, messageTrace.concat(`Expected CSS "${prop}: ${expectedValue}", got "${actualValue}"`), true, this.subject);
                     }
                 }
@@ -100,7 +151,7 @@ function createChain(elements: Element[], onResult: (passed: boolean, message: s
         },
 
         click(): Chainable {
-            if(failed) { return this; }
+            if (failed) { return this; }
 
             this.elements.forEach(el => {
                 if (el instanceof HTMLElement) {
@@ -111,7 +162,7 @@ function createChain(elements: Element[], onResult: (passed: boolean, message: s
         },
 
         type(text: string): Chainable {
-            if(failed) { return this; }
+            if (failed) { return this; }
             this.elements.forEach(el => {
                 if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
                     el.value = text;
@@ -124,7 +175,7 @@ function createChain(elements: Element[], onResult: (passed: boolean, message: s
         },
 
         clear(): Chainable {
-            if(failed) { return this; }
+            if (failed) { return this; }
             this.elements.forEach(el => {
                 if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
                     el.value = '';
@@ -135,7 +186,7 @@ function createChain(elements: Element[], onResult: (passed: boolean, message: s
         },
 
         find(selector: string): Chainable {
-            if(failed) { return this; }
+            if (failed) { return this; }
             let found: Element[] = [];
             this.elements.forEach(el => {
                 found = found.concat(Array.from(el.querySelectorAll(selector)));
@@ -148,7 +199,7 @@ function createChain(elements: Element[], onResult: (passed: boolean, message: s
         },
 
         contains(text: string): Chainable {
-            if(failed) { return this; }
+            if (failed) { return this; }
 
             const all = Array.from(document.querySelectorAll('*'));
             const found = all.filter(el => el.textContent?.includes(text));
@@ -156,7 +207,7 @@ function createChain(elements: Element[], onResult: (passed: boolean, message: s
         },
 
         run(failMessage?: string, successMessage?: string): void {
-            if(this.onResult) {
+            if (this.onResult) {
                 this.onResult(!this.failed, (this.failed ? (failMessage) : (successMessage)) ?? this.messageTrace.join('\n'), this.messageTrace);
             }
         }
@@ -175,7 +226,7 @@ declare global {
 */
 
 const sy = Object.assign(
-    function (el: string|Element|Element[], onResult?: (passed: boolean, message: string, trace: string[]) => void): Chainable {
+    function (el: string | Element | Element[], onResult?: (passed: boolean, message: string, trace: string[]) => void): Chainable {
         if (typeof el === 'string') {
             const nodes = Array.from(document.querySelectorAll(el));
             return createChain(nodes, onResult);
@@ -186,11 +237,37 @@ const sy = Object.assign(
         } else {
             throw new Error('Invalid argument: must be a string selector, Element, or array of Elements');
         }
-    }, { 
-        wrap: (object: any, onResult?: (passed: boolean, message: string, trace: string[]) => void) => {
-            return createChain([], onResult, [], false, object);
+    }, {
+    wrap: (object: any, onResult?: (passed: boolean, message: string, trace: string[]) => void) => {
+        return createChain([], onResult, [], false, object);
+    },
+    getRule: (selector: string, onResult?: (passed: boolean, message: string, trace: string[]) => void) => {
+        const allSheets: StyleSheetList[] = [document.styleSheets];
+        document.querySelectorAll('*').forEach(el => {
+            if (el.shadowRoot?.styleSheets) {
+                allSheets.push(el.shadowRoot.styleSheets);
+            }
+        });
+
+        for (const sheets of allSheets) {
+            for (let i = 0; i < sheets.length; i++) {
+                const sheet = sheets[i] as CSSStyleSheet;
+                try {
+                    const rules = sheet.cssRules || sheet.rules;
+                    for (let j = 0; j < rules.length; j++) {
+                        const rule = rules[j];
+                        if (rule instanceof CSSStyleRule && rule.selectorText === selector) {
+                            return createChain([], onResult, [], false, rule);
+                        }
+                    }
+                } catch (e) {
+                    // Ignore cross-origin issues
+                }
+            }
         }
+        return createChain([], onResult, [`Expected CSS rule for "${selector}" to exist, but found none`], true, null);
     }
+}
 );
 
 // ——— support cy.wrap(obj) ———
