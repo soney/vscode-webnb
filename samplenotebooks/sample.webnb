@@ -2,6 +2,19 @@
 
 This is an example of a notebook.
 
+```{js}
+document.querySelector('#el').addEventListener('click', () => {
+    document.querySelector('#outp').textContent += 'Hello';
+});
+```
+```+html
+<button id="el">Click me</button>
+<div id="outp"></div>
+```
+```+test
+assert('#el').click().run('Failed to click button', 'Clicked button');
+assert('#outp').should('have.text', 'Hello').run('Failed to set output', 'Set output');
+```
 ```html id=blahblah
 <html>
   <body>
@@ -9,10 +22,8 @@ This is an example of a notebook.
   </body>
 </html>
 ```
-
-
 ```{html}
-<h1>Hello</h1>
+<h1 style="color: blue">Hello</h1>
 <button>Click me</button>
 ```
 ```+test
@@ -26,6 +37,11 @@ h1 {
 ```+test
 assert('h1').should('exist').should('have.css', 'color: blue').run('Failed to find blue h1 rule', 'Found blue h1 rule');
 ```
+
+```{html}
+
+```
+
 ```{javascript}
 const x = 1;
 console.log(x);
@@ -39,7 +55,6 @@ console.log("OK");
 console.log("x is", x);
 wrap(x).should('equal', 1).run('Failed; x should be 1', 'x is 1');
 ```
-
 ```{css}
 h1 {
   color: red;
@@ -49,8 +64,8 @@ h1 {
 <h1>Goodbye</h1>
 ```
 ```+test
-```
 
+```
 ## Autorun Example
 
 Here is a cell that runs automatically when you open the notebook:

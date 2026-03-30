@@ -118,6 +118,26 @@ export function render({ container, feedback, mime, value, style, addStyle, cons
         consoleElement.append(el);
     }
 
+    function assert(selector: string, passMessage: string, failMessage: string) {
+        return cy(container, (passed: boolean, message: string, trace: string[]) => {
+            if (passed) {
+                addFeedback(`${message}`, 'success');
+            } else {
+                addFeedback(`${message}`, 'error');
+            }
+        }).get(selector);
+    }
+
+    function assertRule(selector: string) {
+        return cy.getRule(selector, (passed: boolean, message: string, trace: string[]) => {
+            if (passed) {
+                addFeedback(`${message}`, 'success');
+            } else {
+                addFeedback(`${message}`, 'error');
+            }
+        });
+    }
+
     if (language === 'html') {
         container.innerHTML = source;
 
@@ -128,26 +148,6 @@ export function render({ container, feedback, mime, value, style, addStyle, cons
                 addStyle(content);
             }
 
-        }
-
-        function assert(selector: string, passMessage: string, failMessage: string) {
-            return cy(container, (passed: boolean, message: string, trace: string[]) => {
-                if (passed) {
-                    addFeedback(`${message}`, 'success');
-                } else {
-                    addFeedback(`${message}`, 'error');
-                }
-            }).get(selector);
-        }
-
-        function assertRule(selector: string) {
-            return cy.getRule(selector, (passed: boolean, message: string, trace: string[]) => {
-                if (passed) {
-                    addFeedback(`${message}`, 'success');
-                } else {
-                    addFeedback(`${message}`, 'error');
-                }
-            });
         }
 
         // addFeedback(`Rendered HTML with ${source.length} characters.`);
@@ -302,7 +302,7 @@ export function render({ container, feedback, mime, value, style, addStyle, cons
             if (type === 'html') {
                 container.innerHTML = content;
             } else if (type === 'css') {
-                style.textContent += '\n\n' + content;
+                addStyle(content);
                 // } else if(type === 'test' || type === 'javascript' || type === 'js') {
                 //     eval(content);
             }
