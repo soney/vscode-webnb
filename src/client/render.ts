@@ -118,6 +118,7 @@ export function render({ container, feedback, mime, value, style, addStyle, cons
         consoleElement.append(el);
     }
 
+    const sy = cy;
     function assert(selector: string, passMessage: string, failMessage: string) {
         return cy(container, (passed: boolean, message: string, trace: string[]) => {
             if (passed) {
@@ -130,6 +131,15 @@ export function render({ container, feedback, mime, value, style, addStyle, cons
 
     function assertRule(selector: string) {
         return cy.getRule(selector, (passed: boolean, message: string, trace: string[]) => {
+            if (passed) {
+                addFeedback(`${message}`, 'success');
+            } else {
+                addFeedback(`${message}`, 'error');
+            }
+        });
+    }
+    function wrap(object: any, passMessage: string, failMessage: string) {
+        return cy.wrap(object, (passed: boolean, message: string, trace: string[]) => {
             if (passed) {
                 addFeedback(`${message}`, 'success');
             } else {
@@ -329,16 +339,6 @@ export function render({ container, feedback, mime, value, style, addStyle, cons
         };
         const document = container;
         (document as any).body = container;
-        const sy = cy;
-        function wrap(object: any, passMessage: string, failMessage: string) {
-            return cy.wrap(object, (passed: boolean, message: string, trace: string[]) => {
-                if (passed) {
-                    addFeedback(`${message}`, 'success');
-                } else {
-                    addFeedback(`${message}`, 'error');
-                }
-            });
-        }
         try {
             let toEval = source;
             for (const { type, content } of addons) {

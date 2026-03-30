@@ -64,7 +64,7 @@ h1 {
 <h1>Goodbye</h1>
 ```
 ```+test
-
+assert('h1').should('exist').should('have.css', 'color: red').run('Failed to find red h1 rule', 'Found red h1 rule');
 ```
 ## Autorun Example
 
