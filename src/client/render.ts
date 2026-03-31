@@ -32,6 +32,33 @@ interface ParsedMcq {
     wrongFeedback?: string;
 }
 
+interface Addon {
+    type: string;
+    content: string;
+    id?: string;
+}
+
+function normalizeAddonType(type: string | undefined): string {
+    return (type || '').trim().toLowerCase().replace(/^\+/, '');
+}
+
+function isSolutionAddon(type: string | undefined): boolean {
+    return normalizeAddonType(type) === 'solution';
+}
+
+function isScriptAddon(type: string | undefined): boolean {
+    const normalizedType = normalizeAddonType(type);
+    return normalizedType === 'test' || normalizedType === 'javascript' || normalizedType === 'js';
+}
+
+function isHtmlAddon(type: string | undefined): boolean {
+    return normalizeAddonType(type) === 'html';
+}
+
+function isCssAddon(type: string | undefined): boolean {
+    return normalizeAddonType(type) === 'css';
+}
+
 function parseMcqSource(source: string): ParsedMcq {
     const lines = source.split(/\r?\n/);
     const options: McqOption[] = [];
@@ -95,6 +122,10 @@ function parseMcqSource(source: string): ParsedMcq {
 // This function is called to render your contents.
 export function render({ container, feedback, mime, value, style, addStyle, console: consoleElement }: IRenderInfo) {
     const { language, source, addons } = value;
+    // Solution addons are authoring helpers and should never be rendered or executed.
+    const activeAddons: Addon[] = Array.isArray(addons)
+        ? addons.filter((addon: Addon) => !isSolutionAddon(addon.type))
+        : [];
 
     function addFeedback(message: string, category: messageType = 'info', isHtml: boolean = false) {
         feedback.innerHTML = '';
@@ -151,10 +182,10 @@ export function render({ container, feedback, mime, value, style, addStyle, cons
     if (language === 'html') {
         container.innerHTML = source;
 
-        for (const { type, content } of addons) {
-            if (type === 'test' || type === 'javascript' || type === 'js') {
+        for (const { type, content } of activeAddons) {
+            if (isScriptAddon(type)) {
                 eval(content);
-            } else if (type === 'css') {
+            } else if (isCssAddon(type)) {
                 addStyle(content);
             }
 
@@ -186,12 +217,12 @@ export function render({ container, feedback, mime, value, style, addStyle, cons
         // </script>`;
     } else if (language === 'css') {
         addStyle(source);
-        for (const { type, content } of addons) {
-            if (type === 'html') {
+        for (const { type, content } of activeAddons) {
+            if (isHtmlAddon(type)) {
                 container.innerHTML = content;
-            } else if (type === 'css') {
+            } else if (isCssAddon(type)) {
                 addStyle(content);
-            } else if (type === 'test' || type === 'javascript' || type === 'js') {
+            } else if (isScriptAddon(type)) {
                 eval(content);
             }
         }
@@ -308,10 +339,10 @@ export function render({ container, feedback, mime, value, style, addStyle, cons
         container.appendChild(form);
 
     } else if (language === 'javascript' || language === 'js') {
-        for (const { type, content } of addons) {
-            if (type === 'html') {
+        for (const { type, content } of activeAddons) {
+            if (isHtmlAddon(type)) {
                 container.innerHTML = content;
-            } else if (type === 'css') {
+            } else if (isCssAddon(type)) {
                 addStyle(content);
                 // } else if(type === 'test' || type === 'javascript' || type === 'js') {
                 //     eval(content);
@@ -341,8 +372,8 @@ export function render({ container, feedback, mime, value, style, addStyle, cons
         (document as any).body = container;
         try {
             let toEval = source;
-            for (const { type, content } of addons) {
-                if (type === 'test' || type === 'javascript' || type === 'js') {
+            for (const { type, content } of activeAddons) {
+                if (isScriptAddon(type)) {
                     toEval += '\n\n' + content;
                 }
             }
