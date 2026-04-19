@@ -55,6 +55,31 @@ console.log("OK");
 console.log("x is", x);
 wrap(x).should('equal', 1).run('Failed; x should be 1', 'x is 1');
 ```
+
+## Node Example
+
+```{node}
+const answer = 6 * 7;
+console.log('node-like cwd:', process.cwd());
+module.exports = { answer };
+```
+```+test
+wrap(typeof process.cwd).should('equal', 'function').run('Node process API not available', 'Node process API available');
+wrap(answer).should('equal', 42).run('Node computation failed', 'Node computation succeeded');
+```
+
+## Module Syntax Example
+
+```{node}
+import path from 'path';
+
+export const lessonFile = path.basename('/workspace/lesson.txt');
+console.log('lesson file:', lessonFile);
+```
+```+test
+wrap(lessonFile).should('equal', 'lesson.txt').run('Module import/export did not run correctly', 'Module import/export worked');
+```
+
 ```{css}
 h1 {
   color: red;
@@ -66,6 +91,57 @@ h1 {
 ```+test
 assert('h1').should('exist').should('have.css', 'color: red').run('Failed to find red h1 rule', 'Found red h1 rule');
 ```
+
+## React Example
+
+```{react}
+const App = () => {
+  return (
+    <section>
+      <h2>React Cell</h2>
+      <p id="react-message">Hello from JSX</p>
+    </section>
+  );
+};
+
+renderReact(<App />);
+```
+```+test
+assert('#react-message').should('have.text', 'Hello from JSX').run('React output was not rendered', 'React output rendered correctly');
+```
+
+## JSX Alias + Custom Mount Example
+
+```{jsx}
+const ProductCard = ({ title, price }) => (
+  <article className="card">
+    <h3>{title}</h3>
+    <p className="price">${price}</p>
+  </article>
+);
+
+renderReact(<ProductCard title="Notebook Pro" price={49} />, '#app');
+```
+```+html
+<div id="app"></div>
+```
+```+css
+.card {
+  border: 1px solid #ccc;
+  border-radius: 8px;
+  padding: 12px;
+  max-width: 240px;
+}
+
+.price {
+  font-weight: 700;
+}
+```
+```+test
+assert('#app h3').should('have.text', 'Notebook Pro').run('Failed to render JSX title', 'Rendered JSX title');
+assert('#app .price').should('have.text', '$49').run('Failed to render JSX price', 'Rendered JSX price');
+```
+
 ## Autorun Example
 
 Here is a cell that runs automatically when you open the notebook:
@@ -99,6 +175,64 @@ const stylesheetPath = 'external-example/styles.css';
 checklist([
   check.file(stylesheetPath, 'Inside `external-example`, create `styles.css`'),
   check.file(stylesheetPath).contains('font-family', 'In `styles.css`, set a `font-family`')
+]);
+```
+
+## Terminal Exercise Example
+
+Practice a short terminal workflow in the simulated terminal below. Run these commands in order:
+
+1. `mkdir terminal-example`
+2. `cd terminal-example`
+3. `npm init -y`
+
+The checklist verifies each command appears in command history.
+
+```{external}
+title: Terminal setup practice
+interval: 2s
+- command: mkdir terminal-example | Create the exercise folder from the terminal
+- command: cd terminal-example | Move into the exercise folder
+- command: npm init -y | Initialize a package.json file
+```
+```+terminal
+welcome: Run the setup commands shown above. This terminal is simulated.
+prompt: $ 
+```
+```+test
+checklist([
+  check.commands(
+    ['mkdir terminal-example', 'cd terminal-example', 'npm init -y'],
+    'Run the setup commands in order'
+  )
+]);
+```
+
+## Terminal Test Helper Example
+
+This example shows how to assert specific commands with both declarative and programmatic checks.
+
+```{external}
+title: Verify git setup commands
+interval: 2s
+- command: git init | Initialize a git repository
+- command: git status | Run status to inspect the repository
+```
+```+terminal
+welcome: Simulate a tiny git workflow.
+prompt: $ 
+```
+```+test
+checklist([
+  check.command('git init', 'Run `git init`'),
+  check.command('git status', 'Run `git status`'),
+  check.commands(['git init', 'git status'], 'Run init before status'),
+  {
+    label: 'Use the terminal helper to verify `git status` ran',
+    passed: terminal.didRun('git status'),
+    detail: 'Expected terminal history to include `git status`.',
+    run() {}
+  }
 ]);
 ```
 

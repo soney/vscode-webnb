@@ -233,7 +233,7 @@ export class WebNotebookKernel implements vscode.Disposable, vscode.NotebookCont
     public readonly id = 'webnb-kernel';
     public readonly notebookType = 'web-notebook';
     public readonly label = 'Web Notebook';
-    public readonly supportedLanguages = ['javascript', 'html', 'css', 'js', 'mcq', 'external', 'checklist'];
+    public readonly supportedLanguages = ['javascript', 'node', 'html', 'css', 'js', 'javascriptreact', 'react', 'jsx', 'mcq', 'external', 'checklist'];
     public readonly supportsExecutionOrder = false;
 
 
@@ -245,7 +245,7 @@ export class WebNotebookKernel implements vscode.Disposable, vscode.NotebookCont
 
     public constructor() {
         this._controller = vscode.notebooks.createNotebookController(this.id, this.notebookType, this.label);
-        this._controller.supportedLanguages = ['javascript', 'html', 'css', 'js', 'mcq', 'external', 'checklist'];
+        this._controller.supportedLanguages = ['javascript', 'node', 'html', 'css', 'js', 'javascriptreact', 'react', 'jsx', 'mcq', 'external', 'checklist'];
         this._controller.description = "Web Notebook";
         this._controller.supportsExecutionOrder = true;
         this._controller.executeHandler = this.executeHandler.bind(this);

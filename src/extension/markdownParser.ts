@@ -22,8 +22,11 @@ export interface RawNotebookCell {
 
 const LANG_IDS = new Map([
 	['javascript', 'javascript'],
+	['node', 'node'],
 	['css', 'css'],
 	['html', 'html'],
+	['jsx', 'javascriptreact'],
+	['react', 'javascriptreact'],
 	['mcq', 'mcq'],
 	['external', 'external'],
 	['checklist', 'checklist']

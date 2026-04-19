@@ -26,8 +26,63 @@ Common cell languages include:
 - `html` for rendered HTML.
 - `css` for styles.
 - `javascript` or `js` for JavaScript.
+- `node` for Node-style JavaScript exercises.
+- `react` or `jsx` for React components (with JSX support).
 - `mcq` for multiple choice questions.
 - `external` for automatically checked workspace files and directories.
+
+## Node Cells
+
+Node cells run with Node-like globals (`process`, `module`, `exports`, `__dirname`, `__filename`) so learners can practice server-side JavaScript syntax and patterns.
+
+````
+```{node}
+console.log('cwd:', process.cwd());
+module.exports = { answer: 42 };
+```
+````
+
+`require(...)` is not available in the web notebook runtime, so dependency loading should be simulated or expressed with plain JavaScript.
+
+## Module Syntax (`import` / `export`)
+
+JavaScript, Node, and React cells can use ES module syntax. The runtime compiles module code automatically so `import` and `export` work inside notebook cells.
+
+````
+```{node}
+import path from 'path';
+
+export const lessonFile = path.basename('/workspace/lesson.txt');
+console.log(lessonFile);
+```
+````
+
+Available module imports in this runtime are:
+
+- `react`
+- `react-dom/client`
+- `marked`
+- `path` (lightweight compatibility helper)
+
+## React Cells
+
+React cells support JSX and can render into a root element in the cell output.
+
+You can use either `react` or `jsx` as the cell language:
+
+````
+```{react}
+const App = () => <h1>Hello from React</h1>;
+renderReact(<App />);
+```
+
+```{jsx}
+const Badge = ({ text }) => <strong>{text}</strong>;
+renderReact(<Badge text="JSX alias works" />);
+```
+````
+
+By default, a `#root` mount node is created automatically. If you add a custom `+html` fixture, you can mount anywhere by passing a selector, for example `renderReact(<App />, '#app')`.
 
 ## Addon Blocks
 
@@ -265,6 +320,7 @@ External check cells support these lines:
 - `matches: path | regex | optional label`
 - `equals: path | exact text | optional label`
 - `has entry: directory | child name | optional label`
+- `command: command text | optional label`
 
 Each check can also be written as a Markdown list item with `-`, as in the example above. Use `\|` when a field needs to contain a literal pipe character.
 
@@ -300,6 +356,8 @@ Programmatic checks can be created with:
 - `check.file(path, label?)` checks that `path` exists and is a file.
 - `check.path(path, label?)` checks that `path` exists, with any file type.
 - `check.exists(path, label?)` creates an existence check directly.
+- `check.command(command, label?)` checks that the simulated terminal history includes `command`.
+- `check.commands(commands, label?)` checks that each command appears in order.
 - `file(path)` is a short alias for `check.file(path)`.
 
 File and directory checks can be refined with:
@@ -312,6 +370,38 @@ File and directory checks can be refined with:
 - `.exists(label?)`, `.isFile(label?)`, and `.isDirectory(label?)` create explicit type checks.
 
 The raw file snapshot is also available as `files` inside tests. Each entry includes `exists`, `type`, and, for files, `content`.
+
+### Simulated Terminal (xterm.js)
+
+Use a `+terminal` addon to embed a simulated terminal in a cell. This does not run real shell commands; it records commands so you can guide and assess command-line practice safely.
+
+````
+```{external}
+title: Run setup commands
+interval: 2s
+- command: mkdir xyz | Create the `xyz` folder from the terminal
+- command: npm init -y | Initialize npm in the project
+```
+```+terminal
+welcome: Follow the instructions and run the setup commands.
+prompt: $ 
+```
+````
+
+`+terminal` supports:
+
+- `welcome: ...` one-time intro line shown when the terminal first appears
+- `prompt: ...` prompt prefix, defaults to `$`
+- `run: ...` execute a simulated startup command
+- `- ...` list form for additional startup commands
+
+Inside `+test` addons, the `terminal` helper is available:
+
+- `terminal.run(command)` runs a simulated command and records it
+- `terminal.history()` gets recorded commands
+- `terminal.last()` gets the latest command
+- `terminal.didRun(command)` checks if a command was run
+- `terminal.clear()` resets command history
 
 For one-off feedback in a regular JavaScript cell, call `.run(failMessage, successMessage)` on a file check and list inspected paths with `+files`:
 

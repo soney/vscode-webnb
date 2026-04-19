@@ -6,6 +6,10 @@ import type { RendererContext } from 'vscode-notebook-renderer';
 import cy from './lite-cy';
 import { marked } from 'marked';
 import ConsoleObjectView from './consoleobjectview';
+import { Terminal } from '@xterm/xterm';
+import * as Babel from '@babel/standalone';
+import * as React from 'react';
+import { createRoot, type Root } from 'react-dom/client';
 // import * as css from "css";
 
 interface IRenderInfo {
@@ -32,7 +36,7 @@ interface ParsedMcq {
     wrongFeedback?: string;
 }
 
-type FileChecklistCheckKind = 'directory' | 'file' | 'path' | 'contains' | 'notContains' | 'matches' | 'equals' | 'hasEntry';
+type FileChecklistCheckKind = 'directory' | 'file' | 'path' | 'contains' | 'notContains' | 'matches' | 'equals' | 'hasEntry' | 'command';
 
 interface FileChecklistCheck {
     kind: FileChecklistCheckKind;
@@ -88,10 +92,44 @@ interface FileCheckBuilder {
 
 type ChecklistInput = FileCheckResult | FileCheckBuilder;
 
+interface ParsedTerminalAddon {
+    prompt: string;
+    welcome?: string;
+    run: string[];
+}
+
+interface TerminalSessionState {
+    history: string[];
+    prompt: string;
+    welcomeShown: boolean;
+    restoreFocus: boolean;
+    startupRan: boolean;
+}
+
 const DEFAULT_CHECKLIST_REFRESH_MS = 2000;
+const DEFAULT_TERMINAL_PROMPT = '$';
+const terminalSessions = new Map<string, TerminalSessionState>();
+const REACT_LANGUAGE_IDS = new Set(['react', 'jsx', 'javascriptreact']);
+const NODE_LANGUAGE_IDS = new Set(['node']);
+const JAVASCRIPT_LANGUAGE_IDS = new Set(['javascript', 'js']);
+
+type RuntimeLanguageKind = 'javascript' | 'node' | 'react';
 
 function isExternalCheckLanguage(language: string): boolean {
     return language === 'external' || language === 'checklist';
+}
+
+function getRuntimeLanguageKind(language: string): RuntimeLanguageKind | undefined {
+    if (REACT_LANGUAGE_IDS.has(language)) {
+        return 'react';
+    }
+    if (NODE_LANGUAGE_IDS.has(language)) {
+        return 'node';
+    }
+    if (JAVASCRIPT_LANGUAGE_IDS.has(language)) {
+        return 'javascript';
+    }
+    return undefined;
 }
 
 function normalizeAddonType(type: string | undefined): string {
@@ -113,6 +151,11 @@ function isHtmlAddon(type: string | undefined): boolean {
 
 function isCssAddon(type: string | undefined): boolean {
     return normalizeAddonType(type) === 'css';
+}
+
+function isTerminalAddon(type: string | undefined): boolean {
+    const normalizedType = normalizeAddonType(type);
+    return normalizedType === 'terminal' || normalizedType === 'xterm';
 }
 
 function parseMcqSource(source: string): ParsedMcq {
@@ -238,6 +281,9 @@ function normalizeChecklistCheckKind(kind: string): FileChecklistCheckKind | und
     if (normalized === 'hasentry' || normalized === 'entry' || normalized === 'containsentry') {
         return 'hasEntry';
     }
+    if (normalized === 'command' || normalized === 'cmd' || normalized === 'ran') {
+        return 'command';
+    }
     return undefined;
 }
 
@@ -339,7 +385,7 @@ function parseFileChecklistSource(source: string): ParsedFileChecklist {
             kind,
             path,
             value: fields[1],
-            label: kind === 'directory' || kind === 'file' || kind === 'path' ? fields[1] : fields[2],
+            label: kind === 'directory' || kind === 'file' || kind === 'path' || kind === 'command' ? fields[1] : fields[2],
             rawLine: rawLine.trim()
         });
         sawCheck = true;
@@ -355,6 +401,45 @@ function parseRegexLike(value: string): RegExp | string {
     }
 
     return new RegExp(regexMatch[1], regexMatch[2]);
+}
+
+function parseTerminalAddon(content: string): ParsedTerminalAddon {
+    const parsed: ParsedTerminalAddon = {
+        prompt: DEFAULT_TERMINAL_PROMPT,
+        run: []
+    };
+
+    for (const rawLine of content.split(/\r?\n/g)) {
+        const line = rawLine.trim();
+        if (!line || line.startsWith('#')) {
+            continue;
+        }
+
+        const runMatch = line.match(/^run\s*:\s*(.+)$/i);
+        if (runMatch) {
+            parsed.run.push(runMatch[1].trim());
+            continue;
+        }
+
+        const promptMatch = line.match(/^prompt\s*:\s*(.+)$/i);
+        if (promptMatch) {
+            parsed.prompt = promptMatch[1].trim() || DEFAULT_TERMINAL_PROMPT;
+            continue;
+        }
+
+        const welcomeMatch = line.match(/^welcome\s*:\s*(.+)$/i);
+        if (welcomeMatch) {
+            parsed.welcome = welcomeMatch[1].trim();
+            continue;
+        }
+
+        const listRunMatch = line.match(/^[-*]\s+(.+)$/);
+        if (listRunMatch) {
+            parsed.run.push(listRunMatch[1].trim());
+        }
+    }
+
+    return parsed;
 }
 
 // This function is called to render your contents.
@@ -373,6 +458,204 @@ export function render({ container, feedback, mime, value, style, addStyle, cons
     const deferChecklistRendering = isExternalCheckLanguage(language);
     const deferredChecklistResults: FileCheckResult[] = [];
     let deferredChecklistTitle: string | undefined;
+    const terminalAddon = activeAddons.find(addon => isTerminalAddon(addon.type));
+    const terminalConfig = terminalAddon ? parseTerminalAddon(terminalAddon.content) : undefined;
+    const terminalCellKey = typeof value.cellUri === 'string' ? value.cellUri : `webnb:${language}`;
+    const terminalState = terminalSessions.get(terminalCellKey) || {
+        history: [],
+        prompt: terminalConfig?.prompt || DEFAULT_TERMINAL_PROMPT,
+        welcomeShown: false,
+        restoreFocus: false,
+        startupRan: false
+    };
+    terminalState.prompt = terminalConfig?.prompt || terminalState.prompt || DEFAULT_TERMINAL_PROMPT;
+    terminalSessions.set(terminalCellKey, terminalState);
+    let terminalInstance: Terminal | undefined;
+    let reactRoot: Root | undefined;
+    let terminalInputBuffer = '';
+
+    function getTerminalCommandOutput(command: string, historySnapshot: string[]): string {
+        const normalized = command.trim();
+        if (!normalized || normalized === 'clear') {
+            return '';
+        }
+        if (normalized === 'history') {
+            return historySnapshot.map((cmd, index) => `${index + 1}  ${cmd}`).join('\n');
+        }
+        if (normalized.startsWith('echo ')) {
+            return normalized.slice(5);
+        }
+        if (normalized === 'pwd') {
+            return '/workspace';
+        }
+        return `simulated command: ${normalized}`;
+    }
+
+    function requestChecklistRefreshAfterCommand(command: string): void {
+        if (!command.trim()) {
+            return;
+        }
+        if (!terminalConfig || !isExternalCheckLanguage(language) || !value.cellUri || typeof context.postMessage !== 'function') {
+            return;
+        }
+
+        terminalState.restoreFocus = true;
+        window.setTimeout(() => {
+            context.postMessage?.({
+                type: 'webnb.refreshCell',
+                cellUri: value.cellUri
+            });
+        }, 0);
+    }
+
+    function runTerminalCommand(command: string, term?: Terminal): string {
+        const normalized = command.trim();
+        if (!normalized) {
+            return '';
+        }
+
+        terminalState.history.push(normalized);
+
+        if (normalized === 'clear') {
+            term?.clear();
+            return '';
+        }
+        return getTerminalCommandOutput(normalized, terminalState.history);
+    }
+
+    function mountTerminal(): void {
+        if (!terminalConfig) {
+            return;
+        }
+
+        const terminalWrapper = document.createElement('div');
+        terminalWrapper.classList.add('webnb-terminal-wrapper');
+        const terminalLabel = document.createElement('div');
+        terminalLabel.classList.add('webnb-terminal-label');
+        terminalLabel.textContent = 'Terminal (simulation)';
+        const terminalHost = document.createElement('div');
+        terminalHost.classList.add('webnb-terminal');
+        terminalWrapper.append(terminalLabel, terminalHost);
+
+        if (isExternalCheckLanguage(language)) {
+            container.appendChild(terminalWrapper);
+        } else {
+            consoleElement.prepend(terminalWrapper);
+        }
+
+        terminalInstance = new Terminal({
+            cols: 80,
+            rows: 14,
+            convertEol: true,
+            disableStdin: false,
+            theme: {
+                background: 'var(--vscode-editor-background)',
+                foreground: 'var(--vscode-editor-foreground)'
+            }
+        });
+        terminalInstance.open(terminalHost);
+
+        if (!terminalState.welcomeShown) {
+            terminalInstance.writeln(terminalConfig.welcome || 'Type commands here. This terminal is simulated for exercises.');
+            terminalState.welcomeShown = true;
+        }
+
+        const writePrompt = () => terminalInstance?.write(`${terminalState.prompt} `);
+
+        if (!terminalState.startupRan) {
+            for (const command of terminalConfig.run) {
+                runTerminalCommand(command);
+            }
+            terminalState.startupRan = true;
+        }
+
+        for (let index = 0; index < terminalState.history.length; index++) {
+            const command = terminalState.history[index];
+            if (command === 'clear') {
+                terminalInstance.clear();
+                continue;
+            }
+
+            terminalInstance.writeln(`${terminalState.prompt} ${command}`);
+            const output = getTerminalCommandOutput(command, terminalState.history.slice(0, index + 1));
+            if (output) {
+                for (const line of output.split(/\r?\n/g)) {
+                    terminalInstance.writeln(line);
+                }
+            }
+        }
+        writePrompt();
+
+        terminalInstance.onData((data: string) => {
+            if (!terminalInstance) {
+                return;
+            }
+
+            if (data === '\r') {
+                const command = terminalInputBuffer;
+                terminalInputBuffer = '';
+                terminalInstance.write('\r\n');
+                const output = runTerminalCommand(command, terminalInstance);
+                if (output) {
+                    terminalInstance.writeln(output);
+                }
+                writePrompt();
+                requestChecklistRefreshAfterCommand(command);
+                return;
+            }
+
+            if (data === '\u007f') {
+                if (terminalInputBuffer.length > 0) {
+                    terminalInputBuffer = terminalInputBuffer.slice(0, -1);
+                    terminalInstance.write('\b \b');
+                }
+                return;
+            }
+
+            if (data >= ' ' && data <= '~') {
+                terminalInputBuffer += data;
+                terminalInstance.write(data);
+            }
+        });
+
+        if (terminalState.restoreFocus) {
+            window.requestAnimationFrame(() => {
+                terminalInstance?.focus();
+                terminalState.restoreFocus = false;
+            });
+        }
+    }
+
+    const terminal = {
+        run(command: string): string {
+            const result = runTerminalCommand(command, terminalInstance);
+            if (terminalInstance) {
+                if (command.trim() === 'clear') {
+                    terminalInstance.clear();
+                } else {
+                    terminalInstance.writeln(`${terminalState.prompt} ${command}`);
+                }
+                if (result) {
+                    terminalInstance.writeln(result);
+                }
+                terminalInstance.write(`${terminalState.prompt} `);
+            }
+            requestChecklistRefreshAfterCommand(command);
+            return result;
+        },
+        history(): string[] {
+            return terminalState.history.slice();
+        },
+        clear(): void {
+            terminalState.history.length = 0;
+        },
+        last(): string | undefined {
+            return terminalState.history[terminalState.history.length - 1];
+        },
+        didRun(command: string): boolean {
+            return terminalState.history.some(item => item.trim() === command.trim());
+        }
+    };
 
     function addFeedback(message: string, category: messageType = 'info', isHtml: boolean = false) {
         feedback.innerHTML = '';
@@ -653,6 +936,17 @@ export function render({ container, feedback, mime, value, style, addStyle, cons
     }
 
     function createChecklistSourceResult(parsedCheck: FileChecklistCheck): FileCheckResult {
+        if (parsedCheck.kind === 'command') {
+            const command = (parsedCheck.path || '').trim();
+            const passed = terminal.didRun(command);
+            return createFileResult(
+                parsedCheck.label || `Run command \`${command}\``,
+                passed,
+                passed ? undefined : `Expected command history to include \`${command}\`.`,
+                command
+            );
+        }
+
         const builder = createFileCheck(parsedCheck.path);
 
         if (parsedCheck.kind === 'directory') {
@@ -679,11 +973,48 @@ export function render({ container, feedback, mime, value, style, addStyle, cons
         return builder.hasEntry(parsedCheck.value || '', parsedCheck.label);
     }
 
+    function createCommandCheck(command: string, label?: string): FileCheckResult {
+        const normalized = command.trim();
+        const passed = terminal.didRun(normalized);
+        return createFileResult(
+            label || `Run command \`${normalized}\``,
+            passed,
+            passed ? undefined : `Expected command history to include \`${normalized}\`.`,
+            normalized
+        );
+    }
+
+    function createCommandSequenceCheck(commands: string[], label?: string): FileCheckResult {
+        const expected = commands.map(command => command.trim()).filter(Boolean);
+        const actual = terminal.history();
+        let position = -1;
+        let missing: string | undefined;
+
+        for (const command of expected) {
+            const nextIndex = actual.findIndex((value, index) => index > position && value.trim() === command);
+            if (nextIndex < 0) {
+                missing = command;
+                break;
+            }
+            position = nextIndex;
+        }
+
+        const passed = !missing;
+        return createFileResult(
+            label || `Run commands in order: ${expected.map(command => `\`${command}\``).join(', ')}`,
+            passed,
+            passed ? undefined : `Expected to find \`${missing}\` in order within command history.`,
+            expected.join(' -> ')
+        );
+    }
+
     const check = {
         path: (path: string, label?: string) => createFileCheck(path, undefined, label),
         file: (path: string, label?: string) => createFileCheck(path, 'file', label),
         directory: (path: string, label?: string) => createFileCheck(path, 'directory', label),
-        exists: (path: string, label?: string) => createFileCheck(path, undefined, label).exists(label)
+        exists: (path: string, label?: string) => createFileCheck(path, undefined, label).exists(label),
+        command: (command: string, label?: string) => createCommandCheck(command, label),
+        commands: (commands: string[], label?: string) => createCommandSequenceCheck(commands, label)
     };
 
     function file(path: string): FileCheckBuilder {
@@ -729,6 +1060,8 @@ export function render({ container, feedback, mime, value, style, addStyle, cons
 
         return () => window.clearTimeout(timer);
     }
+
+    mountTerminal();
 
     if (language === 'html') {
         container.innerHTML = source;
@@ -812,14 +1145,21 @@ export function render({ container, feedback, mime, value, style, addStyle, cons
         }
         results.push(...deferredChecklistResults);
 
-        const shouldRefresh = results.length > 0;
+        const shouldRefresh = results.length > 0 && !terminalConfig;
         const allPassed = addChecklistFeedback(results, parsedChecklist.title || deferredChecklistTitle, {
             checkedAt: value.checkedAt,
             intervalMs: parsedChecklist.intervalMs,
             autoRefresh: shouldRefresh
         });
 
-        return shouldRefresh ? scheduleChecklistRefresh(allPassed, parsedChecklist.intervalMs) : undefined;
+        const refreshCleanup = shouldRefresh ? scheduleChecklistRefresh(allPassed, parsedChecklist.intervalMs) : undefined;
+        if (refreshCleanup || terminalInstance) {
+            return () => {
+                refreshCleanup?.();
+                terminalInstance?.dispose();
+            };
+        }
+        return undefined;
     } else if (language === 'mcq') {
         const { question, options, correctFeedback, wrongFeedback } = parseMcqSource(source);
         if (!question || options.length === 0) {
@@ -914,7 +1254,7 @@ export function render({ container, feedback, mime, value, style, addStyle, cons
         form.appendChild(checkBtn);
         container.appendChild(form);
 
-    } else if (language === 'javascript' || language === 'js') {
+    } else if (getRuntimeLanguageKind(language)) {
         for (const { type, content } of activeAddons) {
             if (isHtmlAddon(type)) {
                 container.innerHTML = content;
@@ -924,6 +1264,14 @@ export function render({ container, feedback, mime, value, style, addStyle, cons
                 //     eval(content);
             }
         }
+
+        const runtimeLanguageKind = getRuntimeLanguageKind(language);
+        const isReactLanguage = runtimeLanguageKind === 'react';
+        const isNodeLanguage = runtimeLanguageKind === 'node';
+        if (isReactLanguage && !container.firstElementChild) {
+            container.innerHTML = '<div id="root"></div>';
+        }
+
         const oldConsole = window.console;
         const console = {
             doLog: (method: "log" | "trace" | "error", ...args: any[]) => {
@@ -946,6 +1294,112 @@ export function render({ container, feedback, mime, value, style, addStyle, cons
         };
         const document = container;
         (document as any).body = container;
+
+        const ReactDOM = { createRoot };
+        const pathModule = {
+            join: (...parts: string[]) => parts.filter(Boolean).join('/').replace(/\/+/g, '/'),
+            basename: (value: string) => value.split('/').filter(Boolean).pop() || '',
+            dirname: (value: string) => {
+                const parts = value.split('/').filter(Boolean);
+                return parts.length <= 1 ? '.' : parts.slice(0, -1).join('/');
+            },
+            extname: (value: string) => {
+                const base = value.split('/').filter(Boolean).pop() || '';
+                const dotIndex = base.lastIndexOf('.');
+                return dotIndex <= 0 ? '' : base.slice(dotIndex);
+            }
+        };
+        const runtimeRequire = (moduleName: string) => {
+            if (moduleName === 'react') {
+                return React;
+            }
+            if (moduleName === 'react-dom/client') {
+                return ReactDOM;
+            }
+            if (moduleName === 'marked') {
+                return { marked };
+            }
+            if (moduleName === 'path') {
+                return pathModule;
+            }
+
+            throw new Error(`Module '${moduleName}' is not available in this web notebook runtime.`);
+        };
+        const nodeProcess = {
+            env: {},
+            argv: [],
+            versions: { node: 'webnb-simulated' },
+            platform: 'webnb',
+            cwd: () => '/workspace'
+        };
+        const renderReact = (element: React.ReactNode, selector = '#root') => {
+            const host = container.querySelector(selector);
+            if (!host) {
+                throw new Error(`React mount target \`${selector}\` was not found. Add matching HTML or use the default #root.`);
+            }
+            reactRoot?.unmount();
+            reactRoot = createRoot(host as Element);
+            reactRoot.render(element);
+        };
+
+        const runCompiledCode = (compiledCode: string) => {
+            const nodeModule: { exports: unknown } = { exports: {} };
+            const nodeExports = nodeModule.exports;
+
+            const execute = new Function(
+                'console',
+                'document',
+                'window',
+                'assert',
+                'assertRule',
+                'wrap',
+                'check',
+                'checklist',
+                'file',
+                'files',
+                'source',
+                'cy',
+                'terminal',
+                'renderReact',
+                'React',
+                'ReactDOM',
+                'require',
+                'process',
+                'module',
+                'exports',
+                '__dirname',
+                '__filename',
+                compiledCode
+            );
+
+            execute(
+                console,
+                document,
+                window,
+                assert,
+                assertRule,
+                wrap,
+                check,
+                checklist,
+                file,
+                files,
+                source,
+                sy,
+                terminal,
+                renderReact,
+                React,
+                ReactDOM,
+                runtimeRequire,
+                nodeProcess,
+                nodeModule,
+                nodeExports,
+                '.',
+                'cell.js'
+            );
+
+            return nodeModule.exports;
+        };
+
         try {
             let toEval = source;
             for (const { type, content } of activeAddons) {
@@ -954,9 +1408,35 @@ export function render({ container, feedback, mime, value, style, addStyle, cons
                 }
             }
             window.console.log(toEval);
-            eval(toEval);
+
+            const hasModuleSyntax = /(^|\n)\s*(import|export)\s/m.test(toEval);
+            const shouldCompileWithBabel = isReactLanguage || hasModuleSyntax;
+
+            if (shouldCompileWithBabel) {
+                const babelOptions: Record<string, unknown> = {};
+                if (isReactLanguage) {
+                    babelOptions.presets = ['react'];
+                }
+                if (hasModuleSyntax) {
+                    babelOptions.plugins = ['transform-modules-commonjs'];
+                }
+
+                const transformed = Babel.transform(toEval, babelOptions as any).code;
+                if (!transformed) {
+                    const compileTarget = isReactLanguage ? 'React' : 'module';
+                    addFeedback(`${compileTarget} code could not be compiled.`, 'error');
+                    return;
+                }
+
+                runCompiledCode(transformed);
+            } else if (isNodeLanguage) {
+                runCompiledCode(toEval);
+            } else {
+                eval(toEval);
+            }
         } catch (error) {
-            addFeedback(`Error in JavaScript code: ${error}`, 'error');
+            const runtimeName = runtimeLanguageKind === 'react' ? 'React' : runtimeLanguageKind === 'node' ? 'Node' : 'JavaScript';
+            addFeedback(`Error in ${runtimeName} code: ${error}`, 'error');
         }
     } else {
         const pre = document.createElement('pre');
@@ -965,6 +1445,13 @@ export function render({ container, feedback, mime, value, style, addStyle, cons
         code.textContent = `mime type: ${mime}\n\n${JSON.stringify(value, null, 2)}`;
         pre.appendChild(code);
         container.appendChild(pre);
+    }
+
+    if (terminalInstance || reactRoot) {
+        return () => {
+            reactRoot?.unmount();
+            terminalInstance?.dispose();
+        };
     }
 }
 
