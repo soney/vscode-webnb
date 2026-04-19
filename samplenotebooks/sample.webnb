@@ -68,6 +68,25 @@ wrap(typeof process.cwd).should('equal', 'function').run('Node process API not a
 wrap(answer).should('equal', 42).run('Node computation failed', 'Node computation succeeded');
 ```
 
+## Optional Solution Addon Example
+
+The `+solution` addon is optional and is not executed. It is an author reference answer.
+
+```{javascript}
+// Learner task: implement `double`.
+function double(n) {
+  // TODO
+}
+```
+```+test
+wrap(double(4)).should('equal', 8).run('double(4) should be 8', 'double works');
+```
+```+solution
+function double(n) {
+  return n * 2;
+}
+```
+
 ## Module Syntax Example
 
 ```{node}

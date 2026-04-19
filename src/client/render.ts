@@ -5,6 +5,7 @@
 import type { RendererContext } from 'vscode-notebook-renderer';
 import cy from './lite-cy';
 import { marked } from 'marked';
+import smartypants from 'smartypants';
 import ConsoleObjectView from './consoleobjectview';
 import { Terminal } from '@xterm/xterm';
 import * as Babel from '@babel/standalone';
@@ -112,11 +113,22 @@ const terminalSessions = new Map<string, TerminalSessionState>();
 const REACT_LANGUAGE_IDS = new Set(['react', 'jsx', 'javascriptreact']);
 const NODE_LANGUAGE_IDS = new Set(['node']);
 const JAVASCRIPT_LANGUAGE_IDS = new Set(['javascript', 'js']);
+const SMARTYPANTS_ATTR = '2';
 
 type RuntimeLanguageKind = 'javascript' | 'node' | 'react';
 
 function isExternalCheckLanguage(language: string): boolean {
     return language === 'external' || language === 'checklist';
+}
+
+function renderMarkdownInline(text: string): string {
+    const html = marked.parseInline(text) as string;
+    return smartypants(html, SMARTYPANTS_ATTR);
+}
+
+function renderMarkdownBlock(text: string): string {
+    const html = marked.parse(text) as string;
+    return smartypants(html, SMARTYPANTS_ATTR);
 }
 
 function getRuntimeLanguageKind(language: string): RuntimeLanguageKind | undefined {
@@ -683,7 +695,7 @@ export function render({ container, feedback, mime, value, style, addStyle, cons
 
         const heading = document.createElement('div');
         heading.classList.add('checklist-title');
-        heading.innerHTML = marked.parseInline(title || (allPassed ? 'Checklist complete' : 'Checklist needs work')) as string;
+        heading.innerHTML = renderMarkdownInline(title || (allPassed ? 'Checklist complete' : 'Checklist needs work'));
         wrapper.appendChild(heading);
 
         if (options.checkedAt || options.autoRefresh) {
@@ -728,13 +740,13 @@ export function render({ container, feedback, mime, value, style, addStyle, cons
 
             const label = document.createElement('span');
             label.classList.add('checklist-label');
-            label.innerHTML = marked.parseInline(result.label) as string;
+            label.innerHTML = renderMarkdownInline(result.label);
             body.appendChild(label);
 
             if (!result.passed && result.detail) {
                 const detail = document.createElement('span');
                 detail.classList.add('checklist-detail');
-                detail.innerHTML = marked.parseInline(result.detail) as string;
+                detail.innerHTML = renderMarkdownInline(result.detail);
                 body.appendChild(detail);
             }
 
@@ -1175,7 +1187,7 @@ export function render({ container, feedback, mime, value, style, addStyle, cons
 
         const questionEl = document.createElement('div');
         questionEl.classList.add('mcq-question');
-        questionEl.innerHTML = marked.parse(question) as string;
+        questionEl.innerHTML = renderMarkdownBlock(question);
         form.appendChild(questionEl);
 
         const optionFeedbackEls: HTMLDivElement[] = [];
@@ -1194,7 +1206,7 @@ export function render({ container, feedback, mime, value, style, addStyle, cons
 
             label.appendChild(input);
             const span = document.createElement('span');
-            span.innerHTML = marked.parseInline(opt.text) as string;
+            span.innerHTML = renderMarkdownInline(opt.text);
             label.appendChild(span);
 
             const optionFeedbackEl = document.createElement('div');
@@ -1240,14 +1252,14 @@ export function render({ container, feedback, mime, value, style, addStyle, cons
                     const optionFeedbackEl = optionFeedbackEls[index];
                     optionFeedbackEl.hidden = false;
                     optionFeedbackEl.classList.add(itemIsCorrect ? 'success' : 'error');
-                    optionFeedbackEl.innerHTML = marked.parseInline(itemFeedback) as string;
+                    optionFeedbackEl.innerHTML = renderMarkdownInline(itemFeedback);
                 }
             });
 
             if (allCorrect) {
-                addFeedback(marked.parseInline(correctFeedback || 'Correct!') as string, 'success', true);
+                addFeedback(renderMarkdownInline(correctFeedback || 'Correct!'), 'success', true);
             } else {
-                addFeedback(marked.parseInline(wrongFeedback || 'Incorrect. Try again.') as string, 'error', true);
+                addFeedback(renderMarkdownInline(wrongFeedback || 'Incorrect. Try again.'), 'error', true);
             }
         });
 

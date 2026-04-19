@@ -88,6 +88,29 @@ By default, a `#root` mount node is created automatically. If you add a custom `
 
 Addon blocks start with `+` and attach to the code cell immediately above them. Use addons to provide supporting code, styles, tests, or referenced content without making that content the main learner-editable cell.
 
+### Optional Solutions
+
+Use `+solution` to attach an author-only reference answer to a cell.
+
+`+solution` is optional and does not run, render, or affect test execution. It is useful for storing the expected answer next to the exercise while keeping the learner-facing behavior unchanged.
+
+````
+```{javascript}
+// Learner task: create a function that doubles a number.
+function double(n) {
+  // TODO: implement
+}
+```
+```+test
+wrap(double(4)).should('equal', 8).run('double(4) should be 8', 'double works');
+```
+```+solution
+function double(n) {
+  return n * 2;
+}
+```
+````
+
 ### CSS For HTML Cells
 
 Add CSS to an HTML cell with `+css`:
@@ -286,6 +309,37 @@ In JavaScript cells, `console.log(source)` prints the cell source while you are 
 ### Addon Order
 
 Addon order matters for HTML and CSS cells. Put `+css` or `+html` addons before a `+test` addon when the test depends on those styles or fixtures.
+
+## Automatic Running
+
+Web Notebook supports automatic execution for selected code cells when a notebook opens.
+
+### `autorun` for Code Cells
+
+Add `autorun` in the fenced code header to run that code cell automatically:
+
+````
+```{javascript autorun}
+console.log('This runs when the notebook opens.');
+```
+
+```{html autorun}
+<h1>Auto-rendered on open</h1>
+```
+````
+
+Notes:
+
+- `autorun` applies to code cells (`{javascript}`, `{html}`, `{css}`, `{node}`, `{react}`, `{jsx}`, etc.).
+- Autorun cells execute automatically when the notebook becomes active.
+- Autorun is intended for setup, starter rendering, or instructions that should appear immediately.
+- Re-run manually after edits if you want to refresh output right away.
+
+### Auto-Run Widget Cells
+
+`{external}` / `{checklist}` and `{mcq}` cells are auto-run widget cells. They execute automatically on open without adding `autorun`.
+
+Use `autorun` for regular code cells, and rely on built-in auto-run behavior for widget cells.
 
 ## External Checks
 

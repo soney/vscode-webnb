@@ -10,7 +10,7 @@
     },
     "license": "MIT",
     "engines": {
-        "vscode": "^1.97.2"
+        "vscode": "^1.116.0"
     },
     "keywords": [
         "notebookRenderer",
@@ -123,6 +123,7 @@
         "@xterm/xterm": "^6.0.0",
         "marked": "^18.0.2",
         "react": "^19.2.5",
-        "react-dom": "^19.2.5"
+        "react-dom": "^19.2.5",
+        "smartypants": "^0.2.2"
     }
 }
