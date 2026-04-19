@@ -27,6 +27,7 @@ Common cell languages include:
 - `css` for styles.
 - `javascript` or `js` for JavaScript.
 - `mcq` for multiple choice questions.
+- `external` for automatically checked workspace files and directories.
 
 ## Addon Blocks
 
@@ -231,6 +232,103 @@ In JavaScript cells, `console.log(source)` prints the cell source while you are 
 
 Addon order matters for HTML and CSS cells. Put `+css` or `+html` addons before a `+test` addon when the test depends on those styles or fixtures.
 
+## External Checks
+
+Use external checks when the learner needs to create files or folders in the workspace. External check cells are little widgets: they run automatically when the notebook opens, collapse their source like multiple choice cells, show each item as pass/fix feedback, and keep checking periodically until every item passes.
+
+Paths are relative to the workspace folder that contains the notebook. External check cells automatically snapshot paths referenced by declarative checks. If an advanced `+test` builds paths dynamically, list those paths in a `+files` addon.
+
+````
+```{external}
+title: Project file checklist
+interval: 2s
+- directory: xyz | Create a directory named `xyz`
+- file: xyz/index.html | Inside `xyz`, create a file named `index.html`
+- contains: xyz/index.html | <h1 | In `index.html`, create an `h1` heading
+- matches: xyz/index.html | /<title>.+<\/title>/ | Add a non-empty `title` element
+```
+````
+
+The widget re-runs every `interval` until all items pass. Use `interval: off` for an external check that only runs when the cell is executed.
+
+### External Check Syntax
+
+External check cells support these lines:
+
+- `title: Text shown at the top of the widget`
+- `interval: 2s`, `interval: 500ms`, or `interval: off`
+- `directory: path | optional label`
+- `file: path | optional label`
+- `path: path | optional label`
+- `contains: path | text | optional label`
+- `not contains: path | text | optional label`
+- `matches: path | regex | optional label`
+- `equals: path | exact text | optional label`
+- `has entry: directory | child name | optional label`
+
+Each check can also be written as a Markdown list item with `-`, as in the example above. Use `\|` when a field needs to contain a literal pipe character.
+
+### Optional Advanced Tests
+
+For custom logic, add an optional `+test` addon to the same `{external}` cell. The test runs as part of the widget and can add checks with `checklist(title, items)` or `checklist(items)`.
+
+````
+```{external}
+title: Project file checklist
+interval: 2s
+- directory: xyz | Create a directory named `xyz`
+- file: xyz/index.html | Inside `xyz`, create a file named `index.html`
+```
+```+files
+xyz/styles.css
+```
+```+test
+checklist([
+  check.file('xyz/index.html').contains('<main', 'In `index.html`, use a `main` element'),
+  check.file('xyz/styles.css').contains('font-family', 'In `styles.css`, set a font family')
+]);
+```
+````
+
+The extension can usually detect literal paths in `check.file('...')`, `check.directory('...')`, `check.path('...')`, `check.exists('...')`, and `file('...')`. Use `+files` for paths that are generated with variables or other custom logic.
+
+### Programmatic Check API
+
+Programmatic checks can be created with:
+
+- `check.directory(path, label?)` checks that `path` exists and is a directory.
+- `check.file(path, label?)` checks that `path` exists and is a file.
+- `check.path(path, label?)` checks that `path` exists, with any file type.
+- `check.exists(path, label?)` creates an existence check directly.
+- `file(path)` is a short alias for `check.file(path)`.
+
+File and directory checks can be refined with:
+
+- `.contains(text, label?)` checks that a file includes text.
+- `.notContains(text, label?)` checks that a file does not include text.
+- `.matches(regexOrString, label?)` checks file contents with a regular expression.
+- `.equals(text, label?)` checks that file contents exactly match text.
+- `.hasEntry(name, label?)` checks that a directory contains an entry with that name.
+- `.exists(label?)`, `.isFile(label?)`, and `.isDirectory(label?)` create explicit type checks.
+
+The raw file snapshot is also available as `files` inside tests. Each entry includes `exists`, `type`, and, for files, `content`.
+
+For one-off feedback in a regular JavaScript cell, call `.run(failMessage, successMessage)` on a file check and list inspected paths with `+files`:
+
+````
+```{javascript}
+// Run this cell to check one file.
+```
+```+files
+xyz/index.html
+```
+```+test
+check.file('xyz/index.html')
+  .contains('<main', 'Use a `main` element')
+  .run('Add a `main` element to `xyz/index.html`.', 'Found a `main` element.');
+```
+````
+
 ## Multiple Choice Questions
 
 Multiple choice cells use `[x]` for correct options and `[ ]` for incorrect options:
@@ -304,3 +402,36 @@ Feedback behavior:
 - `wrong:` is shown when the learner handled that option incorrectly.
 - `incorrect:` can be used instead of `wrong:`.
 - Options without matching feedback simply do not show per-item feedback.
+
+## Development Loop
+
+For a faster VS Code Web development loop, run:
+
+```sh
+npm run in-browser:watch
+```
+
+This watches the source files, runs webpack development builds as they change, waits for the first successful build, launches VS Code Web, opens `samplenotebooks/sample.webnb`, and reloads VS Code Web whenever the compiled output changes. The wrapper also reopens the target notebook on each reload signal so the file stays in front.
+
+If you only want webpack watching without opening VS Code Web, run:
+
+```sh
+npm run dev:web
+```
+
+The browser launch uses `scripts/vscode-test-web.js`, a small wrapper around the `@vscode/test-web` API. It opens `samplenotebooks/sample.webnb` by default through the npm scripts above. With `--watch`, the wrapper rebuilds with webpack after source changes, watches the compiled extension output in `out/` plus `package.json`, and reloads VS Code Web after a rebuild.
+
+You can launch once without the reload watcher:
+
+```sh
+npm run in-browser:open
+```
+
+You can also pass a different file path with `--file`:
+
+```sh
+npm run test-web -- --file sample.webnb
+npm run test-web -- --workspace . samplenotebooks/sample.webnb
+```
+
+`vscode-test-web` does not watch or reload by itself. The `--watch` flag in `scripts/vscode-test-web.js` adds that development loop around it. The regular `npm run in-browser` command still does a one-time development build before launching.

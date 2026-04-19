@@ -43,6 +43,7 @@
                 "id": "practical-javascript-reading-notebook",
                 "entrypoint": "./out/client/index.js",
                 "displayName": "practical-javascript-reading-notebook",
+                "requiresMessaging": "optional",
                 "mimeTypes": [
                     "x-application/webnb-output"
                 ]
@@ -78,7 +79,11 @@
         "lint": "eslint src",
         "watch": "webpack --mode development --watch",
         "pretest": "webpack --mode development && npm run lint",
-        "in-browser": "vscode-test-web --browserType=chromium --extensionDevelopmentPath=. ./samplenotebooks",
+        "test-web": "node scripts/vscode-test-web.js samplenotebooks/sample.webnb",
+        "in-browser": "npm run compile-dev && node scripts/vscode-test-web.js samplenotebooks/sample.webnb",
+        "in-browser:open": "node scripts/vscode-test-web.js samplenotebooks/sample.webnb",
+        "in-browser:watch": "node scripts/vscode-test-web.js samplenotebooks/sample.webnb --watch",
+        "dev:web": "npm run watch",
         "test": "vscode-test",
         "gen-vsix": "npx vsce package -o web-notebook.vsix"
     },
@@ -94,6 +99,7 @@
         "@vscode/test-cli": "^0.0.10",
         "@vscode/test-electron": "^2.4.1",
         "@vscode/test-web": "^0.0.80",
+        "chokidar": "^3.6.0",
         "css-loader": "^7.1.2",
         "eslint": "^9.19.0",
         "fork-ts-checker-webpack-plugin": "^9.0.2",

@@ -24,7 +24,9 @@ const LANG_IDS = new Map([
 	['javascript', 'javascript'],
 	['css', 'css'],
 	['html', 'html'],
-	['mcq', 'mcq']
+	['mcq', 'mcq'],
+	['external', 'external'],
+	['checklist', 'checklist']
 ]);
 const LANG_ABBREVS = new Map(
 	Array.from(LANG_IDS.keys()).map(k => [LANG_IDS.get(k), k])

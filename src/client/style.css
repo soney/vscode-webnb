@@ -19,6 +19,12 @@
   margin-right: 5px;
 }
 
+.feedback-external .checklist-feedback.success::before,
+.feedback-checklist .checklist-feedback.success::before {
+  content: "";
+  margin-right: 0;
+}
+
 .mcq-option-feedback.info::before {
   content: "ℹ️";
   margin-right: 5px;
@@ -34,10 +40,22 @@
   margin-right: 5px;
 }
 
-div#html-output {
+.webnb-output {
+  color: var(--vscode-editor-foreground);
+  font-family: var(--vscode-font-family);
+  font-size: var(--vscode-font-size);
+}
+
+div#html-output:not(.webnb-output-mcq) {
   background-color: white;
   color: black;
   font-family: 'Times New Roman', Times, serif;
+}
+
+.webnb-output-mcq {
+  background: transparent;
+  color: var(--vscode-editor-foreground);
+  font-family: var(--vscode-font-family);
 }
 
 .feedback {
@@ -47,65 +65,243 @@ div#html-output {
 .feedback .info,
 .feedback .error,
 .feedback .success,
-.mcq-option-feedback {
+.mcq-option-feedback,
+.checklist-feedback {
   margin: 0;
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--vscode-font-family);
   white-space: pre-wrap;
+}
+
+.feedback-mcq .info,
+.feedback-mcq .error,
+.feedback-mcq .success {
+  border: 1px solid var(--vscode-notebook-cellBorderColor, var(--vscode-panel-border, transparent));
+  border-radius: 6px;
+  padding: 8px 10px;
+  background: var(--vscode-editor-background);
+  color: var(--vscode-editor-foreground);
+}
+
+.feedback-mcq .info::before,
+.feedback-mcq .error::before,
+.feedback-mcq .success::before {
+  content: "";
+  margin: 0;
+}
+
+.feedback-mcq .success {
+  border-color: var(--vscode-testing-iconPassed, var(--vscode-charts-green, var(--vscode-notebook-cellBorderColor)));
+  color: var(--vscode-testing-iconPassed, var(--vscode-charts-green, var(--vscode-editor-foreground)));
+}
+
+.feedback-mcq .error {
+  border-color: var(--vscode-testing-iconFailed, var(--vscode-errorForeground, var(--vscode-notebook-cellBorderColor)));
+  color: var(--vscode-errorForeground, var(--vscode-editor-foreground));
+}
+
+.checklist-feedback {
+  border: 1px solid var(--vscode-notebook-cellBorderColor, var(--vscode-panel-border, transparent));
+  border-radius: 8px;
+  padding: 12px;
+  background: var(--vscode-editor-background);
+  color: var(--vscode-editor-foreground);
+}
+
+.checklist-feedback.success {
+  border-color: var(--vscode-testing-iconPassed, var(--vscode-charts-green, var(--vscode-notebook-cellBorderColor)));
+  background: var(--vscode-editor-background);
+}
+
+.checklist-feedback.error {
+  border-color: var(--vscode-testing-iconFailed, var(--vscode-errorForeground, var(--vscode-notebook-cellBorderColor)));
+  background: var(--vscode-editor-background);
+}
+
+.checklist-feedback.running {
+  border-color: var(--vscode-notebookStatusRunningIcon-foreground, var(--vscode-progressBar-background, var(--vscode-focusBorder)));
+}
+
+.checklist-feedback.running .checklist-title::before {
+  content: "⟳";
+  display: inline-block;
+  margin-right: 6px;
+  color: var(--vscode-notebookStatusRunningIcon-foreground, var(--vscode-progressBar-background, var(--vscode-editor-foreground)));
+}
+
+.checklist-title {
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+
+.checklist-meta {
+  color: var(--vscode-descriptionForeground, var(--vscode-editor-foreground));
+  font-size: 12px;
+  margin-bottom: 8px;
+}
+
+.checklist-empty {
+  color: var(--vscode-descriptionForeground, var(--vscode-editor-foreground));
+}
+
+.checklist-items {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.checklist-item {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  margin: 8px 0 0;
+}
+
+.checklist-status {
+  border-radius: 8px;
+  padding: 2px 6px;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.checklist-item.passed .checklist-status {
+  background: color-mix(in srgb, var(--vscode-testing-iconPassed, var(--vscode-charts-green)) 18%, transparent);
+  color: var(--vscode-testing-iconPassed, var(--vscode-charts-green, var(--vscode-editor-foreground)));
+}
+
+.checklist-item.failed .checklist-status {
+  background: color-mix(in srgb, var(--vscode-testing-iconFailed, var(--vscode-errorForeground)) 18%, transparent);
+  color: var(--vscode-testing-iconFailed, var(--vscode-errorForeground, var(--vscode-editor-foreground)));
+}
+
+.checklist-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.checklist-detail {
+  color: var(--vscode-errorForeground, var(--vscode-editor-foreground));
+  font-size: 13px;
 }
 
 .mcq-form {
-  border: 1px solid #d7dbe2;
-  border-radius: 12px;
-  padding: 16px;
-  background: linear-gradient(180deg, #ffffff 0%, #f7f9fc 100%);
-  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.08);
-  font-family: Arial, Helvetica, sans-serif;
+  border: 1px solid var(--vscode-notebook-cellBorderColor, var(--vscode-panel-border, transparent));
+  border-radius: 8px;
+  padding: 12px;
+  background: var(--vscode-editor-background);
+  color: var(--vscode-editor-foreground);
+  font-family: var(--vscode-font-family);
+  font-size: var(--vscode-font-size);
 }
 
 .mcq-question {
-  margin: 0 0 14px 0;
+  margin: 0 0 12px;
   white-space: pre-wrap;
-  font-size: 15px;
-  line-height: 1.45;
+  line-height: 1.5;
+}
+
+.mcq-question p {
+  margin: 0 0 8px;
+}
+
+.mcq-question p:last-child {
+  margin-bottom: 0;
+}
+
+.mcq-question code,
+.mcq-option code,
+.mcq-option-feedback code {
+  border-radius: 4px;
+  padding: 1px 3px;
+  background: var(--vscode-textCodeBlock-background, var(--vscode-editorWidget-background, rgba(127, 127, 127, 0.14)));
+  color: var(--vscode-editor-foreground);
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 0.95em;
 }
 
 .mcq-option-row {
-  margin: 10px 0;
+  margin: 6px 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+}
+
+.mcq-option-row:has(input:checked) {
+  border-color: var(--vscode-focusBorder, var(--vscode-notebook-cellBorderColor));
+  background: var(--vscode-list-activeSelectionBackground, var(--vscode-list-inactiveSelectionBackground, rgba(127, 127, 127, 0.12)));
+}
+
+.mcq-option-row:has(input:checked) .mcq-option {
+  color: var(--vscode-list-activeSelectionForeground, var(--vscode-editor-foreground));
 }
 
 .mcq-option {
   display: flex;
   align-items: flex-start;
-  gap: 10px;
+  gap: 8px;
   cursor: pointer;
   margin: 0;
+  padding: 7px 8px;
+  color: var(--vscode-editor-foreground);
   line-height: 1.4;
 }
 
 .mcq-option input {
   margin-top: 2px;
+  accent-color: var(--vscode-button-background);
+}
+
+.mcq-option input:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: 2px;
 }
 
 .mcq-option-feedback {
-  margin-top: 6px;
-  margin-left: 30px;
-  font-size: 13px;
+  margin: 0 8px 8px 32px;
+  padding: 6px 8px;
+  border-left: 2px solid var(--vscode-descriptionForeground, var(--vscode-editor-foreground));
+  color: var(--vscode-descriptionForeground, var(--vscode-editor-foreground));
+  font-size: calc(var(--vscode-font-size) - 1px);
   line-height: 1.4;
+}
+
+.mcq-option-feedback.info::before,
+.mcq-option-feedback.error::before,
+.mcq-option-feedback.success::before {
+  content: "";
+  margin: 0;
+}
+
+.mcq-option-feedback.success {
+  border-left-color: var(--vscode-testing-iconPassed, var(--vscode-charts-green, var(--vscode-editor-foreground)));
+  color: var(--vscode-testing-iconPassed, var(--vscode-charts-green, var(--vscode-editor-foreground)));
+}
+
+.mcq-option-feedback.error {
+  border-left-color: var(--vscode-testing-iconFailed, var(--vscode-errorForeground));
+  color: var(--vscode-errorForeground);
 }
 
 .mcq-check-button {
   margin-top: 12px;
-  padding: 8px 14px;
-  border: 0;
-  border-radius: 999px;
-  background: #0f172a;
-  color: white;
-  font-size: 14px;
+  padding: 6px 12px;
+  border: 1px solid var(--vscode-button-border, transparent);
+  border-radius: 6px;
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+  font-family: var(--vscode-font-family);
+  font-size: var(--vscode-font-size);
   cursor: pointer;
 }
 
 .mcq-check-button:hover {
-  background: #1e293b;
+  background: var(--vscode-button-hoverBackground);
+}
+
+.mcq-check-button:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: 2px;
 }
 
 .console {

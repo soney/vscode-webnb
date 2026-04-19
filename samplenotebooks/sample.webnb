@@ -79,6 +79,29 @@ console.log("Welcome to the notebook! This cell ran automatically.");
 <p>This cell ran automatically.</p>
 ```
 
+## External Check Example
+
+Create a directory named `external-example`. Inside it, create `index.html` and `styles.css`. The checklist below runs automatically and keeps checking every two seconds until all items pass.
+
+```{external}
+title: External project checklist
+interval: 2s
+- directory: external-example | Create a directory named `external-example`
+- file: external-example/index.html | Inside `external-example`, create `index.html`
+- contains: external-example/index.html | <h1 | In `index.html`, add an `h1` heading
+- matches: external-example/index.html | /<title>.+<\/title>/ | In `index.html`, add a non-empty `title` element
+```
+```+files
+external-example/styles.css
+```
+```+test
+const stylesheetPath = 'external-example/styles.css';
+checklist([
+  check.file(stylesheetPath, 'Inside `external-example`, create `styles.css`'),
+  check.file(stylesheetPath).contains('font-family', 'In `styles.css`, set a `font-family`')
+]);
+```
+
 ## Multiple Choice Examples
 
 Single Correct Option with custom feedback:
