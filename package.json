@@ -2,7 +2,7 @@
     "name": "web-notebook",
     "displayName": "Web Notebook",
     "description": "A notebook renderer for basic web code (HTML/CSS/JavaScript)",
-    "version": "0.0.2",
+    "version": "1.0.0",
     "publisher": "oney",
     "repository": {
         "type": "git",
