@@ -103,17 +103,17 @@ function stripChecklistLinePrefix(line: string): string {
 function splitChecklistFields(value: string): string[] {
     const fields: string[] = [];
     let current = '';
-    let escaped = false;
 
-    for (const char of value) {
-        if (escaped) {
-            current += char;
-            escaped = false;
-            continue;
-        }
-
+    for (let index = 0; index < value.length; index++) {
+        const char = value[index];
         if (char === '\\') {
-            escaped = true;
+            const nextChar = value[index + 1];
+            if (nextChar === '|' || nextChar === '\\') {
+                current += nextChar;
+                index++;
+            } else {
+                current += char;
+            }
             continue;
         }
 

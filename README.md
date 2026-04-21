@@ -324,6 +324,37 @@ wrap(user).should('equal', { name: 'Ada' }).run('user should match', 'user match
 ```
 ````
 
+### Console Output Tests
+
+The fake console records structured history for logs produced by JavaScript cells, test addons, and HTML event handlers such as `onclick`.
+
+Use `check.consoleLogged(textOrRegex, label?)` when you want a checklist-style result:
+
+````
+```{html}
+<button id="hello-button" onclick="console.log('Hello!')">Click me!</button>
+```
+```+test
+assert('#hello-button').click().run('Click the button', 'Clicked the button');
+check.consoleLogged('Hello!').run('The button should log `Hello!`', 'The button logged `Hello!`');
+```
+````
+
+For custom assertions, use the `console` helper directly:
+
+- `console.history()` returns `{ method, args, text, timestamp }[]`.
+- `console.didLog(textOrRegex)` checks whether any console entry text matches.
+- `console.clear()` clears the fake console and its history.
+
+````
+```{javascript}
+console.log('score:', 10);
+```
+```+test
+wrap(console.didLog(/score:\s*10/)).should('equal', true).run('Expected a score log', 'Logged the score');
+```
+````
+
 ### Source-Aware Tests
 
 Tests can inspect the current cell source through the `source` string. Use this when you want to check how the learner wrote the answer, not just what it rendered:
@@ -452,6 +483,7 @@ Programmatic checks can be created with:
 - `check.exists(path, label?)` creates an existence check directly.
 - `check.command(command, label?)` checks that the simulated terminal history includes `command`.
 - `check.commands(commands, label?)` checks that each command appears in order.
+- `check.consoleLogged(textOrRegex, label?)` checks that the fake console history includes matching text.
 - `file(path)` is a short alias for `check.file(path)`.
 
 File and directory checks can be refined with:
@@ -535,6 +567,30 @@ wrong: Not quite. Check the feedback under each option.
 ````
 
 One correct option renders as a single-choice question. Multiple correct options render as a "select all that apply" question.
+
+Options are shuffled by default each time the cell renders. Add `deterministic: true` before the first option when you want a stable shuffle for the same cell and source:
+
+````
+```{mcq}
+Which keyword declares a block-scoped variable?
+deterministic: true
+[ ] var
+[x] let
+[ ] function
+```
+````
+
+Use `shuffle: false` before the first option when the source order matters:
+
+````
+```{mcq}
+Which option is intentionally last?
+shuffle: false
+[ ] First
+[ ] Second
+[x] Third
+```
+````
 
 ### Question-Level Feedback
 

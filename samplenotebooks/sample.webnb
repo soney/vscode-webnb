@@ -38,6 +38,16 @@ h1 {
 assert('h1').should('exist').should('have.css', 'color: blue').run('Failed to find blue h1 rule', 'Found blue h1 rule');
 ```
 
+## HTML Console Check Example
+
+```{html}
+<button id="console-button" onclick="console.log('Hello!')">Click me!</button>
+```
+```+test
+assert('#console-button').click().run('Could not click the console button', 'Clicked the console button');
+check.consoleLogged('Hello!').run('Expected the button to log `Hello!`', 'Button logged to the fake console');
+```
+
 ```{html}
 
 ```
@@ -260,6 +270,7 @@ checklist([
 Single Correct Option with custom feedback:
 ```{mcq}
 What is the capital of France?
+deterministic: true
 correct: Nice work. Paris is the capital of France.
 wrong: Not quite. Paris is the capital of France.
 [ ] London

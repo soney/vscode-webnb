@@ -25,17 +25,23 @@ interface IRenderInfo {
     context: RendererContext<unknown>;
 }
 type messageType = 'info' | 'success' | 'error';
+type ConsoleMethod = 'debug' | 'error' | 'info' | 'log' | 'trace' | 'warn';
 interface McqOption {
     text: string;
     correct: boolean;
     correctFeedback?: string;
     wrongFeedback?: string;
 }
+interface DisplayMcqOption extends McqOption {
+    originalIndex: number;
+}
 interface ParsedMcq {
     question: string;
     options: McqOption[];
     correctFeedback?: string;
     wrongFeedback?: string;
+    shuffle: boolean;
+    deterministic: boolean;
 }
 
 type FileChecklistCheckKind = 'directory' | 'file' | 'path' | 'contains' | 'notContains' | 'matches' | 'equals' | 'hasEntry' | 'command';
@@ -108,6 +114,13 @@ interface TerminalSessionState {
     startupRan: boolean;
 }
 
+interface ConsoleHistoryEntry {
+    method: ConsoleMethod;
+    args: any[];
+    text: string;
+    timestamp: number;
+}
+
 const DEFAULT_CHECKLIST_REFRESH_MS = 2000;
 const DEFAULT_TERMINAL_PROMPT = '$';
 const terminalSessions = new Map<string, TerminalSessionState>();
@@ -115,6 +128,136 @@ const REACT_LANGUAGE_IDS = new Set(['react', 'jsx', 'javascriptreact']);
 const NODE_LANGUAGE_IDS = new Set(['node']);
 const JAVASCRIPT_LANGUAGE_IDS = new Set(['javascript', 'js']);
 const SMARTYPANTS_ATTR = '2';
+const HTML_CONSOLE_EVENT_TYPES = [
+    'change',
+    'click',
+    'dblclick',
+    'focus',
+    'input',
+    'keydown',
+    'keypress',
+    'keyup',
+    'mousedown',
+    'mouseup',
+    'pointerdown',
+    'pointerup',
+    'submit'
+] as const;
+const WRAPPED_HTML_CONSOLE_HANDLERS = Symbol('webnbWrappedHtmlConsoleHandlers');
+
+let activeConsoleReporter: ((method: ConsoleMethod, args: any[]) => void) | undefined;
+let isWindowConsolePatched = false;
+let originalWindowConsole: Console | undefined;
+
+function consoleMethodToMessageType(method: ConsoleMethod): messageType {
+    return method === 'error' ? 'error' : 'info';
+}
+
+function installWindowConsoleProxy(): void {
+    if (isWindowConsolePatched) {
+        return;
+    }
+
+    const originalConsole = window.console;
+    originalWindowConsole = originalConsole;
+    const wrappedMethods = new Set<ConsoleMethod>(['debug', 'error', 'info', 'log', 'trace', 'warn']);
+    const proxy = new Proxy(originalConsole, {
+        get(target, prop, receiver) {
+            const value = Reflect.get(target, prop, receiver);
+            if (typeof prop === 'string' && wrappedMethods.has(prop as ConsoleMethod) && typeof value === 'function') {
+                return (...args: any[]) => {
+                    activeConsoleReporter?.(prop as ConsoleMethod, args);
+                    return value.apply(target, args);
+                };
+            }
+
+            return typeof value === 'function' ? value.bind(target) : value;
+        }
+    });
+
+    window.console = proxy as Console;
+    isWindowConsolePatched = true;
+}
+
+function wrapHtmlConsoleHandlers(
+    root: HTMLElement,
+    reportHtmlConsole: (method: ConsoleMethod, args: any[]) => void
+): () => void {
+    type HtmlConsoleTarget = HTMLElement & {
+        [WRAPPED_HTML_CONSOLE_HANDLERS]?: Map<string, (...args: any[]) => any>;
+        [key: string]: unknown;
+    };
+
+    const wrappedTargets = new Set<HtmlConsoleTarget>();
+
+    const wrapElement = (element: HTMLElement) => {
+        const target = element as HtmlConsoleTarget;
+        const wrappedHandlers = target[WRAPPED_HTML_CONSOLE_HANDLERS] ?? new Map<string, (...args: any[]) => any>();
+        target[WRAPPED_HTML_CONSOLE_HANDLERS] = wrappedHandlers;
+
+        for (const eventType of HTML_CONSOLE_EVENT_TYPES) {
+            const property = `on${eventType}`;
+            if (wrappedHandlers.has(property)) {
+                continue;
+            }
+
+            const original = target[property];
+            if (typeof original !== 'function') {
+                continue;
+            }
+            const originalHandler = original as (...args: any[]) => any;
+
+            target[property] = function wrappedHtmlConsoleHandler(this: unknown, ...args: any[]) {
+                const previousReporter = activeConsoleReporter;
+                activeConsoleReporter = reportHtmlConsole;
+                try {
+                    return originalHandler.apply(this, args);
+                } finally {
+                    activeConsoleReporter = previousReporter;
+                }
+            };
+            wrappedHandlers.set(property, originalHandler);
+            wrappedTargets.add(target);
+        }
+    };
+
+    const visitNode = (node: Node) => {
+        if (!(node instanceof HTMLElement)) {
+            return;
+        }
+
+        wrapElement(node);
+        node.querySelectorAll('*').forEach(element => {
+            if (element instanceof HTMLElement) {
+                wrapElement(element);
+            }
+        });
+    };
+
+    visitNode(root);
+
+    const observer = new MutationObserver(mutations => {
+        for (const mutation of mutations) {
+            mutation.addedNodes.forEach(node => visitNode(node));
+        }
+    });
+    observer.observe(root, { childList: true, subtree: true });
+
+    return () => {
+        observer.disconnect();
+        for (const target of wrappedTargets) {
+            const wrappedHandlers = target[WRAPPED_HTML_CONSOLE_HANDLERS];
+            if (!wrappedHandlers) {
+                continue;
+            }
+
+            for (const [property, original] of wrappedHandlers) {
+                target[property] = original;
+            }
+            delete target[WRAPPED_HTML_CONSOLE_HANDLERS];
+        }
+    };
+}
 
 type RuntimeLanguageKind = 'javascript' | 'node' | 'react';
 
@@ -187,6 +330,8 @@ function parseMcqSource(source: string): ParsedMcq {
     const questionLines: string[] = [];
     let correctFeedback: string | undefined;
     let wrongFeedback: string | undefined;
+    let shuffle = true;
+    let deterministic = false;
     let sawOption = false;
     let currentOption: McqOption | undefined;
 
@@ -217,6 +362,27 @@ function parseMcqSource(source: string): ParsedMcq {
         }
 
         if (!sawOption) {
+            const shuffleMatch = line.match(/^\s*shuffle\s*:\s*(.*)$/i);
+            if (shuffleMatch) {
+                const shuffleValue = shuffleMatch[1].trim().toLowerCase();
+                if (shuffleValue === 'deterministic' || shuffleValue === 'stable') {
+                    shuffle = true;
+                    deterministic = true;
+                } else if (shuffleValue === 'random') {
+                    shuffle = true;
+                    deterministic = false;
+                } else {
+                    shuffle = parseMcqBooleanFlag(shuffleMatch[1], true);
+                }
+                continue;
+            }
+
+            const deterministicMatch = line.match(/^\s*deterministic\s*:\s*(.*)$/i);
+            if (deterministicMatch) {
+                deterministic = parseMcqBooleanFlag(deterministicMatch[1], true);
+                continue;
+            }
+
             const correctMatch = line.match(/^\s*correct\s*:\s*(.*)$/i);
             if (correctMatch) {
                 correctFeedback = correctMatch[1].trim();
@@ -237,8 +403,64 @@ function parseMcqSource(source: string): ParsedMcq {
         question: questionLines.join('\n').trim(),
         options,
         correctFeedback,
-        wrongFeedback
+        wrongFeedback,
+        shuffle,
+        deterministic
     };
+}
+
+function parseMcqBooleanFlag(value: string, defaultValue: boolean): boolean {
+    const normalized = value.trim().toLowerCase();
+    if (!normalized) {
+        return defaultValue;
+    }
+    if (['1', 'true', 'yes', 'on'].includes(normalized)) {
+        return true;
+    }
+    if (['0', 'false', 'no', 'off'].includes(normalized)) {
+        return false;
+    }
+
+    return defaultValue;
+}
+
+function hashMcqShuffleSeed(value: string): number {
+    let hash = 2166136261;
+    for (let index = 0; index < value.length; index++) {
+        hash ^= value.charCodeAt(index);
+        hash = Math.imul(hash, 16777619);
+    }
+
+    return hash >>> 0;
+}
+
+function createSeededMcqRandom(seed: number): () => number {
+    let state = seed || 0x9e3779b9;
+    return () => {
+        state += 0x6d2b79f5;
+        let result = state;
+        result = Math.imul(result ^ (result >>> 15), result | 1);
+        result ^= result + Math.imul(result ^ (result >>> 7), result | 61);
+        return ((result ^ (result >>> 14)) >>> 0) / 4294967296;
+    };
+}
+
+function getMcqDisplayOptions(options: McqOption[], shuffle: boolean, deterministic: boolean, seedSource: string): DisplayMcqOption[] {
+    const displayOptions = options.map((option, originalIndex) => ({
+        ...option,
+        originalIndex
+    }));
+    if (!shuffle || displayOptions.length < 2) {
+        return displayOptions;
+    }
+
+    const random = deterministic ? createSeededMcqRandom(hashMcqShuffleSeed(seedSource)) : Math.random;
+    for (let index = displayOptions.length - 1; index > 0; index--) {
+        const swapIndex = Math.floor(random() * (index + 1));
+        [displayOptions[index], displayOptions[swapIndex]] = [displayOptions[swapIndex], displayOptions[index]];
+    }
+
+    return displayOptions;
 }
 
 function getAddonContent(addons: Addon[], type: string): string | undefined {
@@ -294,17 +516,17 @@ function stripChecklistLinePrefix(line: string): string {
 function splitChecklistFields(value: string): string[] {
     const fields: string[] = [];
     let current = '';
-    let escaped = false;
 
-    for (const char of value) {
-        if (escaped) {
-            current += char;
-            escaped = false;
-            continue;
-        }
-
+    for (let index = 0; index < value.length; index++) {
+        const char = value[index];
         if (char === '\\') {
-            escaped = true;
+            const nextChar = value[index + 1];
+            if (nextChar === '|' || nextChar === '\\') {
+                current += nextChar;
+                index++;
+            } else {
+                current += char;
+            }
             continue;
         }
 
@@ -549,6 +771,8 @@ export function render({ container, feedback, mime, value, style, addStyle, cons
     let reactRoot: Root | undefined;
     let terminalInputBuffer = '';
     let refreshCleanup: void | (() => void);
+    let htmlConsoleCleanup: void | (() => void);
+    const consoleHistory: ConsoleHistoryEntry[] = [];
 
     function getTerminalCommandOutput(command: string, historySnapshot: string[]): string {
         const normalized = command.trim();
@@ -831,6 +1055,87 @@ export function render({ container, feedback, mime, value, style, addStyle, cons
         consoleElement.append(el);
     }
 
+    function formatConsoleValue(value: any): string {
+        if (typeof value === 'string') {
+            return value;
+        }
+        if (value instanceof Error) {
+            return value.message;
+        }
+        if (value === undefined) {
+            return 'undefined';
+        }
+        if (typeof value === 'symbol') {
+            return value.toString();
+        }
+        if (typeof value === 'object' && value !== null) {
+            try {
+                return JSON.stringify(value);
+            } catch {
+                return String(value);
+            }
+        }
+
+        return String(value);
+    }
+
+    function consoleEntryMatches(entry: ConsoleHistoryEntry, expected: string | RegExp): boolean {
+        if (typeof expected === 'string') {
+            return entry.text.includes(expected);
+        }
+
+        expected.lastIndex = 0;
+        return expected.test(entry.text);
+    }
+
+    function recordConsoleMessage(method: ConsoleMethod, args: any[]): void {
+        const entry: ConsoleHistoryEntry = {
+            method,
+            args: args.slice(),
+            text: args.map(formatConsoleValue).join(' '),
+            timestamp: Date.now()
+        };
+        consoleHistory.push(entry);
+        addConsoleMessage(args.map(arg => new ConsoleObjectView(arg)), consoleMethodToMessageType(method));
+    }
+
+    const consoleMirror = originalWindowConsole ?? window.console;
+    const console = {
+        debug: (...args: any[]) => {
+            recordConsoleMessage('debug', args);
+            (consoleMirror.debug ?? consoleMirror.log).apply(consoleMirror, args);
+        },
+        error: (...args: any[]) => {
+            recordConsoleMessage('error', args);
+            (consoleMirror.error ?? consoleMirror.log).apply(consoleMirror, args);
+        },
+        info: (...args: any[]) => {
+            recordConsoleMessage('info', args);
+            (consoleMirror.info ?? consoleMirror.log).apply(consoleMirror, args);
+        },
+        log: (...args: any[]) => {
+            recordConsoleMessage('log', args);
+            consoleMirror.log(...args);
+        },
+        trace: (...args: any[]) => {
+            recordConsoleMessage('trace', args);
+            (consoleMirror.trace ?? consoleMirror.log).apply(consoleMirror, args);
+        },
+        warn: (...args: any[]) => {
+            recordConsoleMessage('warn', args);
+            (consoleMirror.warn ?? consoleMirror.log).apply(consoleMirror, args);
+        },
+        history: (): ConsoleHistoryEntry[] => consoleHistory.map(entry => ({
+            ...entry,
+            args: entry.args.slice()
+        })),
+        didLog: (expected: string | RegExp): boolean => consoleHistory.some(entry => consoleEntryMatches(entry, expected)),
+        clear: (): void => {
+            consoleHistory.length = 0;
+            consoleElement.innerHTML = '';
+        }
+    };
+
     const sy = cy;
     function assert(selector: string, passMessage: string, failMessage: string) {
         const onResult = (passed: boolean, message: string, _trace: string[]) => {
@@ -1094,13 +1399,24 @@ export function render({ container, feedback, mime, value, style, addStyle, cons
         );
     }
 
+    function createConsoleLogCheck(expected: string | RegExp, label?: string): FileCheckResult {
+        const passed = console.didLog(expected);
+        const expectedLabel = typeof expected === 'string' ? `\`${expected}\`` : `\`${expected.toString()}\``;
+        return createFileResult(
+            label || `Log ${expectedLabel} to the console`,
+            passed,
+            passed ? undefined : `Expected console history to include ${expectedLabel}.`
+        );
+    }
+
     const check = {
         path: (path: string, label?: string) => createFileCheck(path, undefined, label),
         file: (path: string, label?: string) => createFileCheck(path, 'file', label),
         directory: (path: string, label?: string) => createFileCheck(path, 'directory', label),
         exists: (path: string, label?: string) => createFileCheck(path, undefined, label).exists(label),
         command: (command: string, label?: string) => createCommandCheck(command, label),
-        commands: (commands: string[], label?: string) => createCommandSequenceCheck(commands, label)
+        commands: (commands: string[], label?: string) => createCommandSequenceCheck(commands, label),
+        consoleLogged: (expected: string | RegExp, label?: string) => createConsoleLogCheck(expected, label)
     };
 
     function file(path: string): FileCheckBuilder {
@@ -1151,6 +1467,33 @@ export function render({ container, feedback, mime, value, style, addStyle, cons
 
     if (language === 'html') {
         container.innerHTML = source;
+        installWindowConsoleProxy();
+
+        const reportHtmlConsole = (method: ConsoleMethod, args: any[]) => {
+            recordConsoleMessage(method, args);
+        };
+        const activateHtmlConsoleReporter = () => {
+            activeConsoleReporter = reportHtmlConsole;
+            queueMicrotask(() => {
+                if (activeConsoleReporter === reportHtmlConsole) {
+                    activeConsoleReporter = undefined;
+                }
+            });
+        };
+        const restoreWrappedHtmlHandlers = wrapHtmlConsoleHandlers(container, reportHtmlConsole);
+
+        for (const eventType of HTML_CONSOLE_EVENT_TYPES) {
+            container.addEventListener(eventType, activateHtmlConsoleReporter, true);
+        }
+        htmlConsoleCleanup = () => {
+            restoreWrappedHtmlHandlers();
+            if (activeConsoleReporter === reportHtmlConsole) {
+                activeConsoleReporter = undefined;
+            }
+            for (const eventType of HTML_CONSOLE_EVENT_TYPES) {
+                container.removeEventListener(eventType, activateHtmlConsoleReporter, true);
+            }
+        };
 
         for (const { type, content } of activeAddons) {
             if (isScriptAddon(type)) {
@@ -1241,7 +1584,7 @@ export function render({ container, feedback, mime, value, style, addStyle, cons
 
         refreshCleanup = shouldRefresh ? scheduleChecklistRefresh(allPassed, parsedChecklist.intervalMs) : undefined;
     } else if (language === 'mcq') {
-        const { question, options, correctFeedback, wrongFeedback } = parseMcqSource(source);
+        const { question, options, correctFeedback, wrongFeedback, shuffle, deterministic } = parseMcqSource(source);
         if (!question || options.length === 0) {
             addFeedback('MCQ cells need a question plus at least one option.', 'error');
             return () => {
@@ -1259,6 +1602,7 @@ export function render({ container, feedback, mime, value, style, addStyle, cons
 
         const numCorrect = options.filter(o => o.correct).length;
         const inputType = numCorrect > 1 ? 'checkbox' : 'radio';
+        const displayOptions = getMcqDisplayOptions(options, shuffle, deterministic, `${value.cellUri || ''}\n${source}`);
 
         const form = document.createElement('form');
         form.classList.add('mcq-form');
@@ -1268,9 +1612,9 @@ export function render({ container, feedback, mime, value, style, addStyle, cons
         questionEl.innerHTML = renderMarkdownBlock(question);
         form.appendChild(questionEl);
 
-        const optionFeedbackEls: HTMLDivElement[] = [];
+        const optionFeedbackEls = new Map<number, HTMLDivElement>();
 
-        options.forEach((opt, index) => {
+        displayOptions.forEach(opt => {
             const optionRow = document.createElement('div');
             optionRow.classList.add('mcq-option-row');
 
@@ -1280,8 +1624,8 @@ export function render({ container, feedback, mime, value, style, addStyle, cons
             const input = document.createElement('input');
             input.type = inputType;
             input.name = 'mcq-option';
-            input.value = index.toString();
-            input.checked = persistedSelectionSet.has(index);
+            input.value = opt.originalIndex.toString();
+            input.checked = persistedSelectionSet.has(opt.originalIndex);
 
             label.appendChild(input);
             const span = document.createElement('span');
@@ -1292,7 +1636,7 @@ export function render({ container, feedback, mime, value, style, addStyle, cons
             optionFeedbackEl.classList.add('mcq-option-feedback');
             optionFeedbackEl.hidden = true;
 
-            optionFeedbackEls.push(optionFeedbackEl);
+            optionFeedbackEls.set(opt.originalIndex, optionFeedbackEl);
             optionRow.append(label, optionFeedbackEl);
             form.appendChild(optionRow);
         });
@@ -1308,8 +1652,9 @@ export function render({ container, feedback, mime, value, style, addStyle, cons
             }
 
             const selectedIndexes = Array.from(form.querySelectorAll<HTMLInputElement>('input'))
-                .map((input, index) => (input.checked ? index : -1))
-                .filter(index => index >= 0);
+                .map(input => (input.checked ? Number(input.value) : -1))
+                .filter(index => Number.isInteger(index) && index >= 0 && index < options.length)
+                .sort((left, right) => left - right);
 
             context.postMessage?.({
                 type: 'webnb.upsertCellAddon',
@@ -1342,20 +1687,26 @@ export function render({ container, feedback, mime, value, style, addStyle, cons
             }
 
             let allCorrect = true;
+            const checkedIndexes = new Set(
+                checkedInputs
+                    .map(input => Number(input.value))
+                    .filter(index => Number.isInteger(index) && index >= 0 && index < options.length)
+            );
 
-            inputs.forEach((input, index) => {
-                const opt = options[index];
-                const itemIsCorrect = input.checked === opt.correct;
+            displayOptions.forEach(opt => {
+                const itemIsCorrect = checkedIndexes.has(opt.originalIndex) === opt.correct;
                 if (!itemIsCorrect) {
                     allCorrect = false;
                 }
 
                 const itemFeedback = itemIsCorrect ? opt.correctFeedback : opt.wrongFeedback;
                 if (itemFeedback) {
-                    const optionFeedbackEl = optionFeedbackEls[index];
-                    optionFeedbackEl.hidden = false;
-                    optionFeedbackEl.classList.add(itemIsCorrect ? 'success' : 'error');
-                    optionFeedbackEl.innerHTML = renderMarkdownInline(itemFeedback);
+                    const optionFeedbackEl = optionFeedbackEls.get(opt.originalIndex);
+                    if (optionFeedbackEl) {
+                        optionFeedbackEl.hidden = false;
+                        optionFeedbackEl.classList.add(itemIsCorrect ? 'success' : 'error');
+                        optionFeedbackEl.innerHTML = renderMarkdownInline(itemFeedback);
+                    }
                 }
             });
 
@@ -1386,26 +1737,6 @@ export function render({ container, feedback, mime, value, style, addStyle, cons
             container.innerHTML = '<div id="root"></div>';
         }
 
-        const oldConsole = window.console;
-        const console = {
-            doLog: (method: "log" | "trace" | "error", ...args: any[]) => {
-                let cls: messageType = "info";
-                if (method === 'log' || method === 'trace') { cls = "info"; }
-                else if (method === 'error') { cls = "error"; }
-
-                addConsoleMessage(args.map(a => new ConsoleObjectView(a)), cls);
-                oldConsole.log(...args);
-            },
-            log: (...args: any[]) => {
-                console.doLog('log', ...args);
-            },
-            error: (...args: any[]) => {
-                console.doLog('error', ...args);
-            },
-            trace: (...args: any[]) => {
-                console.doLog('trace', ...args);
-            }
-        };
         const document = container;
         (document as any).body = container;
 
@@ -1569,6 +1900,7 @@ export function render({ container, feedback, mime, value, style, addStyle, cons
     }
 
     return () => {
+        htmlConsoleCleanup?.();
         refreshCleanup?.();
         reactRoot?.unmount();
         terminalInstance?.dispose();
