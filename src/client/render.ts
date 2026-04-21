@@ -17,6 +17,7 @@ interface IRenderInfo {
     container: HTMLElement;
     feedback: HTMLElement;
     console: HTMLElement;
+    widgetHost: HTMLElement;
     style: HTMLStyleElement;
     addStyle: (css: string) => void;
     mime: string;
@@ -131,6 +132,16 @@ function renderMarkdownBlock(text: string): string {
     return smartypants(html, SMARTYPANTS_ATTR);
 }
 
+function renderSmartText(text: string): string {
+    const escaped = text
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    return smartypants(escaped, SMARTYPANTS_ATTR);
+}
+
 function getRuntimeLanguageKind(language: string): RuntimeLanguageKind | undefined {
     if (REACT_LANGUAGE_IDS.has(language)) {
         return 'react';
@@ -228,6 +239,49 @@ function parseMcqSource(source: string): ParsedMcq {
         correctFeedback,
         wrongFeedback
     };
+}
+
+function getAddonContent(addons: Addon[], type: string): string | undefined {
+    const match = addons.find(addon => normalizeAddonType(addon.type) === normalizeAddonType(type));
+    return match?.content;
+}
+
+function parseMcqSelectionAddonContent(content: string, optionCount: number): number[] {
+    let rawValues: unknown[] = [];
+
+    const trimmed = content.trim();
+    if (!trimmed) {
+        return [];
+    }
+
+    try {
+        const parsed: unknown = JSON.parse(trimmed);
+        if (Array.isArray(parsed)) {
+            rawValues = parsed;
+        } else if (parsed && typeof parsed === 'object' && Array.isArray((parsed as { selected?: unknown[] }).selected)) {
+            rawValues = (parsed as { selected: unknown[] }).selected;
+        }
+    } catch {
+        rawValues = trimmed.split(/[\s,]+/g).filter(Boolean);
+    }
+
+    const seen = new Set<number>();
+    const selections: number[] = [];
+
+    for (const value of rawValues) {
+        const numeric = typeof value === 'number' ? value : Number(value);
+        if (!Number.isInteger(numeric) || numeric < 0 || numeric >= optionCount || seen.has(numeric)) {
+            continue;
+        }
+        seen.add(numeric);
+        selections.push(numeric);
+    }
+
+    return selections;
+}
+
+function serializeMcqSelectionAddonContent(indices: number[]): string {
+    return JSON.stringify({ selected: indices });
 }
 
 function stripChecklistLinePrefix(line: string): string {
@@ -412,7 +466,8 @@ function parseRegexLike(value: string): RegExp | string {
         return value;
     }
 
-    return new RegExp(regexMatch[1], regexMatch[2]);
+    const flags = regexMatch[2].includes('s') ? regexMatch[2] : `${regexMatch[2]}s`;
+    return new RegExp(regexMatch[1], flags);
 }
 
 function parseTerminalAddon(content: string): ParsedTerminalAddon {
@@ -455,7 +510,7 @@ function parseTerminalAddon(content: string): ParsedTerminalAddon {
 }
 
 // This function is called to render your contents.
-export function render({ container, feedback, mime, value, style, addStyle, console: consoleElement, context }: IRenderInfo): void | (() => void) {
+export function render({ container, feedback, mime, value, style, addStyle, console: consoleElement, widgetHost, context }: IRenderInfo): void | (() => void) {
     const { language, source, addons } = value;
     container.className = '';
     container.classList.add('webnb-output', `webnb-output-${language}`);
@@ -467,6 +522,14 @@ export function render({ container, feedback, mime, value, style, addStyle, cons
     const activeAddons: Addon[] = Array.isArray(addons)
         ? addons.filter((addon: Addon) => !isSolutionAddon(addon.type))
         : [];
+    const hasHtmlAddon = activeAddons.some(addon => isHtmlAddon(addon.type));
+    const runtimeLanguageKind = getRuntimeLanguageKind(language);
+    const shouldShowOutputContainer =
+        language === 'css' ? hasHtmlAddon
+            : runtimeLanguageKind === 'javascript' || runtimeLanguageKind === 'node' ? hasHtmlAddon
+                : true;
+    container.classList.toggle('webnb-output-empty', !shouldShowOutputContainer);
+    const defaultSource = getAddonContent(activeAddons, 'default') ?? '';
     const deferChecklistRendering = isExternalCheckLanguage(language);
     const deferredChecklistResults: FileCheckResult[] = [];
     let deferredChecklistTitle: string | undefined;
@@ -485,6 +548,7 @@ export function render({ container, feedback, mime, value, style, addStyle, cons
     let terminalInstance: Terminal | undefined;
     let reactRoot: Root | undefined;
     let terminalInputBuffer = '';
+    let refreshCleanup: void | (() => void);
 
     function getTerminalCommandOutput(command: string, historySnapshot: string[]): string {
         const normalized = command.trim();
@@ -549,11 +613,7 @@ export function render({ container, feedback, mime, value, style, addStyle, cons
         terminalHost.classList.add('webnb-terminal');
         terminalWrapper.append(terminalLabel, terminalHost);
 
-        if (isExternalCheckLanguage(language)) {
-            container.appendChild(terminalWrapper);
-        } else {
-            consoleElement.prepend(terminalWrapper);
-        }
+        widgetHost.prepend(terminalWrapper);
 
         terminalInstance = new Terminal({
             cols: 80,
@@ -669,17 +729,20 @@ export function render({ container, feedback, mime, value, style, addStyle, cons
         }
     };
 
-    function addFeedback(message: string, category: messageType = 'info', isHtml: boolean = false) {
-        feedback.innerHTML = '';
+    function appendFeedback(message: string, category: messageType = 'info', isHtml: boolean = false) {
         const el = document.createElement('div');
         el.classList.add(category);
-
         if (isHtml) {
             el.innerHTML = message;
         } else {
-            el.innerText = message;
+            el.innerHTML = renderSmartText(message);
         }
         feedback.append(el);
+    }
+
+    function addFeedback(message: string, category: messageType = 'info', isHtml: boolean = false) {
+        feedback.innerHTML = '';
+        appendFeedback(message, category, isHtml);
     }
     function addChecklistFeedback(results: FileCheckResult[], title?: string, options: { checkedAt?: number; intervalMs?: number; autoRefresh?: boolean } = {}): boolean {
         feedback.innerHTML = '';
@@ -770,30 +833,41 @@ export function render({ container, feedback, mime, value, style, addStyle, cons
 
     const sy = cy;
     function assert(selector: string, passMessage: string, failMessage: string) {
-        return cy(container, (passed: boolean, message: string, trace: string[]) => {
+        const onResult = (passed: boolean, message: string, _trace: string[]) => {
             if (passed) {
-                addFeedback(`${message}`, 'success');
+                appendFeedback(`${message}`, 'success');
             } else {
-                addFeedback(`${message}`, 'error');
+                appendFeedback(`${message}`, 'error');
             }
-        }).get(selector);
+        };
+        // Browsers strip <html> and <body> when setting innerHTML on a div, so
+        // these structural elements won't be found in the container. Parse the
+        // source with DOMParser instead so document-structure assertions work.
+        if (language === 'html' && container.querySelectorAll(selector).length === 0) {
+            const doc = new DOMParser().parseFromString(source, 'text/html');
+            const nodes = Array.from(doc.querySelectorAll(selector)) as Element[];
+            if (nodes.length > 0) {
+                return cy(nodes, onResult);
+            }
+        }
+        return cy(container, onResult).get(selector);
     }
 
     function assertRule(selector: string) {
-        return cy.getRule(selector, (passed: boolean, message: string, trace: string[]) => {
+        return cy.getRule(selector, (passed: boolean, message: string, _trace: string[]) => {
             if (passed) {
-                addFeedback(`${message}`, 'success');
+                appendFeedback(`${message}`, 'success');
             } else {
-                addFeedback(`${message}`, 'error');
+                appendFeedback(`${message}`, 'error');
             }
         });
     }
     function wrap(object: any, passMessage: string, failMessage: string) {
-        return cy.wrap(object, (passed: boolean, message: string, trace: string[]) => {
+        return cy.wrap(object, (passed: boolean, message: string, _trace: string[]) => {
             if (passed) {
-                addFeedback(`${message}`, 'success');
+                appendFeedback(`${message}`, 'success');
             } else {
-                addFeedback(`${message}`, 'error');
+                appendFeedback(`${message}`, 'error');
             }
         });
     }
@@ -1080,6 +1154,7 @@ export function render({ container, feedback, mime, value, style, addStyle, cons
 
         for (const { type, content } of activeAddons) {
             if (isScriptAddon(type)) {
+                feedback.innerHTML = '';
                 eval(content);
             } else if (isCssAddon(type)) {
                 addStyle(content);
@@ -1164,20 +1239,23 @@ export function render({ container, feedback, mime, value, style, addStyle, cons
             autoRefresh: shouldRefresh
         });
 
-        const refreshCleanup = shouldRefresh ? scheduleChecklistRefresh(allPassed, parsedChecklist.intervalMs) : undefined;
-        if (refreshCleanup || terminalInstance) {
-            return () => {
-                refreshCleanup?.();
-                terminalInstance?.dispose();
-            };
-        }
-        return undefined;
+        refreshCleanup = shouldRefresh ? scheduleChecklistRefresh(allPassed, parsedChecklist.intervalMs) : undefined;
     } else if (language === 'mcq') {
         const { question, options, correctFeedback, wrongFeedback } = parseMcqSource(source);
         if (!question || options.length === 0) {
             addFeedback('MCQ cells need a question plus at least one option.', 'error');
-            return;
+            return () => {
+                refreshCleanup?.();
+                reactRoot?.unmount();
+                terminalInstance?.dispose();
+            };
         }
+
+        const persistedSelections = parseMcqSelectionAddonContent(
+            getAddonContent(activeAddons, 'selection') || getAddonContent(activeAddons, 'mcq-selection') || '',
+            options.length
+        );
+        const persistedSelectionSet = new Set<number>(persistedSelections);
 
         const numCorrect = options.filter(o => o.correct).length;
         const inputType = numCorrect > 1 ? 'checkbox' : 'radio';
@@ -1203,6 +1281,7 @@ export function render({ container, feedback, mime, value, style, addStyle, cons
             input.type = inputType;
             input.name = 'mcq-option';
             input.value = index.toString();
+            input.checked = persistedSelectionSet.has(index);
 
             label.appendChild(input);
             const span = document.createElement('span');
@@ -1223,7 +1302,31 @@ export function render({ container, feedback, mime, value, style, addStyle, cons
         checkBtn.type = 'button';
         checkBtn.classList.add('mcq-check-button');
 
+        const persistSelectionState = () => {
+            if (!value.cellUri || typeof context.postMessage !== 'function') {
+                return;
+            }
+
+            const selectedIndexes = Array.from(form.querySelectorAll<HTMLInputElement>('input'))
+                .map((input, index) => (input.checked ? index : -1))
+                .filter(index => index >= 0);
+
+            context.postMessage?.({
+                type: 'webnb.upsertCellAddon',
+                cellUri: value.cellUri,
+                addonType: 'selection',
+                content: serializeMcqSelectionAddonContent(selectedIndexes)
+            });
+        };
+
+        form.querySelectorAll<HTMLInputElement>('input').forEach(input => {
+            input.addEventListener('change', () => {
+                persistSelectionState();
+            });
+        });
+
         checkBtn.addEventListener('click', () => {
+            persistSelectionState();
             const inputs = form.querySelectorAll<HTMLInputElement>('input');
             const checkedInputs = Array.from(inputs).filter(input => input.checked);
 
@@ -1277,7 +1380,6 @@ export function render({ container, feedback, mime, value, style, addStyle, cons
             }
         }
 
-        const runtimeLanguageKind = getRuntimeLanguageKind(language);
         const isReactLanguage = runtimeLanguageKind === 'react';
         const isNodeLanguage = runtimeLanguageKind === 'node';
         if (isReactLanguage && !container.firstElementChild) {
@@ -1371,6 +1473,7 @@ export function render({ container, feedback, mime, value, style, addStyle, cons
                 'files',
                 'source',
                 'cy',
+                'defaultSource',
                 'terminal',
                 'renderReact',
                 'React',
@@ -1397,6 +1500,7 @@ export function render({ container, feedback, mime, value, style, addStyle, cons
                 files,
                 source,
                 sy,
+                defaultSource,
                 terminal,
                 renderReact,
                 React,
@@ -1414,10 +1518,15 @@ export function render({ container, feedback, mime, value, style, addStyle, cons
 
         try {
             let toEval = source;
+            let hasTestAddon = false;
             for (const { type, content } of activeAddons) {
                 if (isScriptAddon(type)) {
                     toEval += '\n\n' + content;
+                    hasTestAddon = true;
                 }
+            }
+            if (hasTestAddon) {
+                feedback.innerHTML = '';
             }
             window.console.log(toEval);
 
@@ -1459,12 +1568,11 @@ export function render({ container, feedback, mime, value, style, addStyle, cons
         container.appendChild(pre);
     }
 
-    if (terminalInstance || reactRoot) {
-        return () => {
-            reactRoot?.unmount();
-            terminalInstance?.dispose();
-        };
-    }
+    return () => {
+        refreshCleanup?.();
+        reactRoot?.unmount();
+        terminalInstance?.dispose();
+    };
 }
 
 if (module.hot) {

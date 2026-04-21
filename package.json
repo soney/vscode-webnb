@@ -85,7 +85,7 @@
         "in-browser:watch": "node scripts/vscode-test-web.js samplenotebooks/sample.webnb --watch",
         "dev:web": "npm run watch",
         "test": "vscode-test",
-        "gen-vsix": "npx vsce package -o web-notebook.vsix"
+        "gen-vsix": "npm run compile && npx vsce package -o web-notebook.vsix"
     },
     "devDependencies": {
         "@types/babel__standalone": "^7.1.9",

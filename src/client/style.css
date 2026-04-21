@@ -46,10 +46,22 @@
   font-size: var(--vscode-font-size);
 }
 
-div#html-output:not(.webnb-output-mcq) {
+div#html-output:not(.webnb-output-mcq):not(.webnb-output-external):not(.webnb-output-checklist) {
   background-color: white;
   color: black;
   font-family: 'Times New Roman', Times, serif;
+  min-height: 120px;
+  border: 1px solid var(--vscode-notebook-cellBorderColor, var(--vscode-panel-border, rgba(127, 127, 127, 0.3)));
+  border-radius: 3px;
+}
+
+div#html-output.webnb-output-empty:not(.webnb-output-mcq):not(.webnb-output-external):not(.webnb-output-checklist) {
+  display: none;
+}
+
+.webnb-output-external,
+.webnb-output-checklist {
+  display: none;
 }
 
 .webnb-output-mcq {

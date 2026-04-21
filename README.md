@@ -94,6 +94,21 @@ Use `+solution` to attach an author-only reference answer to a cell.
 
 `+solution` is optional and does not run, render, or affect test execution. It is useful for storing the expected answer next to the exercise while keeping the learner-facing behavior unchanged.
 
+### Starter Defaults
+
+Use `+default` to preserve starter code separately from the learner-edited cell source.
+
+If you leave `+default` empty, the first cell run captures the current cell source into `+default` automatically.
+
+`````
+```{html}
+<!-- learner edits this -->
+```
+```+default
+<!-- optional: author-defined starter code, or leave empty to auto-capture on first run -->
+```
+````
+
 ````
 ```{javascript}
 // Learner task: create a function that doubles a number.
@@ -257,6 +272,24 @@ assert('#message').should('have.text', 'Hello').run('The button should update th
 ```
 ````
 
+### Multiple Choice Selection State
+
+MCQ cells can persist learner selections in a `+selection` addon attached to the MCQ cell.
+
+The renderer updates this addon automatically whenever selections change, so reopening or rerunning the notebook restores the learner's current choices.
+
+````
+```{mcq}
+Which of these are fruits?
+[x] Apple
+[ ] Carrot
+[x] Banana
+```
+```+selection
+{"selected":[0,2]}
+```
+````
+
 ### CSS Tests
 
 For CSS cells, add fixture HTML with `+html`, then test the rendered result or inspect a CSS rule:
@@ -345,7 +378,14 @@ Use `autorun` for regular code cells, and rely on built-in auto-run behavior for
 
 Use external checks when the learner needs to create files or folders in the workspace. External check cells are little widgets: they run automatically when the notebook opens, collapse their source like multiple choice cells, show each item as pass/fix feedback, and keep checking periodically until every item passes.
 
-Paths are relative to the workspace folder that contains the notebook. External check cells automatically snapshot paths referenced by declarative checks. If an advanced `+test` builds paths dynamically, list those paths in a `+files` addon.
+Paths are relative to the notebook file's directory by default. To resolve from the workspace root instead, prefix the path with `workspace:`.
+
+Examples:
+
+- `styles.css` resolves relative to the current `.webnb` file.
+- `workspace:shared/styles.css` resolves relative to the workspace root.
+
+External check cells automatically snapshot paths referenced by declarative checks. If an advanced `+test` builds paths dynamically, list those paths in a `+files` addon.
 
 ````
 ```{external}

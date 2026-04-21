@@ -54,12 +54,14 @@ export const activate: ActivationFunction = (context) => {
 
                 const feedback = document.createElement('div');
                 feedback.classList.add('feedback');
+                const widgetHost = document.createElement('div');
+                widgetHost.classList.add('widget-host');
                 const consoleElement = document.createElement('div');
                 consoleElement.classList.add('console');
 
                 const node = document.createElement('div');
                 node.setAttribute('id', 'html-output');
-                root.append(feedback, node, consoleElement);
+                root.append(node, widgetHost, feedback, consoleElement);
 
                 function addStyle(css: string) {
                     const style = document.createElement('style');
@@ -70,7 +72,17 @@ export const activate: ActivationFunction = (context) => {
                     }
                 }
 
-                const nextCleanup = render({ feedback, container: node, mime: outputItem.mime, style, value, context, console: consoleElement, addStyle });
+                const nextCleanup = render({
+                    feedback,
+                    container: node,
+                    mime: outputItem.mime,
+                    style,
+                    value,
+                    context,
+                    console: consoleElement,
+                    widgetHost,
+                    addStyle
+                });
                 if (typeof nextCleanup === 'function') {
                     (root as any).__webnbCleanup = nextCleanup;
                 }

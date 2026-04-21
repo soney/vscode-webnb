@@ -14,7 +14,7 @@ import { deepEqual } from './utils';
  *   </script>
  */
 
-type Assertion = 'exist' | 'have.text' | 'have.class' | 'have.attribute' | 'have.css' | 'equal';
+type Assertion = 'exist' | 'have.text' | 'have.class' | 'have.attribute' | 'have.attr' | 'have.css' | 'have.length' | 'equal' | 'contain';
 
 interface Chainable {
     failed: boolean;
@@ -22,7 +22,7 @@ interface Chainable {
     elements: Element[];
     onResult: (passed: boolean, message: string, trace: string[]) => void;
 
-    should(assertion: Assertion, expected?: string): Chainable;
+    should(assertion: Assertion, expected?: string, value?: string): Chainable;
     click(): Chainable;
     type(text: string): Chainable;
     clear(): Chainable;
@@ -56,7 +56,7 @@ function createChain(elements: Element[], onResult: (passed: boolean, message: s
         onResult,
         subject,
 
-        should(assertion: Assertion, expected?: string): Chainable {
+        should(assertion: Assertion, expected?: string, value?: string): Chainable {
             if (failed) { return this; }
 
             if (this.subject !== undefined) {
@@ -84,6 +84,38 @@ function createChain(elements: Element[], onResult: (passed: boolean, message: s
                 } else {
                     return createChain(this.elements, this.onResult, messageTrace.concat(`Assertion passed: ${assertion}`), this.failed, this.subject);
                 }
+            }
+
+            if (assertion === 'contain') {
+                if (this.elements.length === 0) {
+                    return createChain([], this.onResult, messageTrace.concat(`Expected elements to contain "${expected}", but no matching elements were found`), true, this.subject);
+                }
+                for (const el of this.elements) {
+                    if (!el.querySelector(expected!)) {
+                        return createChain(this.elements, this.onResult, messageTrace.concat(`Expected element to contain "${expected}", but no descendant matched`), true, this.subject);
+                    }
+                }
+                return createChain(this.elements, this.onResult, messageTrace.concat(`Assertion passed: ${assertion} with selector "${expected}"`), this.failed, this.subject);
+            }
+
+            if (assertion === 'have.length') {
+                const expectedLength = Number(expected);
+                if (Number.isNaN(expectedLength)) {
+                    return createChain(this.elements, this.onResult, messageTrace.concat(`Expected a numeric length value, got "${expected}"`), true, this.subject);
+                }
+
+                if (this.subject !== undefined && this.subject !== null && this.subject.length !== undefined) {
+                    if (this.subject.length !== expectedLength) {
+                        return createChain(this.elements, this.onResult, messageTrace.concat(`Expected subject length ${expectedLength}, got ${this.subject.length}`), true, this.subject);
+                    }
+                    return createChain(this.elements, this.onResult, messageTrace.concat(`Assertion passed: ${assertion} with value "${expectedLength}"`), this.failed, this.subject);
+                }
+
+                if (this.elements.length !== expectedLength) {
+                    return createChain(this.elements, this.onResult, messageTrace.concat(`Expected ${expectedLength} elements, got ${this.elements.length}`), true, this.subject);
+                }
+
+                return createChain(this.elements, this.onResult, messageTrace.concat(`Assertion passed: ${assertion} with value "${expectedLength}"`), this.failed, this.subject);
             }
 
             if (this.subject !== undefined && assertion === 'have.css') {
@@ -115,6 +147,11 @@ function createChain(elements: Element[], onResult: (passed: boolean, message: s
                 return createChain(this.elements, this.onResult, messageTrace.concat(`Assertion passed: ${assertion}${expected ? ` with value "${expected}"` : ''}`), this.failed, this.subject);
             }
 
+            // Element assertions should implicitly fail when nothing matched.
+            if (this.subject === undefined && this.elements.length === 0) {
+                return createChain(this.elements, this.onResult, messageTrace.concat(`Expected at least one element for assertion "${assertion}", but found none`), true, this.subject);
+            }
+
             for (const el of this.elements) {
                 if (assertion === 'have.text') {
                     if (el.textContent !== expected) {
@@ -124,9 +161,12 @@ function createChain(elements: Element[], onResult: (passed: boolean, message: s
                     if (!(el instanceof HTMLElement) || !el.classList.contains(expected!)) {
                         return createChain(this.elements, this.onResult, messageTrace.concat(`Expected element to have class "${expected}"`), true, this.subject);
                     }
-                } else if (assertion === 'have.attribute') {
+                } else if (assertion === 'have.attribute' || assertion === 'have.attr') {
                     if (!(el instanceof HTMLElement) || !el.hasAttribute(expected!)) {
                         return createChain(this.elements, this.onResult, messageTrace.concat(`Expected element to have attribute "${expected}"`), true, this.subject);
+                    }
+                    if (value !== undefined && el.getAttribute(expected!) !== value) {
+                        return createChain(this.elements, this.onResult, messageTrace.concat(`Expected attribute "${expected}" to be "${value}", got "${el.getAttribute(expected!)}"`), true, this.subject);
                     }
                 } else if (assertion === 'have.css') {
                     const [prop, ...valParts] = expected?.split(':').map(s => s.trim()) ?? [];
