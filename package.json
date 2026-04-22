@@ -21,10 +21,14 @@
     ],
     "activationEvents": [
         "onNotebook:web-notebook",
+        "onLanguage:webnb",
         "onStartupFinished"
     ],
     "main": "./out/extension/extension.js",
     "browser": "./out/extension/extension.web.js",
+    "extensionKind": [
+        "workspace"
+    ],
     "contributes": {
         "notebooks": [
             {
@@ -85,7 +89,10 @@
         "in-browser:watch": "node scripts/vscode-test-web.js samplenotebooks/sample.webnb --watch",
         "dev:web": "npm run watch",
         "test": "vscode-test",
-        "gen-vsix": "npm run compile && npx vsce package -o web-notebook.vsix"
+        "gen-vsix": "npm run compile && npx vsce package -o web-notebook.vsix",
+        "coursera:import": "node scripts/coursera-docker-dev.js import",
+        "coursera:start": "node scripts/coursera-docker-dev.js start",
+        "coursera:stop": "node scripts/coursera-docker-dev.js stop"
     },
     "devDependencies": {
         "@types/babel__standalone": "^7.1.9",

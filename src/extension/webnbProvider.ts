@@ -51,6 +51,44 @@ const AUTORUN_SWEEP_DELAY_MS = 250;
 // still need the internal command to select it before programmatic autorun.
 const SELECT_KERNEL_COMMAND = '_notebook.selectKernel';
 
+function notebookUrisMatch(a: vscode.Uri, b: vscode.Uri): boolean {
+    if (a.toString() === b.toString()) {
+        return true;
+    }
+
+    return a.scheme === b.scheme
+        && a.path === b.path
+        && a.query === b.query
+        && a.fragment === b.fragment
+        && (!a.authority || !b.authority);
+}
+
+function logExecution(message: string, ...args: unknown[]): void {
+    console.log(`[webnb] ${message}`, ...args);
+}
+
+function warnExecution(message: string, ...args: unknown[]): void {
+    console.warn(`[webnb] ${message}`, ...args);
+}
+
+function uriLabel(uri: vscode.Uri | undefined): string {
+    return uri?.toString() ?? '<none>';
+}
+
+function cellLabel(cell: vscode.NotebookCell): string {
+    return `index=${cell.index} kind=${cell.kind} language=${cell.document.languageId} notebook=${uriLabel(cell.notebook.uri)} document=${uriLabel(cell.document.uri)} version=${cell.document.version}`;
+}
+
+function rangesLabel(ranges: vscode.NotebookRange[]): string {
+    return ranges.map(range => `${range.start}:${range.end}`).join(',') || '<none>';
+}
+
+function visibleNotebookLabels(): string {
+    return vscode.window.visibleNotebookEditors
+        .map(editor => uriLabel(editor.notebook.uri))
+        .join(' | ') || '<none>';
+}
+
 function normalizeAddonType(type: string | undefined): string {
     return (type || '').trim().toLowerCase().replace(/^\+/, '');
 }
@@ -401,7 +439,7 @@ export class WebNotebookKernel implements vscode.Disposable {
                     this._autorunDiscoveryRetries.set(notebookKey, nextRetry);
                     setTimeout(() => {
                         const retryEditor = vscode.window.visibleNotebookEditors
-                            .find(candidate => candidate.notebook.uri.toString() === notebookKey);
+                            .find(candidate => notebookUrisMatch(candidate.notebook.uri, notebook.uri));
                         if (retryEditor) {
                             runAutorunCells(retryEditor);
                         }
@@ -464,7 +502,7 @@ export class WebNotebookKernel implements vscode.Disposable {
             }
 
             const matchingEditors = vscode.window.visibleNotebookEditors
-                .filter(editor => editor.notebook.uri.toString() === notebook.uri.toString());
+                .filter(editor => notebookUrisMatch(editor.notebook.uri, notebook.uri));
             for (const editor of matchingEditors) {
                 runAutorunCells(editor);
             }
@@ -532,6 +570,7 @@ export class WebNotebookKernel implements vscode.Disposable {
                     return;
                 }
 
+                void this._selectControllerForEditor(editor);
                 initializeEditor(editor);
             }),
             vscode.window.onDidChangeVisibleNotebookEditors(editors => {
@@ -547,6 +586,7 @@ export class WebNotebookKernel implements vscode.Disposable {
         }
         if (vscode.window.activeNotebookEditor) {
             this._ensureControllerAssociation(vscode.window.activeNotebookEditor.notebook);
+            void this._selectControllerForEditor(vscode.window.activeNotebookEditor);
             runAutorunCells(vscode.window.activeNotebookEditor);
         }
         scheduleAutorunSweep();
@@ -558,9 +598,24 @@ export class WebNotebookKernel implements vscode.Disposable {
     }
 
     public async executeHandler(cells: vscode.NotebookCell[], _notebook: vscode.NotebookDocument, _controller: vscode.NotebookController): Promise<void> {
+        logExecution('executeHandler start cells=%d notebook=%s activeNotebook=%s visible=%s',
+            cells.length,
+            uriLabel(_notebook.uri),
+            uriLabel(vscode.window.activeNotebookEditor?.notebook.uri),
+            visibleNotebookLabels());
+
         for (const cell of cells) {
+            logExecution('executeHandler cell %s', cellLabel(cell));
+            const prepared = await this._prepareNotebookForExecution(cell.notebook);
+            if (!prepared) {
+                warnExecution('executeHandler skipped cell because notebook was not prepared: %s', cellLabel(cell));
+                continue;
+            }
+
             await this._doExecuteCell(cell);
         }
+
+        logExecution('executeHandler end notebook=%s', uriLabel(_notebook.uri));
     }
 
     private _getAutorunCells(notebook: vscode.NotebookDocument): vscode.NotebookCell[] {
@@ -593,31 +648,53 @@ export class WebNotebookKernel implements vscode.Disposable {
 
     private async _executeAutorunCells(editor: vscode.NotebookEditor, ranges: vscode.NotebookRange[], autorunSignature: string): Promise<void> {
         const notebookKey = editor.notebook.uri.toString();
+        logExecution('autorun start notebook=%s ranges=%s signature=%s',
+            notebookKey,
+            rangesLabel(ranges),
+            autorunSignature);
         try {
             const executed = await this._executeNotebookRanges(editor.notebook, ranges);
             if (executed) {
                 this._autorunExecutedNotebookSignatures.set(notebookKey, autorunSignature);
                 this._autorunDiscoveryRetries.delete(notebookKey);
             }
+            logExecution('autorun end notebook=%s executed=%s', notebookKey, String(executed));
         } finally {
             this._autorunPendingNotebooks.delete(notebookKey);
         }
     }
 
     private async _executeNotebookRanges(notebook: vscode.NotebookDocument, ranges: vscode.NotebookRange[]): Promise<boolean> {
+        logExecution('executeNotebookRanges start notebook=%s ranges=%s visible=%s',
+            uriLabel(notebook.uri),
+            rangesLabel(ranges),
+            visibleNotebookLabels());
+
         if (ranges.length === 0) {
+            logExecution('executeNotebookRanges no ranges notebook=%s', uriLabel(notebook.uri));
             return true;
         }
 
-        const selected = await this._selectControllerForNotebook(notebook);
-        if (!selected) {
+        const canExecute = await this._prepareNotebookForExecution(notebook);
+        if (!canExecute) {
+            warnExecution('executeNotebookRanges notebook was not prepared notebook=%s visible=%s',
+                uriLabel(notebook.uri),
+                visibleNotebookLabels());
             return false;
         }
 
         const expectedCells = this._getCellsInRanges(notebook, ranges);
         if (expectedCells.length === 0) {
+            warnExecution('executeNotebookRanges found no cells notebook=%s ranges=%s',
+                uriLabel(notebook.uri),
+                rangesLabel(ranges));
             return false;
         }
+
+        logExecution('executeNotebookRanges resolved cells=%d notebook=%s cellIndexes=%s',
+            expectedCells.length,
+            uriLabel(notebook.uri),
+            expectedCells.map(cell => String(cell.index)).join(','));
 
         const executionVersionsBefore = new Map(
             expectedCells.map(cell => [
@@ -630,33 +707,85 @@ export class WebNotebookKernel implements vscode.Disposable {
             for (const cell of expectedCells) {
                 await this._doExecuteCell(cell);
             }
-            return expectedCells.every(cell => {
+            const executed = expectedCells.every(cell => {
                 const cellKey = cell.document.uri.toString();
                 return (this._cellExecutionVersions.get(cellKey) ?? 0) > (executionVersionsBefore.get(cellKey) ?? 0);
             });
+            logExecution('executeNotebookRanges end notebook=%s executed=%s',
+                uriLabel(notebook.uri),
+                String(executed));
+            return executed;
         } catch (error) {
-            console.error(`[webnb] Could not execute notebook cells for ${notebook.uri.toString()}:`, error);
+            console.error('[webnb] Could not execute notebook cells for %s:', notebook.uri.toString(), error);
             return false;
         }
     }
 
-    private async _selectControllerForNotebook(notebook: vscode.NotebookDocument): Promise<boolean> {
-        this._ensureControllerAssociation(notebook);
+    private async _prepareNotebookForExecution(notebook: vscode.NotebookDocument): Promise<boolean> {
+        logExecution('prepareNotebook start notebook=%s activeNotebook=%s visible=%s',
+            uriLabel(notebook.uri),
+            uriLabel(vscode.window.activeNotebookEditor?.notebook.uri),
+            visibleNotebookLabels());
 
-        const activeNotebook = vscode.window.activeNotebookEditor?.notebook;
-        if (activeNotebook?.uri.toString() !== notebook.uri.toString()) {
+        const editor = vscode.window.visibleNotebookEditors
+            .find(candidate => notebookUrisMatch(candidate.notebook.uri, notebook.uri));
+        if (!editor) {
+            warnExecution('prepareNotebook no visible editor notebook=%s visible=%s',
+                uriLabel(notebook.uri),
+                visibleNotebookLabels());
             return false;
         }
 
+        const selected = await this._selectControllerForEditor(editor);
+        logExecution('prepareNotebook end notebook=%s selected=%s activeNotebook=%s',
+            uriLabel(notebook.uri),
+            String(selected),
+            uriLabel(vscode.window.activeNotebookEditor?.notebook.uri));
+        return true;
+    }
+
+    private async _selectControllerForEditor(editor: vscode.NotebookEditor): Promise<boolean> {
+        const { notebook } = editor;
+        if (notebook.notebookType !== this.notebookType) {
+            logExecution('selectController skipped non-webnb notebookType=%s notebook=%s',
+                notebook.notebookType,
+                uriLabel(notebook.uri));
+            return false;
+        }
+
+        logExecution('selectController start notebook=%s viewColumn=%s activeNotebook=%s',
+            uriLabel(notebook.uri),
+            String(editor.viewColumn),
+            uriLabel(vscode.window.activeNotebookEditor?.notebook.uri));
+
+        this._ensureControllerAssociation(notebook);
+
         try {
+            if (!vscode.window.activeNotebookEditor || !notebookUrisMatch(vscode.window.activeNotebookEditor.notebook.uri, notebook.uri)) {
+                logExecution('selectController showing notebook notebook=%s currentActive=%s',
+                    uriLabel(notebook.uri),
+                    uriLabel(vscode.window.activeNotebookEditor?.notebook.uri));
+                await vscode.window.showNotebookDocument(notebook, {
+                    viewColumn: editor.viewColumn,
+                    preserveFocus: false,
+                    preview: false
+                });
+                logExecution('selectController showed notebook notebook=%s activeNotebook=%s',
+                    uriLabel(notebook.uri),
+                    uriLabel(vscode.window.activeNotebookEditor?.notebook.uri));
+            }
+
             const selected = await vscode.commands.executeCommand<boolean>(SELECT_KERNEL_COMMAND, {
                 id: this.id,
                 extension: this._extensionId,
                 skipIfAlreadySelected: true
             });
+            logExecution('selectController command result notebook=%s selected=%s',
+                uriLabel(notebook.uri),
+                String(selected));
             return selected !== false;
         } catch (error) {
-            console.error(`[webnb] Could not select notebook controller for ${notebook.uri.toString()}:`, error);
+            console.error('[webnb] Could not select notebook controller for %s:', notebook.uri.toString(), error);
             return false;
         }
     }
@@ -682,15 +811,25 @@ export class WebNotebookKernel implements vscode.Disposable {
     }
 
     private async _doExecuteCell(cell: vscode.NotebookCell): Promise<void> {
+        logExecution('cell execute start %s', cellLabel(cell));
         const source = cell.document.getText();
         const { languageId } = cell.document;
         let addons = getCellAddons(cell);
+        logExecution('cell source loaded index=%d language=%s sourceLength=%d addonTypes=%s',
+            cell.index,
+            languageId,
+            source.length,
+            addons.map(addon => normalizeAddonType(addon.type)).join(',') || '<none>');
         const defaultCapture = getDefaultCaptureAddons(addons, source);
         if (defaultCapture.changed) {
+            logExecution('cell default capture addon updated index=%d', cell.index);
             addons = defaultCapture.addons;
             await this._replaceCellAddons(cell, addons);
         }
         const files = await this._snapshotWorkspaceFiles(cell, addons, languageId, source);
+        logExecution('cell snapshots ready index=%d snapshotKeys=%s',
+            cell.index,
+            Object.keys(files).join(',') || '<none>');
 
         const output = new vscode.NotebookCellOutput([
             vscode.NotebookCellOutputItem.json({
@@ -704,13 +843,22 @@ export class WebNotebookKernel implements vscode.Disposable {
         ]);
 
         try {
+            logExecution('cell creating execution %s', cellLabel(cell));
             const exec = this._controller.createNotebookCellExecution(cell);
+            logExecution('cell execution created index=%d', cell.index);
             exec.start(Date.now());
+            logExecution('cell execution started index=%d', cell.index);
             await exec.replaceOutput(output);
+            logExecution('cell output replaced index=%d outputItems=%d', cell.index, output.items.length);
             exec.end(true, Date.now());
+            logExecution('cell execution ended index=%d success=true', cell.index);
             const cellKey = cell.document.uri.toString();
             this._cellExecutionVersions.set(cellKey, (this._cellExecutionVersions.get(cellKey) ?? 0) + 1);
+            logExecution('cell execute complete %s executionVersion=%d',
+                cellLabel(cell),
+                this._cellExecutionVersions.get(cellKey) ?? 0);
         } catch (error) {
+            console.error('[webnb] Cell execution failed for %s:', cellLabel(cell), error);
             throw error;
         }
     }

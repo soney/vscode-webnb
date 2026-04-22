@@ -2,6 +2,43 @@
 
 Web Notebook files are Markdown documents with executable tutorial cells. Use fenced code blocks for learner-editable cells, and attach addon blocks for fixtures, styles, tests, or references.
 
+## Coursera Docker Dev
+
+From this repo, build/import the extension into the Practical JavaScript
+Coursera Docker harness and start code-server with:
+
+```bash
+npm run coursera:start
+```
+
+That command looks for `~/teaching/Practical-JavaScript` by default. If the
+course repo lives somewhere else, pass it once:
+
+```bash
+npm run coursera:start -- --repo /path/to/Practical-JavaScript
+```
+
+or set:
+
+```bash
+export PRACTICAL_JAVASCRIPT_REPO=/path/to/Practical-JavaScript
+```
+
+To import the VSIX without starting the container:
+
+```bash
+npm run coursera:import
+```
+
+To stop the Coursera Docker dev container:
+
+```bash
+npm run coursera:stop
+```
+
+Both commands use this extension checkout as the source, so they do not depend
+on your shell being inside the course repo.
+
 ## Basic Cell Format
 
 Create a learner-editable cell with a fenced code block whose language is wrapped in braces:
