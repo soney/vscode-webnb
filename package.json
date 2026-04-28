@@ -10,7 +10,7 @@
     },
     "license": "MIT",
     "engines": {
-        "vscode": "^1.116.0"
+        "vscode": "^1.114.0"
     },
     "keywords": [
         "notebookRenderer",

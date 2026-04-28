@@ -1,0 +1,42 @@
+{
+  "name": "webnb-debug-minimal",
+  "displayName": "WebNB Debug Minimal",
+  "description": "Tiny .webnb-debug notebook extension used to isolate notebook open/execution URI issues.",
+  "version": "0.0.1",
+  "publisher": "oney",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onNotebook:webnb-debug",
+    "onCommand:webnb-debug.dumpState"
+  ],
+  "main": "./extension.js",
+  "extensionKind": [
+    "workspace"
+  ],
+  "contributes": {
+    "notebooks": [
+      {
+        "id": "webnb-debug",
+        "type": "webnb-debug",
+        "displayName": "WebNB Debug",
+        "selector": [
+          {
+            "filenamePattern": "*.webnb-debug"
+          }
+        ]
+      }
+    ],
+    "commands": [
+      {
+        "command": "webnb-debug.dumpState",
+        "title": "WebNB Debug: Dump Notebook State"
+      }
+    ]
+  }
+}

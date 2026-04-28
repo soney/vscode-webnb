@@ -47,20 +47,49 @@ const MAX_AUTORUN_DISCOVERY_RETRIES = 10;
 const AUTORUN_RETRY_DELAY_MS = 150;
 const AUTORUN_SWEEP_ATTEMPTS = 12;
 const AUTORUN_SWEEP_DELAY_MS = 250;
+const FILE_SCHEME = 'file';
+const VSCODE_REMOTE_SCHEME = 'vscode-remote';
+const WEBNB_EXTENSION = '.webnb';
 // VS Code's public API can mark this controller as preferred, but web notebooks
 // still need the internal command to select it before programmatic autorun.
 const SELECT_KERNEL_COMMAND = '_notebook.selectKernel';
 
+function isRemoteNotebookAlias(uri: vscode.Uri): boolean {
+    return uri.scheme === VSCODE_REMOTE_SCHEME
+        && uri.path.toLowerCase().endsWith(WEBNB_EXTENSION);
+}
+
+function getExecutionNotebookUri(uri: vscode.Uri): vscode.Uri {
+    if (isRemoteNotebookAlias(uri)) {
+        return uri.with({ scheme: FILE_SCHEME, authority: '' });
+    }
+
+    return uri;
+}
+
+function getNotebookKey(uri: vscode.Uri): string {
+    const executionUri = getExecutionNotebookUri(uri);
+    return [
+        executionUri.scheme,
+        executionUri.authority,
+        executionUri.path.replace(/\/+$/, '') || '/',
+        executionUri.query,
+        executionUri.fragment
+    ].join('\n');
+}
+
 function notebookUrisMatch(a: vscode.Uri, b: vscode.Uri): boolean {
-    if (a.toString() === b.toString()) {
+    const normalizedA = getExecutionNotebookUri(a);
+    const normalizedB = getExecutionNotebookUri(b);
+    if (normalizedA.toString() === normalizedB.toString()) {
         return true;
     }
 
-    return a.scheme === b.scheme
-        && a.path === b.path
-        && a.query === b.query
-        && a.fragment === b.fragment
-        && (!a.authority || !b.authority);
+    return normalizedA.scheme === normalizedB.scheme
+        && normalizedA.path === normalizedB.path
+        && normalizedA.query === normalizedB.query
+        && normalizedA.fragment === normalizedB.fragment
+        && (!normalizedA.authority || !normalizedB.authority || normalizedA.authority === normalizedB.authority);
 }
 
 function logExecution(message: string, ...args: unknown[]): void {
@@ -399,7 +428,7 @@ export class WebNotebookKernel implements vscode.Disposable {
     private readonly _cellExecutionVersions = new Map<string, number>();
 
     private _ensureControllerAssociation(notebook: vscode.NotebookDocument): void {
-        if (notebook.notebookType !== this.notebookType) {
+        if (notebook.notebookType !== this.notebookType || isRemoteNotebookAlias(notebook.uri)) {
             return;
         }
 
@@ -424,10 +453,14 @@ export class WebNotebookKernel implements vscode.Disposable {
             if (notebook.notebookType !== this.notebookType) {
                 return;
             }
+            if (isRemoteNotebookAlias(notebook.uri)) {
+                warnExecution('autorun skipped remote notebook alias notebook=%s', uriLabel(notebook.uri));
+                return;
+            }
 
             this._ensureControllerAssociation(notebook);
 
-            const notebookKey = notebook.uri.toString();
+            const notebookKey = getNotebookKey(notebook.uri);
             if (this._autorunPendingNotebooks.has(notebookKey)) {
                 return;
             }
@@ -439,7 +472,7 @@ export class WebNotebookKernel implements vscode.Disposable {
                     this._autorunDiscoveryRetries.set(notebookKey, nextRetry);
                     setTimeout(() => {
                         const retryEditor = vscode.window.visibleNotebookEditors
-                            .find(candidate => notebookUrisMatch(candidate.notebook.uri, notebook.uri));
+                            .find(candidate => !isRemoteNotebookAlias(candidate.notebook.uri) && notebookUrisMatch(candidate.notebook.uri, notebook.uri));
                         if (retryEditor) {
                             runAutorunCells(retryEditor);
                         }
@@ -461,7 +494,7 @@ export class WebNotebookKernel implements vscode.Disposable {
             }, 0);
         };
         const collapseWidgetCells = (editor: vscode.NotebookEditor) => {
-            if (editor.notebook.notebookType !== this.notebookType) {
+            if (editor.notebook.notebookType !== this.notebookType || isRemoteNotebookAlias(editor.notebook.uri)) {
                 return;
             }
 
@@ -502,7 +535,7 @@ export class WebNotebookKernel implements vscode.Disposable {
             }
 
             const matchingEditors = vscode.window.visibleNotebookEditors
-                .filter(editor => notebookUrisMatch(editor.notebook.uri, notebook.uri));
+                .filter(editor => !isRemoteNotebookAlias(editor.notebook.uri) && notebookUrisMatch(editor.notebook.uri, notebook.uri));
             for (const editor of matchingEditors) {
                 runAutorunCells(editor);
             }
@@ -538,7 +571,7 @@ export class WebNotebookKernel implements vscode.Disposable {
                 void this._upsertCellAddon(cell, message.addonType, message.content);
             }),
             vscode.workspace.onDidCloseNotebookDocument(notebook => {
-                const notebookKey = notebook.uri.toString();
+                const notebookKey = getNotebookKey(notebook.uri);
                 this._autorunExecutedNotebookSignatures.delete(notebookKey);
                 this._autorunPendingNotebooks.delete(notebookKey);
                 this._autorunDiscoveryRetries.delete(notebookKey);
@@ -605,14 +638,20 @@ export class WebNotebookKernel implements vscode.Disposable {
             visibleNotebookLabels());
 
         for (const cell of cells) {
-            logExecution('executeHandler cell %s', cellLabel(cell));
-            const prepared = await this._prepareNotebookForExecution(cell.notebook);
-            if (!prepared) {
-                warnExecution('executeHandler skipped cell because notebook was not prepared: %s', cellLabel(cell));
+            const executableCell = this._resolveExecutableCell(cell);
+            if (!executableCell) {
+                warnExecution('executeHandler skipped remote alias cell with no executable notebook: %s', cellLabel(cell));
                 continue;
             }
 
-            await this._doExecuteCell(cell);
+            logExecution('executeHandler cell %s', cellLabel(executableCell));
+            const prepared = await this._prepareNotebookForExecution(executableCell.notebook);
+            if (!prepared) {
+                warnExecution('executeHandler skipped cell because notebook was not prepared: %s', cellLabel(executableCell));
+                continue;
+            }
+
+            await this._doExecuteCell(executableCell);
         }
 
         logExecution('executeHandler end notebook=%s', uriLabel(_notebook.uri));
@@ -647,9 +686,9 @@ export class WebNotebookKernel implements vscode.Disposable {
     }
 
     private async _executeAutorunCells(editor: vscode.NotebookEditor, ranges: vscode.NotebookRange[], autorunSignature: string): Promise<void> {
-        const notebookKey = editor.notebook.uri.toString();
+        const notebookKey = getNotebookKey(editor.notebook.uri);
         logExecution('autorun start notebook=%s ranges=%s signature=%s',
-            notebookKey,
+            uriLabel(editor.notebook.uri),
             rangesLabel(ranges),
             autorunSignature);
         try {
@@ -722,13 +761,18 @@ export class WebNotebookKernel implements vscode.Disposable {
     }
 
     private async _prepareNotebookForExecution(notebook: vscode.NotebookDocument): Promise<boolean> {
+        if (isRemoteNotebookAlias(notebook.uri)) {
+            warnExecution('prepareNotebook skipped remote notebook alias notebook=%s', uriLabel(notebook.uri));
+            return false;
+        }
+
         logExecution('prepareNotebook start notebook=%s activeNotebook=%s visible=%s',
             uriLabel(notebook.uri),
             uriLabel(vscode.window.activeNotebookEditor?.notebook.uri),
             visibleNotebookLabels());
 
         const editor = vscode.window.visibleNotebookEditors
-            .find(candidate => notebookUrisMatch(candidate.notebook.uri, notebook.uri));
+            .find(candidate => !isRemoteNotebookAlias(candidate.notebook.uri) && notebookUrisMatch(candidate.notebook.uri, notebook.uri));
         if (!editor) {
             warnExecution('prepareNotebook no visible editor notebook=%s visible=%s',
                 uriLabel(notebook.uri),
@@ -750,6 +794,10 @@ export class WebNotebookKernel implements vscode.Disposable {
             logExecution('selectController skipped non-webnb notebookType=%s notebook=%s',
                 notebook.notebookType,
                 uriLabel(notebook.uri));
+            return false;
+        }
+        if (isRemoteNotebookAlias(notebook.uri)) {
+            warnExecution('selectController skipped remote notebook alias notebook=%s', uriLabel(notebook.uri));
             return false;
         }
 
@@ -778,6 +826,7 @@ export class WebNotebookKernel implements vscode.Disposable {
             const selected = await vscode.commands.executeCommand<boolean>(SELECT_KERNEL_COMMAND, {
                 id: this.id,
                 extension: this._extensionId,
+                notebookEditor: editor,
                 skipIfAlreadySelected: true
             });
             logExecution('selectController command result notebook=%s selected=%s',
@@ -792,6 +841,24 @@ export class WebNotebookKernel implements vscode.Disposable {
 
     private _getCellsInRanges(notebook: vscode.NotebookDocument, ranges: vscode.NotebookRange[]): vscode.NotebookCell[] {
         return ranges.flatMap(range => notebook.getCells(range));
+    }
+
+    private _resolveExecutableCell(cell: vscode.NotebookCell): vscode.NotebookCell | undefined {
+        if (!isRemoteNotebookAlias(cell.notebook.uri)) {
+            return cell;
+        }
+
+        const notebook = vscode.workspace.notebookDocuments
+            .find(candidate =>
+                candidate.notebookType === this.notebookType
+                && !isRemoteNotebookAlias(candidate.uri)
+                && notebookUrisMatch(candidate.uri, cell.notebook.uri)
+            );
+        if (!notebook || cell.index < 0 || cell.index >= notebook.cellCount) {
+            return undefined;
+        }
+
+        return notebook.cellAt(cell.index);
     }
 
     private async _collapseCellInputs(editor: vscode.NotebookEditor, indexes: number[]): Promise<void> {

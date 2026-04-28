@@ -1,0 +1,11 @@
+# WebNB Debug Minimal
+
+This sample is intentionally tiny. The first cell autoruns on open.
+
+```{javascript autorun}
+console.log('debug autorun');
+```
+
+```{html}
+<h1>Debug notebook</h1>
+```

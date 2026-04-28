@@ -6,6 +6,8 @@ import { activate as activateKernel, deactivate as deactivateKernel } from './we
 
 const WEB_NOTEBOOK_VIEW_TYPE = 'web-notebook';
 const WEBNB_EXTENSION = '.webnb';
+const FILE_SCHEME = 'file';
+const VSCODE_REMOTE_SCHEME = 'vscode-remote';
 const STARTUP_OPEN_SWEEP_DELAYS_MS = [0, 250, 1000, 2500];
 const DUPLICATE_TAB_CLEANUP_DELAYS_MS = [0, 100, 500, 1500, 3000];
 const pendingNotebookReopens = new Set<string>();
@@ -31,9 +33,9 @@ function activateTextOpenFallback(context: vscode.ExtensionContext): void {
             void reopenTextEditorAsNotebook(editor);
         }
     };
-    const reopenVisibleRemoteWebnbNotebooks = () => {
+    const cleanupVisibleWebnbNotebookTabs = () => {
         for (const editor of vscode.window.visibleNotebookEditors) {
-            void reopenRemoteNotebookAsLocalFile(editor.notebook);
+            scheduleNotebookTabCleanup(editor.notebook);
         }
     };
 
@@ -63,15 +65,15 @@ function activateTextOpenFallback(context: vscode.ExtensionContext): void {
             setTimeout(reopenVisibleWebnbTextEditors, 0);
         }),
         vscode.window.onDidChangeVisibleNotebookEditors(() => {
-            reopenVisibleRemoteWebnbNotebooks();
+            cleanupVisibleWebnbNotebookTabs();
         }),
         vscode.window.onDidChangeActiveNotebookEditor(editor => {
             if (editor) {
-                void reopenRemoteNotebookAsLocalFile(editor.notebook);
+                scheduleNotebookTabCleanup(editor.notebook);
             }
         }),
         vscode.workspace.onDidOpenNotebookDocument(notebook => {
-            void reopenRemoteNotebookAsLocalFile(notebook);
+            scheduleNotebookTabCleanup(notebook);
         }),
         vscode.window.tabGroups.onDidChangeTabs(event => {
             for (const tab of [...event.opened, ...event.changed]) {
@@ -93,7 +95,7 @@ function activateTextOpenFallback(context: vscode.ExtensionContext): void {
     for (const delayMs of STARTUP_OPEN_SWEEP_DELAYS_MS) {
         setTimeout(() => {
             reopenVisibleWebnbTextEditors();
-            reopenVisibleRemoteWebnbNotebooks();
+            cleanupVisibleWebnbNotebookTabs();
         }, delayMs);
     }
 }
@@ -113,11 +115,12 @@ function isWebnbFileUri(uri: vscode.Uri): boolean {
 }
 
 function getWebnbUriKey(uri: vscode.Uri): string {
+    const identityUri = getWorkspaceWebnbUri(uri);
     return [
-        uri.scheme,
-        normalizeUriPath(uri),
-        uri.query,
-        uri.fragment
+        identityUri.scheme,
+        normalizeUriPath(identityUri),
+        identityUri.query,
+        identityUri.fragment
     ].join('\n');
 }
 
@@ -126,17 +129,41 @@ function normalizeUriPath(uri: vscode.Uri): string {
 }
 
 function urisReferToSameWebnbFile(a: vscode.Uri, b: vscode.Uri): boolean {
+    const normalizedA = getWorkspaceWebnbUri(a);
+    const normalizedB = getWorkspaceWebnbUri(b);
     return isWebnbFileUri(a)
         && isWebnbFileUri(b)
-        && a.scheme === b.scheme
-        && normalizeUriPath(a) === normalizeUriPath(b)
-        && (!a.authority || !b.authority || a.authority === b.authority)
-        && (!a.query || !b.query || a.query === b.query)
-        && (!a.fragment || !b.fragment || a.fragment === b.fragment);
+        && normalizedA.scheme === normalizedB.scheme
+        && normalizeUriPath(normalizedA) === normalizeUriPath(normalizedB)
+        && (!normalizedA.authority || !normalizedB.authority || normalizedA.authority === normalizedB.authority)
+        && (!normalizedA.query || !normalizedB.query || normalizedA.query === normalizedB.query)
+        && (!normalizedA.fragment || !normalizedB.fragment || normalizedA.fragment === normalizedB.fragment);
+}
+
+function isRemoteWebnbAlias(uri: vscode.Uri): boolean {
+    return uri.scheme === VSCODE_REMOTE_SCHEME && isWebnbFileUri(uri);
+}
+
+function getWorkspaceWebnbUri(uri: vscode.Uri): vscode.Uri {
+    if (isRemoteWebnbAlias(uri)) {
+        return uri.with({ scheme: FILE_SCHEME, authority: '' });
+    }
+
+    return uri;
 }
 
 function getVisibleNotebookEditor(uri: vscode.Uri): vscode.NotebookEditor | undefined {
-    return vscode.window.visibleNotebookEditors.find(editor => urisReferToSameWebnbFile(editor.notebook.uri, uri));
+    return vscode.window.visibleNotebookEditors
+        .find(editor => !isRemoteWebnbAlias(editor.notebook.uri) && urisReferToSameWebnbFile(editor.notebook.uri, uri));
+}
+
+function getOpenNotebookDocument(uri: vscode.Uri): vscode.NotebookDocument | undefined {
+    return vscode.workspace.notebookDocuments
+        .find(notebook =>
+            notebook.notebookType === WEB_NOTEBOOK_VIEW_TYPE
+            && !isRemoteWebnbAlias(notebook.uri)
+            && urisReferToSameWebnbFile(notebook.uri, uri)
+        );
 }
 
 function isUri(value: unknown): value is vscode.Uri {
@@ -281,37 +308,17 @@ function scheduleDuplicateTabCleanup(uri: vscode.Uri): void {
 async function closeDuplicateTabs(uri: vscode.Uri): Promise<void> {
     const notebookTabs = getNotebookTabsForUri(uri);
     const textTabs = getTextTabsForUri(uri);
-    const notebookTabToKeep = notebookTabs.find(tab => tab.isActive)
-        ?? notebookTabs.find(tab => !tab.isPreview)
-        ?? notebookTabs[0];
-    const duplicateNotebookTabs = notebookTabToKeep
-        ? notebookTabs.filter(tab => tab !== notebookTabToKeep)
-        : [];
-    console.log(
-        '[webnb] duplicate tab scan target=%s notebookTabs=%d textTabs=%d keep=%s tabs=%s',
-        uri.toString(),
-        notebookTabs.length,
-        textTabs.length,
-        notebookTabToKeep ? tabLabel(notebookTabToKeep) : 'none',
-        getAllTabs().map(tabLabel).join(' | ')
-    );
 
     if (notebookTabs.length === 0) {
         return;
     }
 
-    const tabsToClose = [
-        ...textTabs.filter(tab => !tab.isDirty),
-        ...duplicateNotebookTabs.filter(tab => !tab.isDirty)
-    ];
-    const dirtyTabs = [
-        ...textTabs.filter(tab => tab.isDirty),
-        ...duplicateNotebookTabs.filter(tab => tab.isDirty)
-    ];
+    const tabsToClose = textTabs.filter(tab => !tab.isDirty);
+    const dirtyTabs = textTabs.filter(tab => tab.isDirty);
 
     if (dirtyTabs.length > 0) {
         console.warn(
-            '[webnb] Leaving dirty duplicate tab open for %s: %s',
+            '[webnb] Leaving dirty text tab open for %s: %s',
             uri.toString(),
             dirtyTabs.map(tabLabel).join(' | ')
         );
@@ -322,7 +329,7 @@ async function closeDuplicateTabs(uri: vscode.Uri): Promise<void> {
     }
 
     console.log(
-        '[webnb] closing duplicate tabs for %s: %s',
+        '[webnb] closing duplicate text tabs for %s: %s',
         uri.toString(),
         tabsToClose.map(tabLabel).join(' | ')
     );
@@ -338,16 +345,19 @@ async function reopenTextEditorAsNotebook(editor: vscode.TextEditor): Promise<vo
     await openAsWebNotebook(document.uri);
 }
 
-async function reopenRemoteNotebookAsLocalFile(notebook: vscode.NotebookDocument): Promise<void> {
+function scheduleNotebookTabCleanup(notebook: vscode.NotebookDocument): void {
     if (notebook.notebookType !== WEB_NOTEBOOK_VIEW_TYPE) {
         return;
     }
 
     scheduleDuplicateTabCleanup(notebook.uri);
-    await openAsWebNotebook(notebook.uri);
+    if (isRemoteWebnbAlias(notebook.uri)) {
+        void openAsWebNotebook(notebook.uri);
+    }
 }
 
-async function openAsWebNotebook(uri: vscode.Uri): Promise<void> {
+async function openAsWebNotebook(inputUri: vscode.Uri): Promise<void> {
+    const uri = getWorkspaceWebnbUri(inputUri);
     const uriKey = getWebnbUriKey(uri);
     if (pendingNotebookReopens.has(uriKey)) {
         scheduleDuplicateTabCleanup(uri);
@@ -355,19 +365,29 @@ async function openAsWebNotebook(uri: vscode.Uri): Promise<void> {
     }
 
     scheduleDuplicateTabCleanup(uri);
-    const visibleEditor = getVisibleNotebookEditor(uri);
-    if (visibleEditor) {
-        await vscode.window.showNotebookDocument(visibleEditor.notebook, {
-            viewColumn: visibleEditor.viewColumn,
-            preserveFocus: false,
-            preview: false
-        });
-        scheduleDuplicateTabCleanup(visibleEditor.notebook.uri);
-        return;
-    }
-
     pendingNotebookReopens.add(uriKey);
     try {
+        const visibleEditor = getVisibleNotebookEditor(uri);
+        if (visibleEditor) {
+            await vscode.window.showNotebookDocument(visibleEditor.notebook, {
+                viewColumn: visibleEditor.viewColumn,
+                preserveFocus: false,
+                preview: false
+            });
+            scheduleDuplicateTabCleanup(visibleEditor.notebook.uri);
+            return;
+        }
+
+        const openNotebook = getOpenNotebookDocument(uri);
+        if (openNotebook) {
+            await vscode.window.showNotebookDocument(openNotebook, {
+                preserveFocus: false,
+                preview: false
+            });
+            scheduleDuplicateTabCleanup(openNotebook.uri);
+            return;
+        }
+
         await vscode.commands.executeCommand('vscode.openWith', uri, WEB_NOTEBOOK_VIEW_TYPE);
         scheduleDuplicateTabCleanup(uri);
     } catch (error) {
