@@ -10,7 +10,7 @@
     },
     "license": "MIT",
     "engines": {
-        "vscode": "^1.116.0"
+        "vscode": "^1.117.0"
     },
     "keywords": [
         "notebookRenderer",
@@ -101,11 +101,11 @@
         "@types/node": "25.x",
         "@types/react": "^19.2.14",
         "@types/react-dom": "^19.2.3",
-        "@types/vscode": "^1.116.0",
+        "@types/vscode": "^1.117.0",
         "@types/vscode-notebook-renderer": "^1.72.4",
         "@types/webpack-env": "^1.18.8",
-        "@typescript-eslint/eslint-plugin": "^8.58.2",
-        "@typescript-eslint/parser": "^8.58.2",
+        "@typescript-eslint/eslint-plugin": "^8.59.1",
+        "@typescript-eslint/parser": "^8.59.1",
         "@vscode/test-cli": "^0.0.12",
         "@vscode/test-electron": "^2.5.2",
         "@vscode/test-web": "^0.0.80",
@@ -126,7 +126,7 @@
         "yarn": "^1.22.22"
     },
     "dependencies": {
-        "@babel/standalone": "^7.29.2",
+        "@babel/standalone": "^7.29.3",
         "@xterm/xterm": "^6.0.0",
         "marked": "^18.0.2",
         "react": "^19.2.5",
