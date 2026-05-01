@@ -702,9 +702,9 @@ export class WebNotebookKernel implements vscode.Disposable {
         try {
             const executed = await this._executeNotebookRanges(editor.notebook, ranges);
             if (executed) {
-                this._autorunExecutedNotebookSignatures.set(notebookKey, autorunSignature);
-                this._autorunDiscoveryRetries.delete(notebookKey);
                 this._runOnStartExecutedNotebooks.add(notebookKey);
+                this._autorunExecutedNotebookSignatures.set(notebookKey, this._getAutorunSignature(this._getAutorunCells(editor.notebook)));
+                this._autorunDiscoveryRetries.delete(notebookKey);
             }
             logExecution('autorun end notebook=%s executed=%s', notebookKey, String(executed));
         } finally {
@@ -794,7 +794,7 @@ export class WebNotebookKernel implements vscode.Disposable {
             uriLabel(notebook.uri),
             String(selected),
             uriLabel(vscode.window.activeNotebookEditor?.notebook.uri));
-        return true;
+        return selected;
     }
 
     private async _selectControllerForEditor(editor: vscode.NotebookEditor): Promise<boolean> {
@@ -835,7 +835,6 @@ export class WebNotebookKernel implements vscode.Disposable {
             const selected = await vscode.commands.executeCommand<boolean>(SELECT_KERNEL_COMMAND, {
                 id: this.id,
                 extension: this._extensionId,
-                notebookEditor: editor,
                 skipIfAlreadySelected: true
             });
             logExecution('selectController command result notebook=%s selected=%s',

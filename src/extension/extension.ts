@@ -25,7 +25,7 @@ function reopenWebnbFiles(): void {
     const WEBNB_EXTENSION = '.webnb';
     const STARTUP_OPEN_SWEEP_DELAYS_MS = [1000, 2000, 2500, 2700, 2800, 3000, 3200, 3500, 3250, 5000, 10000, 15000];
 
-    function checkIfOneWebnbEditorOpen(): vscode.NotebookEditor | vscode.TextEditor | undefined {
+    function checkIfOneWebnbEditorOpen(): vscode.TextEditor | vscode.NotebookEditor | undefined {
         function isWebnbFileUri(uri: vscode.Uri): boolean {
             return uri.scheme !== 'vscode-notebook-cell'
                 && uri.path.toLowerCase().endsWith(WEBNB_EXTENSION);
@@ -50,14 +50,15 @@ function reopenWebnbFiles(): void {
         if (editor) {
             const uri = (editor as vscode.NotebookEditor).notebook.uri ?? (editor as vscode.TextEditor).document.uri;
             const notebookUri = vscode.Uri.parse(uri.toString());
-            console.log(`[webnb] Found a single open .webnb editor for ${uri.toString()} after ${delayMs}ms delay, reopening as notebook`);
 
             // clear all other sweep timeouts since we found the single editor
             for (const timeout of sweepTimeouts) {
                 clearTimeout(timeout);
             }
 
+            console.log(`[webnb] Found a single open .webnb editor for ${uri.toString()} after ${delayMs}ms delay, reopening as notebook`);
             await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
+            console.log(`--------------------------------------------------------------------------`);
             await vscode.commands.executeCommand('vscode.openWith', notebookUri, WEB_NOTEBOOK_VIEW_TYPE);
         }
     }, delayMs));
