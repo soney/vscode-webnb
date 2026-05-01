@@ -16,6 +16,7 @@ export interface RawNotebookCell {
 	addons?: {type: string, content: string, id?: string}[];
 	id?: string;
 	autorun?: boolean;
+	runonstart?: boolean;
 	rawCode?: string;
 	rawCodeLanguage?: string;
 }
@@ -41,6 +42,7 @@ interface ICodeBlockStart {
 	blockType: 'user-code' | 'addon-code' | 'addon-reference' | 'code-with-id';
 	id?: string;
 	autorun?: boolean;
+	runonstart?: boolean;
 }
 
 /**
@@ -53,7 +55,7 @@ function parseCodeBlockStart(line: string): ICodeBlockStart | null {
 	if(userCodeBlockMatch) {
 		const langId = userCodeBlockMatch[2];
 		const rest = userCodeBlockMatch[3] || '';
-		let id, autorun;
+		let id, autorun, runonstart;
 		const idMatch = rest.match(/id=(\S+)/);
 		if (idMatch) {
 			id = idMatch[1];
@@ -61,13 +63,17 @@ function parseCodeBlockStart(line: string): ICodeBlockStart | null {
 		if (/\bautorun\b/.test(rest)) {
 			autorun = true;
 		}
+		if (/\brunonstart\b/.test(rest)) {
+			runonstart = true;
+		}
 
 		return {
 			indentation: userCodeBlockMatch[1],
 			langId,
 			blockType: 'user-code',
 			id,
-			autorun
+			autorun,
+			runonstart
 		};
 	} else {
 		// Match addon references: ```+id=5
@@ -85,7 +91,7 @@ function parseCodeBlockStart(line: string): ICodeBlockStart | null {
 		const codeWithIdMatch = line.match(/(    |\t)?```([^\s+]\S*)(?:\s+(.+))?/);
 		if(codeWithIdMatch && codeWithIdMatch[3]) {
 			const rest = codeWithIdMatch[3];
-			let id, autorun;
+			let id, autorun, runonstart;
 			const idMatch = rest.match(/id\s*=\s*(\S+)/);
 			if (idMatch) {
 				id = idMatch[1];
@@ -93,14 +99,18 @@ function parseCodeBlockStart(line: string): ICodeBlockStart | null {
 			if (/\bautorun\b/.test(rest)) {
 				autorun = true;
 			}
+			if (/\brunonstart\b/.test(rest)) {
+				runonstart = true;
+			}
 			
-			if (id || autorun) {
+			if (id || autorun || runonstart) {
 				return {
 					indentation: codeWithIdMatch[1],
 					langId: codeWithIdMatch[2],
 					blockType: 'code-with-id',
 					id,
-					autorun
+					autorun,
+					runonstart
 				};
 			}
 		}
@@ -194,6 +204,7 @@ export function parseMarkdown(content: string): RawNotebookCell[] {
 				addons: [],
 				id: codeBlockStart.id,
 				autorun: codeBlockStart.autorun,
+				runonstart: codeBlockStart.runonstart,
 				rawCode: content,
 				rawCodeLanguage: language
 			});
@@ -231,7 +242,8 @@ export function parseMarkdown(content: string): RawNotebookCell[] {
 				rawCode: content,
 				rawCodeLanguage: language,
 				id: codeBlockStart.id,
-				autorun: codeBlockStart.autorun
+				autorun: codeBlockStart.autorun,
+				runonstart: codeBlockStart.runonstart
 			});
 		} else {
 			throw new Error(`Unknown code block type: ${codeBlockStart.blockType}`);
@@ -280,7 +292,8 @@ export function writeCellsToMarkdown(cells: ReadonlyArray<vscode.NotebookCellDat
 			const languageAbbrev = LANG_ABBREVS.get(cell.languageId) ?? cell.languageId;
 			const idPart = cell.metadata?.id ? ` id=${cell.metadata.id}` : '';
 			const autorunPart = cell.metadata?.autorun ? ' autorun' : '';
-			const codePrefix = indentation + '```{' + languageAbbrev + idPart + autorunPart + '}\n';
+			const runonstartPart = cell.metadata?.runonstart ? ' runonstart' : '';
+			const codePrefix = indentation + '```{' + languageAbbrev + idPart + autorunPart + runonstartPart + '}\n';
 			const contents = cell.value.split(/\r?\n/g)
 				.map(line => indentation + line)
 				.join('\n');
@@ -303,13 +316,14 @@ export function writeCellsToMarkdown(cells: ReadonlyArray<vscode.NotebookCellDat
 				}
 			}
 		} else {
-			if((cell.metadata?.id || cell.metadata?.autorun) && cell.value.startsWith('```')) {
+			if((cell.metadata?.id || cell.metadata?.autorun || cell.metadata?.runonstart) && cell.value.startsWith('```')) {
 				const idPart = cell.metadata?.id ? ` id=${cell.metadata.id}` : '';
 				const autorunPart = cell.metadata?.autorun ? ' autorun' : '';
+				const runonstartPart = cell.metadata?.runonstart ? ' runonstart' : '';
 				const addedid = cell.value.replace(/```([^\s\n]+)([^\n]*)\n/g,
 												(_match, lang, rest) => {
-													let newRest = rest.replace(/\s+id=\S+/g, '').replace(/\bautorun\b/g, '');
-													return `\`\`\`${lang}${idPart}${autorunPart}${newRest}\n`;
+													let newRest = rest.replace(/\s+id=\S+/g, '').replace(/\bautorun\b/g, '').replace(/\brunonstart\b/g, '');
+													return `\`\`\`${lang}${idPart}${autorunPart}${runonstartPart}${newRest}\n`;
 												});
 				result += addedid;
 			} else {

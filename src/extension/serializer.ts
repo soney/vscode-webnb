@@ -57,6 +57,7 @@ function rawToNotebookCellData(data: RawNotebookCell): vscode.NotebookCellData {
 			addons: data.addons,
 			id: data.id,
 			autorun: data.autorun,
+			runonstart: data.runonstart,
 			...(data.language === 'mcq' ? { inputCollapsed: true } : {})
 		},
 		// outputs: []

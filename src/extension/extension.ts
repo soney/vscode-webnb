@@ -4,11 +4,6 @@ import * as vscode from 'vscode';
 import { activate as activateSerializer, deactivate as deactivateSerializer } from './serializer';
 import { activate as activateKernel, deactivate as deactivateKernel } from './webnbProvider';
 
-const WEB_NOTEBOOK_VIEW_TYPE = 'web-notebook';
-const WEBNB_EXTENSION = '.webnb';
-const STARTUP_OPEN_SWEEP_DELAYS_MS = [1000, 2000, 2500, 2700, 2800, 3000, 3200, 3500, 3250, 5000, 10000, 15000];
-
-
 // This method is called when your extension is activated
 // Your extension is activated the very first time the command is executed
 export function activate(context: vscode.ExtensionContext) {
@@ -26,6 +21,10 @@ export function deactivate() {
 
 
 function reopenWebnbFiles(): void {
+    const WEB_NOTEBOOK_VIEW_TYPE = 'web-notebook';
+    const WEBNB_EXTENSION = '.webnb';
+    const STARTUP_OPEN_SWEEP_DELAYS_MS = [1000, 2000, 2500, 2700, 2800, 3000, 3200, 3500, 3250, 5000, 10000, 15000];
+
     function checkIfOneWebnbEditorOpen(): vscode.NotebookEditor | vscode.TextEditor | undefined {
         function isWebnbFileUri(uri: vscode.Uri): boolean {
             return uri.scheme !== 'vscode-notebook-cell'

@@ -425,6 +425,7 @@ export class WebNotebookKernel implements vscode.Disposable {
     private readonly _autorunExecutedNotebookSignatures = new Map<string, string>();
     private readonly _autorunPendingNotebooks = new Set<string>();
     private readonly _autorunDiscoveryRetries = new Map<string, number>();
+    private readonly _runOnStartExecutedNotebooks = new Set<string>();
     private readonly _cellExecutionVersions = new Map<string, number>();
 
     private _ensureControllerAssociation(notebook: vscode.NotebookDocument): void {
@@ -575,6 +576,7 @@ export class WebNotebookKernel implements vscode.Disposable {
                 this._autorunExecutedNotebookSignatures.delete(notebookKey);
                 this._autorunPendingNotebooks.delete(notebookKey);
                 this._autorunDiscoveryRetries.delete(notebookKey);
+                this._runOnStartExecutedNotebooks.delete(notebookKey);
                 for (const cell of notebook.getCells()) {
                     this._cellExecutionVersions.delete(cell.document.uri.toString());
                 }
@@ -658,10 +660,16 @@ export class WebNotebookKernel implements vscode.Disposable {
     }
 
     private _getAutorunCells(notebook: vscode.NotebookDocument): vscode.NotebookCell[] {
+        const notebookKey = getNotebookKey(notebook.uri);
+        const runOnStartAlreadyDone = this._runOnStartExecutedNotebooks.has(notebookKey);
         return notebook.getCells()
             .filter(cell =>
                 cell.kind === vscode.NotebookCellKind.Code &&
-                    (cell.metadata?.autorun || this._isAutoWidgetCell(cell))
+                    (
+                        cell.metadata?.autorun ||
+                        this._isAutoWidgetCell(cell) ||
+                        (cell.metadata?.runonstart && !runOnStartAlreadyDone)
+                    )
             );
     }
 
@@ -696,6 +704,7 @@ export class WebNotebookKernel implements vscode.Disposable {
             if (executed) {
                 this._autorunExecutedNotebookSignatures.set(notebookKey, autorunSignature);
                 this._autorunDiscoveryRetries.delete(notebookKey);
+                this._runOnStartExecutedNotebooks.add(notebookKey);
             }
             logExecution('autorun end notebook=%s executed=%s', notebookKey, String(executed));
         } finally {
