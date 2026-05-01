@@ -250,6 +250,24 @@ wrap(h1.innerText).should('equal', 'Main Page').run('Failed; h1 should be "Main 
 ```
 ````
 
+This works for any cell type. For example, a non-editable HTML cell can be referenced from an editable CSS cell so the learner sees the HTML and styles it:
+
+````
+```html id=layout
+<h1>Welcome</h1>
+<p>Style this page.</p>
+```
+
+Edit the CSS below so the heading is green:
+```{css}
+/* type your CSS here */
+```
+```+id=layout
+```
+````
+
+The `+id=layout` addon copies the HTML from the non-editable `id=layout` cell and attaches it as a fixture, so the CSS cell output renders the HTML with the learner's styles applied. IDs work the same on editable (`{lang id=...}`) and non-editable (`` ```lang id=...``) cells.
+
 ## Tests
 
 Tests are JavaScript snippets in a `+test` addon. They run when the cell runs, after the cell has been rendered or evaluated.
@@ -435,6 +453,28 @@ Notes:
 - Autorun cells execute automatically when the notebook becomes active.
 - Autorun is intended for setup, starter rendering, or instructions that should appear immediately.
 - Re-run manually after edits if you want to refresh output right away.
+
+### `runonstart` for One-Time Setup
+
+Add `runonstart` in the fenced code header to run a cell exactly once when the notebook first opens:
+
+````
+```{javascript runonstart}
+console.log('This runs once on first open.');
+```
+
+```{html runonstart}
+<h1>Welcome!</h1>
+<p>This content appeared automatically when you opened the notebook.</p>
+```
+````
+
+Notes:
+
+- `runonstart` runs the cell once per notebook session. Switching tabs or re-activating the notebook does not re-run it.
+- `autorun` re-runs whenever the cell content changes or the notebook becomes active again. `runonstart` does not.
+- Closing and reopening the notebook resets the flag, so the cell runs again on the next open.
+- You can combine flags: `{html id=intro runonstart}` gives the cell an ID and runs it once on open.
 
 ### Auto-Run Widget Cells
 

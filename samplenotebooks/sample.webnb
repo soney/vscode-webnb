@@ -184,6 +184,31 @@ console.log("Welcome to the notebook! This cell ran automatically.");
 <p>This cell ran automatically.</p>
 ```
 
+## Run On Start Example
+
+This cell runs once when the notebook first opens, but does not re-run when switching tabs:
+
+```{html runonstart}
+<p>This content appeared once on first open.</p>
+```
+
+## Cross-Cell Reference Example
+
+The HTML below is non-editable and has an ID. The editable CSS cell references it so its output shows the HTML with the learner's styles:
+
+```html id=greeting
+<h1>Hello!</h1>
+<p>Style me with CSS.</p>
+```
+
+Edit the CSS so the heading is green:
+
+```{css}
+/* type your CSS here */
+```
+```+id=greeting
+```
+
 ## External Check Example
 
 Create a directory named `external-example`. Inside it, create `index.html` and `styles.css`. The checklist below runs automatically and keeps checking every two seconds until all items pass.
