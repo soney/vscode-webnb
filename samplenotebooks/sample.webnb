@@ -2,6 +2,16 @@
 
 This is an example of a notebook.
 
+```javascript
+function add(x, y) {
+  if (x < 0 || y < 0) {
+    return "Invalid input";
+  }
+
+  return x + y; // This line will not be executed if the input is invalid
+}
+```
+
 ```{js}
 document.querySelector('#el').addEventListener('click', () => {
     document.querySelector('#outp').textContent += 'Hello';

@@ -133,6 +133,10 @@ function isCodeBlockStart(line: string): boolean {
 	return !!parseCodeBlockStart(line);
 }
 
+function isGenericFencedMarkdownStart(line: string): boolean {
+	return /^\s*```/.test(line) && !isCodeBlockStart(line);
+}
+
 function isCodeBlockEndLine(line: string): boolean {
 	return !!line.match(/^\s*```/);
 }
@@ -258,6 +262,18 @@ export function parseMarkdown(content: string): RawNotebookCell[] {
 			}
 
 			const currLine = lines[i];
+			if (isGenericFencedMarkdownStart(currLine)) {
+				i++;
+				while (i < lines.length && !isCodeBlockEndLine(lines[i])) {
+					i++;
+				}
+
+				if (i < lines.length) {
+					i++;
+				}
+				continue;
+			}
+
 			if (currLine === '' || isCodeBlockStart(currLine)) {
 				break;
 			}
