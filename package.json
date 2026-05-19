@@ -89,7 +89,7 @@
         "in-browser:watch": "node scripts/vscode-test-web.js samplenotebooks/sample.webnb --watch",
         "dev:web": "npm run watch",
         "test": "vscode-test",
-        "gen-vsix": "npm run compile && npx vsce package -o web-notebook.vsix",
+        "gen-vsix": "npm run compile && vsce package -o web-notebook.vsix",
         "coursera:import": "node scripts/coursera-docker-dev.js import",
         "coursera:start": "node scripts/coursera-docker-dev.js start",
         "coursera:stop": "node scripts/coursera-docker-dev.js stop"
@@ -109,6 +109,7 @@
         "@vscode/test-cli": "^0.0.12",
         "@vscode/test-electron": "^2.5.2",
         "@vscode/test-web": "^0.0.80",
+        "@vscode/vsce": "^3.9.1",
         "chokidar": "^5.0.0",
         "css-loader": "^7.1.4",
         "eslint": "^10.2.1",
