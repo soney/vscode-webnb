@@ -31,7 +31,7 @@ function reopenWebnbFiles(): void {
                 && uri.path.toLowerCase().endsWith(WEBNB_EXTENSION);
         }
 
-        const webnbEditors = vscode.window.visibleNotebookEditors.filter(editor => isWebnbFileUri(editor.notebook.uri));
+        const webnbEditors = vscode.window.visibleNotebookEditors.filter(editor => editor.notebook && isWebnbFileUri(editor.notebook.uri));
         if (webnbEditors.length === 1) {
             return webnbEditors[0];
         }
@@ -43,12 +43,29 @@ function reopenWebnbFiles(): void {
 
         return undefined;
     }
+
+    function getEditorUri(editor: vscode.TextEditor | vscode.NotebookEditor): vscode.Uri | undefined {
+        if ('notebook' in editor && editor.notebook) {
+            return editor.notebook.uri;
+        }
+
+        if ('document' in editor) {
+            return editor.document.uri;
+        }
+
+        return undefined;
+    }
+
     // if there is just one .webnb file open, assume that it was opened programmatically. check at every STARTUP_OPEN_SWEEP_DELAYS_MS delay (and clear timeouts if we find a single webnb editor) and if we find a single webnb editor, close it and reopen it as a web notebook.
 
     const sweepTimeouts: NodeJS.Timeout[] = STARTUP_OPEN_SWEEP_DELAYS_MS.map(delayMs => setTimeout(async () => {
         const editor = checkIfOneWebnbEditorOpen();
         if (editor) {
-            const uri = (editor as vscode.NotebookEditor).notebook.uri ?? (editor as vscode.TextEditor).document.uri;
+            const uri = getEditorUri(editor);
+            if (!uri) {
+                return;
+            }
+
             const notebookUri = vscode.Uri.parse(uri.toString());
 
             // clear all other sweep timeouts since we found the single editor
