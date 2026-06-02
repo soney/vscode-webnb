@@ -51,7 +51,7 @@ interface ICodeBlockStart {
  */
 function parseCodeBlockStart(line: string): ICodeBlockStart | null {
 	// Match user code blocks with optional ID and autorun: ```{html id=5 autorun}
-	const userCodeBlockMatch = line.match(/(    |\t)?```\{([^\}\s]+)(.*?)\}/);
+	const userCodeBlockMatch = line.match(/^([ \t]*)```\{([^\}\s]+)(.*?)\}/);
 	if(userCodeBlockMatch) {
 		const langId = userCodeBlockMatch[2];
 		const rest = userCodeBlockMatch[3] || '';
@@ -77,7 +77,7 @@ function parseCodeBlockStart(line: string): ICodeBlockStart | null {
 		};
 	} else {
 		// Match addon references: ```+id=5
-		const addonRefMatch = line.match(/(    |\t)?```\+id=(\S+)/);
+		const addonRefMatch = line.match(/^([ \t]*)```\+id=(\S+)/);
 		if (addonRefMatch) {
 			return {
 				indentation: addonRefMatch[1],
@@ -88,7 +88,7 @@ function parseCodeBlockStart(line: string): ICodeBlockStart | null {
 		}
 
 		// Match code blocks with type ```html id=5 or ```html autorun
-		const codeWithIdMatch = line.match(/(    |\t)?```([^\s+]\S*)(?:\s+(.+))?/);
+		const codeWithIdMatch = line.match(/^([ \t]*)```([^\s+]\S*)(?:\s+(.+))?/);
 		if(codeWithIdMatch && codeWithIdMatch[3]) {
 			const rest = codeWithIdMatch[3];
 			let id, autorun, runonstart;
@@ -116,7 +116,7 @@ function parseCodeBlockStart(line: string): ICodeBlockStart | null {
 		}
 
 		// Match addon code blocks: ```+test
-		const addonCodeMatch = line.match(/(    |\t)?```\+(\S*)(\s+(\S*))?/);
+		const addonCodeMatch = line.match(/^([ \t]*)```\+(\S*)(\s+(\S*))?/);
 		if (addonCodeMatch) {
 			return {
 				indentation: addonCodeMatch[1],
@@ -139,6 +139,18 @@ function isGenericFencedMarkdownStart(line: string): boolean {
 
 function isCodeBlockEndLine(line: string): boolean {
 	return !!line.match(/^\s*```/);
+}
+
+function stripCodeFenceIndentation(line: string, indentation: string): string {
+	if (!indentation) {
+		return line;
+	}
+
+	if (line.startsWith(indentation)) {
+		return line.slice(indentation.length);
+	}
+
+	return line.trim() === '' ? '' : line;
 }
 
 export function parseMarkdown(content: string): RawNotebookCell[] {
@@ -193,7 +205,7 @@ export function parseMarkdown(content: string): RawNotebookCell[] {
 		}
 
 		const content = lines.slice(startSourceIdx, i - 1)
-			.map(line => line.replace(new RegExp('^' + codeBlockStart.indentation), ''))
+			.map(line => stripCodeFenceIndentation(line, codeBlockStart.indentation))
 			.join('\n');
 		const trailingWhitespace = parseWhitespaceLines(false);
 

@@ -353,3 +353,18 @@ wrong: Nope! Try looking for a tag that implies *strong* importance.
 [ ] `<br>`
   correct: `<br>` is just a line break!
 ```
+
+
+## Indented Code Samples
+
+- Testing
+  
+  ```{javascript}
+  console.log("hello");
+  ```
+
+- Another
+
+  ```{javascript}
+  console.log("bye");
+  ```

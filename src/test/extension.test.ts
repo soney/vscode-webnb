@@ -3,7 +3,7 @@ import * as assert from 'assert';
 // You can import and use all API from the 'vscode' module
 // as well as import your extension to test it
 import * as vscode from 'vscode';
-import { parseMarkdown } from '../extension/markdownParser';
+import { parseMarkdown, writeCellsToMarkdown } from '../extension/markdownParser';
 // import * as myExtension from '../extension';
 
 suite('Extension Test Suite', () => {
@@ -34,5 +34,39 @@ suite('Extension Test Suite', () => {
     assert.strictEqual(cells.length, 2);
     assert.strictEqual(cells[1].kind, vscode.NotebookCellKind.Markup);
     assert.match(cells[1].content, /```javascript[\s\S]*return x \+ y;[\s\S]*```/);
+  });
+
+  test('Indented webnb code fences strip list indentation from code cell content only', () => {
+    const cells = parseMarkdown([
+      '- Testing',
+      '  ',
+      '  ```{javascript}',
+      '  console.log("hello");',
+      '  ```'
+    ].join('\n'));
+
+    const codeCell = cells.find(cell => cell.kind === vscode.NotebookCellKind.Code);
+    assert.ok(codeCell);
+    assert.strictEqual(codeCell.indentation, '  ');
+    assert.strictEqual(codeCell.content, 'console.log("hello");');
+  });
+
+  test('Indented webnb code fences keep source indentation when serialized', () => {
+    const codeCell = new vscode.NotebookCellData(
+      vscode.NotebookCellKind.Code,
+      'console.log("hello");',
+      'javascript'
+    );
+    codeCell.metadata = { indentation: '  ' };
+
+    assert.strictEqual(
+      writeCellsToMarkdown([codeCell]),
+      [
+        '  ```{javascript}',
+        '  console.log("hello");',
+        '  ```',
+        ''
+      ].join('\n')
+    );
   });
 });
