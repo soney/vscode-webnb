@@ -1,0 +1,7 @@
+# User-specific workspace pointer (path differs per machine). Configure via
+# WEBNB_WORKSPACE or your own copy of this file.
+webnb.config.json
+
+# Vite build output
+dist/
+.vite/
