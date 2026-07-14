@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const chokidar = require('chokidar');
 const webpack = require('webpack');
@@ -15,21 +16,24 @@ const RELOAD_SIGNAL_POLL_MS = 500;
 const REOPEN_FILE_DELAY_MS = 1000;
 const WATCH_DEBOUNCE_MS = 300;
 const DEFAULT_WATCH_PATHS = ['out', 'package.json'];
+// chokidar v4+ removed glob support, so these are plain files/directories
+// (directories are watched recursively) plus an `ignored` filter function.
 const WEBPACK_INPUT_PATHS = [
-    'src/**/*',
-    'icons/**/*',
+    'src',
+    'icons',
     'package.json',
     'package-lock.json',
     'tsconfig.json',
     'webpack.config.js',
 ];
-const IGNORED_WATCH_PATHS = [
-    '**/node_modules/**',
-    '**/.git/**',
-    '**/.vscode-test/**',
-    '**/.vscode-test-web/**',
-    '**/out/**',
-];
+const IGNORED_PATH_SEGMENTS = ['node_modules', '.git', '.vscode-test', '.vscode-test-web'];
+
+function makeIgnoreFilter(extraSegments = []) {
+    const ignoredSegments = new Set([...IGNORED_PATH_SEGMENTS, ...extraSegments]);
+    return watchedPath => watchedPath
+        .split(/[\\/]/)
+        .some(segment => ignoredSegments.has(segment));
+}
 
 function printHelp() {
     console.log(`Usage:
@@ -40,7 +44,12 @@ Options:
   --workspace <path>  Local folder to mount as the VS Code Web workspace.
                       Defaults to ${DEFAULT_WORKSPACE}.
   --browser <name>    Browser to launch: chromium, firefox, webkit, or none.
-                      Defaults to chromium.
+                      Defaults to chromium. With "none", no local browser is
+                      launched; open the printed URL from any machine instead.
+  --remote            Shorthand for --browser none, for developing on a remote
+                      machine (SSH, container, code-server). Combine with
+                      --host 0.0.0.0 to serve on all interfaces, or tunnel the
+                      port: ssh -L 3000:localhost:3000 <user>@<remote>.
   --port <number>     Server port. Defaults to 3000.
   --host <name>       Server host. Defaults to localhost.
   --headless          Launch the browser headlessly.
@@ -49,6 +58,8 @@ Options:
   --verbose           Print extra server/browser logging.
   --watch             Watch source files, rebuild with webpack, then reload
                       VS Code Web when compiled extension output changes.
+                      Works with --remote: the reload happens in whichever
+                      browser is connected.
   --no-keep-open      Exit after the file is opened. By default, file-open mode
                       keeps the VS Code Web session alive for manual testing.
   --help              Show this help.
@@ -58,6 +69,7 @@ Examples:
   node scripts/vscode-test-web.js sample.webnb
   node scripts/vscode-test-web.js samplenotebooks/sample.webnb
   node scripts/vscode-test-web.js samplenotebooks/sample.webnb --watch
+  node scripts/vscode-test-web.js samplenotebooks/sample.webnb --watch --remote
   node scripts/vscode-test-web.js --workspace . samplenotebooks/sample.webnb
 `);
 }
@@ -80,6 +92,8 @@ function parseArgs(argv) {
             options.workspace = argv[++i];
         } else if (arg === '--browser' || arg === '--browserType') {
             options.browser = argv[++i];
+        } else if (arg === '--remote' || arg === '--server-only' || arg === '--no-browser') {
+            options.remote = true;
         } else if (arg === '--port') {
             options.port = Number(argv[++i]);
         } else if (arg === '--host') {
@@ -176,7 +190,13 @@ function createOpenFileRunner({ workspaceUriPath, keepOpen, watch, reloadSignalU
     const runnerPath = path.join(runnerDir, TEST_RUNNER_FILE);
 const source = `const vscode = require('vscode');
 
-const reloadSignalUrl = ${JSON.stringify(reloadSignalUrl)};
+// The reload signal is fetched from the origin the browser actually connected
+// through (SSH tunnel, mapped container port, LAN address, ...) so remote
+// sessions reload too. The configured server URL is kept as a fallback.
+const reloadSignalStaticPath = ${JSON.stringify(reloadSignalStaticPath())};
+const fallbackReloadSignalUrl = ${JSON.stringify(reloadSignalUrl)};
+let activeReloadSignalUrl;
+
 const targetUri = ${workspaceUriPath ? `vscode.Uri.from({
     scheme: 'vscode-test-web',
     authority: 'mount',
@@ -191,18 +211,47 @@ function formatError(error) {
     return error instanceof Error ? error.message : String(error);
 }
 
-async function readReloadSignal() {
-    try {
-        const response = await fetch(reloadSignalUrl + '?t=' + Date.now(), { cache: 'no-store' });
-        if (!response.ok) {
-            console.log('[webnb-watch] Reload signal is not ready: HTTP ' + response.status);
-            return undefined;
-        }
-        return (await response.text()).trim();
-    } catch (error) {
-        console.log('[webnb-watch] Could not read reload signal: ' + formatError(error));
-        return undefined;
+function candidateReloadSignalUrls() {
+    if (activeReloadSignalUrl) {
+        return [activeReloadSignalUrl];
     }
+
+    const urls = [];
+    try {
+        const origin = globalThis.location && globalThis.location.origin;
+        if (origin && /^https?:/.test(origin)) {
+            urls.push(origin + reloadSignalStaticPath);
+        }
+    } catch (error) {
+        // location is unavailable in this extension host; use the fallback.
+    }
+    if (!urls.includes(fallbackReloadSignalUrl)) {
+        urls.push(fallbackReloadSignalUrl);
+    }
+    return urls;
+}
+
+async function readReloadSignal() {
+    const urls = candidateReloadSignalUrls();
+    for (const url of urls) {
+        try {
+            const response = await fetch(url + '?t=' + Date.now(), { cache: 'no-store' });
+            if (response.ok) {
+                if (activeReloadSignalUrl !== url) {
+                    activeReloadSignalUrl = url;
+                    console.log('[webnb-watch] Watching reload signal at ' + url);
+                }
+                return (await response.text()).trim();
+            }
+        } catch (error) {
+            // Try the next candidate; report below if none worked.
+        }
+    }
+
+    // Re-probe every candidate on the next poll in case the working URL changed.
+    activeReloadSignalUrl = undefined;
+    console.log('[webnb-watch] Could not read reload signal from: ' + urls.join(', '));
+    return undefined;
 }
 
 async function openTargetFile(reason) {
@@ -245,8 +294,7 @@ async function watchForReloads(initialSignal) {
 async function run() {
     await openTargetFile('initial');
 
-    ${watch ? `console.log('[webnb-watch] Watching reload signal at ' + reloadSignalUrl);
-    const initialSignal = await readReloadSignal();
+    ${watch ? `const initialSignal = await readReloadSignal();
     await watchForReloads(initialSignal);` : ''}
 
     ${keepOpen || watch ? 'await new Promise(() => {});' : ''}
@@ -400,7 +448,7 @@ function startWebpackWatcher() {
 
     const watcher = chokidar.watch(WEBPACK_INPUT_PATHS, {
         cwd: process.cwd(),
-        ignored: IGNORED_WATCH_PATHS,
+        ignored: makeIgnoreFilter(['out']),
         ignoreInitial: true,
         awaitWriteFinish: {
             stabilityThreshold: 150,
@@ -443,7 +491,7 @@ function startExtensionWatcher(signalUrl) {
 
     const watcher = chokidar.watch(DEFAULT_WATCH_PATHS, {
         cwd: process.cwd(),
-        ignored: IGNORED_WATCH_PATHS,
+        ignored: makeIgnoreFilter(),
         ignoreInitial: true,
         awaitWriteFinish: {
             stabilityThreshold: 150,
@@ -483,6 +531,48 @@ function createSessionRunner({ workspaceUriPath, keepOpen, watch, reloadSignalUr
     });
 }
 
+function isWildcardHost(host) {
+    return host === '0.0.0.0' || host === '::' || host === '0:0:0:0:0:0:0:0';
+}
+
+function connectionUrls(options) {
+    const port = options.port ?? 3000;
+    const host = options.host ?? 'localhost';
+
+    if (!isWildcardHost(host)) {
+        return [`http://${host}:${port}/`];
+    }
+
+    const urls = [`http://localhost:${port}/`];
+    for (const entries of Object.values(os.networkInterfaces())) {
+        for (const entry of entries ?? []) {
+            if (!entry.internal && entry.family === 'IPv4') {
+                urls.push(`http://${entry.address}:${port}/`);
+            }
+        }
+    }
+    return urls;
+}
+
+function printServerOnlyInfo(options) {
+    const host = options.host ?? 'localhost';
+    const port = options.port ?? 3000;
+
+    console.log('');
+    console.log('No local browser was launched. Open VS Code Web from a browser at:');
+    for (const url of connectionUrls(options)) {
+        console.log(`  ${url}`);
+    }
+
+    if (!isWildcardHost(host) && (host === 'localhost' || host === '127.0.0.1')) {
+        console.log('The server only listens on this machine. From another machine, either');
+        console.log(`forward the port first (ssh -L ${port}:localhost:${port} <user>@<this-machine>)`);
+        console.log('or rerun with --host 0.0.0.0 to listen on all interfaces.');
+    }
+    console.log('Press Ctrl+C to stop the server.');
+    console.log('');
+}
+
 function baseOptions(options, workspacePath) {
     return {
         browserType: options.browser,
@@ -509,13 +599,31 @@ async function main() {
         throw new Error(`Workspace folder does not exist: ${workspacePath}`);
     }
 
-    if (options.watch && options.browser === 'none') {
-        throw new Error('--watch needs a browser session; --browser none cannot reload VS Code Web.');
+    if (options.remote) {
+        options.browser = 'none';
     }
+
+    // A headed browser needs a display. On a headless Linux machine (SSH
+    // session, container, CI) fall back to server-only mode instead of letting
+    // the Playwright launch crash.
+    const displayAvailable = process.platform !== 'linux'
+        || !!process.env.DISPLAY
+        || !!process.env.WAYLAND_DISPLAY;
+    if (options.browser !== 'none' && !options.headless && !displayAvailable) {
+        console.log('No display was found ($DISPLAY / $WAYLAND_DISPLAY are unset), so a browser cannot open on this machine.');
+        console.log('Falling back to --remote (server-only) mode; open the printed URL from your own browser.');
+        console.log('Pass --headless instead if you really want a headless local browser.');
+        options.browser = 'none';
+    }
+
+    const serverOnly = options.browser === 'none';
 
     if (!options.file && !options.watch) {
         console.log(`Opening VS Code Web on ${workspacePath}`);
         const disposable = await open(baseOptions(options, workspacePath));
+        if (serverOnly) {
+            printServerOnlyInfo(options);
+        }
         process.once('SIGINT', () => {
             disposable.dispose();
             process.exit(0);
@@ -559,6 +667,19 @@ async function main() {
         console.log(`Opening file vscode-test-web://mount${resolvedFile.workspaceUriPath}`);
     }
 
+    if (serverOnly) {
+        // runTests() requires a local Playwright browser. In remote/server-only
+        // mode, start the server with the same session runner attached; every
+        // browser that connects runs it (opens the file, watches for reloads).
+        const disposable = await open({
+            ...baseOptions(options, workspacePath),
+            extensionTestsPath: runnerPath,
+        });
+        disposables.push({ close: () => disposable.dispose() });
+        printServerOnlyInfo(options);
+        return;
+    }
+
     try {
         await runTests({
             ...baseOptions(options, workspacePath),
@@ -570,7 +691,30 @@ async function main() {
     }
 }
 
+function isBrowserLaunchFailure(error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return /browserType\.launch|Missing X server|\$DISPLAY|XServer|Failed to launch|Executable doesn't exist/i.test(message);
+}
+
+// @vscode/test-web can reject a promise it never awaits when the browser fails
+// to launch, which would otherwise crash node with an internals stack trace.
+process.on('unhandledRejection', error => {
+    console.error(error);
+    if (isBrowserLaunchFailure(error)) {
+        console.error('');
+        console.error('The local browser could not be launched. If this machine has no display');
+        console.error('(SSH session, container, CI), rerun with --remote to skip the local browser');
+        console.error('and open the printed URL from your own machine instead.');
+    }
+    process.exit(1);
+});
+
 main().catch(error => {
     console.error(error instanceof Error ? error.message : error);
+    if (isBrowserLaunchFailure(error)) {
+        console.error('');
+        console.error('The local browser could not be launched. If this machine has no display,');
+        console.error('rerun with --remote and open the printed URL from your own machine.');
+    }
     process.exit(1);
 });

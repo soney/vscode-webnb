@@ -134,3 +134,5 @@ dist
 .vscode-test-web
 
 .vscode-test
+# Claude Code worktrees
+.claude/worktrees/

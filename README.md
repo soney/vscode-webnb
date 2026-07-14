@@ -825,3 +825,29 @@ npm run test-web -- --workspace . samplenotebooks/sample.webnb
 ```
 
 `vscode-test-web` does not watch or reload by itself. The `--watch` flag in `scripts/vscode-test-web.js` adds that development loop around it. The regular `npm run in-browser` command still does a one-time development build before launching.
+
+### Remote Development
+
+When this repo runs on a remote machine (SSH, a container, code-server), the launcher cannot open a browser there. Use remote mode instead:
+
+```sh
+npm run in-browser:remote
+```
+
+This runs the same watch/rebuild/reload loop but skips launching a browser and prints the URLs to open from your own machine. The rebuild-and-reload signal resolves against whatever origin your browser connected through, so live reload works across tunnels and mapped ports.
+
+If you forget `--remote` on a machine with no display, the launcher notices ($DISPLAY / $WAYLAND_DISPLAY are unset on Linux) and falls back to this server-only mode automatically instead of crashing on the browser launch.
+
+The server binds to `localhost` by default, so forward the port from your local machine first:
+
+```sh
+ssh -L 3000:localhost:3000 <user>@<remote-host>
+```
+
+then open `http://localhost:3000/` locally. To serve directly on the network instead (a trusted LAN, or a container with a mapped port), bind all interfaces:
+
+```sh
+npm run test-web -- samplenotebooks/sample.webnb --watch --remote --host 0.0.0.0
+```
+
+`--remote` is shorthand for `--browser none` and works with any of the launcher's modes. Anyone who can reach the port gets a full VS Code Web session with the mounted workspace (edits stay in browser memory and are not written back to disk), so prefer the SSH tunnel on shared networks.

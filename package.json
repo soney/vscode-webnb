@@ -88,6 +88,7 @@
         "in-browser": "npm run compile-dev && node scripts/vscode-test-web.js samplenotebooks/sample.webnb",
         "in-browser:open": "node scripts/vscode-test-web.js samplenotebooks/sample.webnb",
         "in-browser:watch": "node scripts/vscode-test-web.js samplenotebooks/sample.webnb --watch",
+        "in-browser:remote": "node scripts/vscode-test-web.js samplenotebooks/sample.webnb --watch --remote",
         "dev:web": "npm run watch",
         "test": "vscode-test",
         "gen-vsix": "npm run compile && vsce package -o web-notebook.vsix",
