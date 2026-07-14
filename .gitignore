@@ -136,3 +136,4 @@ dist
 .vscode-test
 # Claude Code worktrees
 .claude/worktrees/
+.webnb-test-runner/

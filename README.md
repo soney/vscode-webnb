@@ -844,10 +844,15 @@ The server binds to `localhost` by default, so forward the port from your local 
 ssh -L 3000:localhost:3000 <user>@<remote-host>
 ```
 
-then open `http://localhost:3000/` locally. To serve directly on the network instead (a trusted LAN, or a container with a mapped port), bind all interfaces:
+then open `http://localhost:3000/` locally.
 
-```sh
-npm run test-web -- samplenotebooks/sample.webnb --watch --remote --host 0.0.0.0
-```
+The address in your browser must literally be `localhost` — not `127.0.0.1`, not a LAN IP, not a machine name. Two separate things break on any other origin:
 
-`--remote` is shorthand for `--browser none` and works with any of the launcher's modes. Anyone who can reach the port gets a full VS Code Web session with the mounted workspace (edits stay in browser memory and are not written back to disk), so prefer the SSH tunnel on shared networks.
+- Browsers grant plain-HTTP [secure-context](https://developer.mozilla.org/en-US/docs/Web/Security/Secure_Contexts) APIs (like `crypto.subtle`, which VS Code Web requires) only to `localhost`.
+- `@vscode/test-web` serves the web-worker extension host from a generated subdomain of whatever host the browser used (`v--<uuid>.localhost` resolves to loopback in every browser; subdomains of IP addresses are invalid URLs and subdomains of ordinary hostnames do not resolve).
+
+On a non-localhost origin the workbench shell still loads, but the extension host cannot start, so the Explorer shows no files (`ENOPRO: no file system provider for vscode-test-web://mount`) and no extensions run. The launcher prints a warning about this when it binds a non-localhost host.
+
+`--host 0.0.0.0` is still useful whenever the port is reached through a mapping that ends in a localhost URL: a Docker/devcontainer port map (`-p 3000:3000`), `kubectl port-forward`, or an SSH tunnel all qualify.
+
+`--remote` is shorthand for `--browser none` and works with any of the launcher's modes. Anyone who can reach the port gets a full VS Code Web session with the mounted workspace (edits stay in browser memory and are not written back to disk) — another reason to keep it behind a tunnel on shared networks.

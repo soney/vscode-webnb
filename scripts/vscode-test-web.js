@@ -1,16 +1,19 @@
 #!/usr/bin/env node
 
 const fs = require('fs');
-const os = require('os');
 const path = require('path');
 const chokidar = require('chokidar');
 const webpack = require('webpack');
 const { open, runTests } = require('@vscode/test-web');
 
 const DEFAULT_WORKSPACE = 'samplenotebooks';
-const TEST_RUNNER_DIR = '.vscode-test-web';
+// Keep our generated files OUT of .vscode-test-web: @vscode/test-web treats
+// that directory as its build cache and wipes it (rm -rf) whenever it
+// downloads a new VS Code build, which would delete the session runner while
+// the server is using it.
+const TEST_RUNNER_DIR = '.webnb-test-runner';
 const TEST_RUNNER_FILE = 'open-file-runner.js';
-const RELOAD_SIGNAL_DIR = '.vscode-test-web';
+const RELOAD_SIGNAL_DIR = '.webnb-test-runner';
 const RELOAD_SIGNAL_FILE = 'reload-signal.json';
 const RELOAD_SIGNAL_POLL_MS = 500;
 const REOPEN_FILE_DELAY_MS = 1000;
@@ -26,7 +29,7 @@ const WEBPACK_INPUT_PATHS = [
     'tsconfig.json',
     'webpack.config.js',
 ];
-const IGNORED_PATH_SEGMENTS = ['node_modules', '.git', '.vscode-test', '.vscode-test-web'];
+const IGNORED_PATH_SEGMENTS = ['node_modules', '.git', '.vscode-test', '.vscode-test-web', '.webnb-test-runner'];
 
 function makeIgnoreFilter(extraSegments = []) {
     const ignoredSegments = new Set([...IGNORED_PATH_SEGMENTS, ...extraSegments]);
@@ -47,9 +50,12 @@ Options:
                       Defaults to chromium. With "none", no local browser is
                       launched; open the printed URL from any machine instead.
   --remote            Shorthand for --browser none, for developing on a remote
-                      machine (SSH, container, code-server). Combine with
-                      --host 0.0.0.0 to serve on all interfaces, or tunnel the
-                      port: ssh -L 3000:localhost:3000 <user>@<remote>.
+                      machine (SSH, container, code-server). Reach it through
+                      a port forward (ssh -L 3000:localhost:3000 <user>@<remote>
+                      or a container port map) and open http://localhost:3000/.
+                      The browser address must literally be localhost — IP and
+                      hostname origins load an empty workbench (see README
+                      "Remote Development").
   --port <number>     Server port. Defaults to 3000.
   --host <name>       Server host. Defaults to localhost.
   --headless          Launch the browser headlessly.
@@ -535,40 +541,28 @@ function isWildcardHost(host) {
     return host === '0.0.0.0' || host === '::' || host === '0:0:0:0:0:0:0:0';
 }
 
-function connectionUrls(options) {
-    const port = options.port ?? 3000;
-    const host = options.host ?? 'localhost';
-
-    if (!isWildcardHost(host)) {
-        return [`http://${host}:${port}/`];
-    }
-
-    const urls = [`http://localhost:${port}/`];
-    for (const entries of Object.values(os.networkInterfaces())) {
-        for (const entry of entries ?? []) {
-            if (!entry.internal && entry.family === 'IPv4') {
-                urls.push(`http://${entry.address}:${port}/`);
-            }
-        }
-    }
-    return urls;
-}
-
 function printServerOnlyInfo(options) {
     const host = options.host ?? 'localhost';
     const port = options.port ?? 3000;
 
     console.log('');
-    console.log('No local browser was launched. Open VS Code Web from a browser at:');
-    for (const url of connectionUrls(options)) {
-        console.log(`  ${url}`);
+    console.log('No local browser was launched. Open VS Code Web from your own browser at:');
+    console.log(`  http://localhost:${port}/`);
+    console.log('');
+    console.log('The address must literally be "localhost". VS Code Web serves its extension');
+    console.log('host from a generated subdomain of the page host (v--<uuid>.localhost resolves');
+    console.log('to loopback; subdomains of IPs or ordinary hostnames do not), and plain-HTTP');
+    console.log('non-localhost origins are not secure contexts. Opening via 127.0.0.1, a LAN');
+    console.log('IP, or a machine name loads a workbench with NO files and no extensions.');
+    console.log('');
+    if (isWildcardHost(host)) {
+        console.log(`The server listens on all interfaces (${host}), so any port mapping that ends`);
+        console.log('in a localhost URL works — a Docker/devcontainer port map, kubectl');
+        console.log('port-forward, or an SSH tunnel:');
+    } else {
+        console.log('From another machine, forward the port so your browser sees localhost:');
     }
-
-    if (!isWildcardHost(host) && (host === 'localhost' || host === '127.0.0.1')) {
-        console.log('The server only listens on this machine. From another machine, either');
-        console.log(`forward the port first (ssh -L ${port}:localhost:${port} <user>@<this-machine>)`);
-        console.log('or rerun with --host 0.0.0.0 to listen on all interfaces.');
-    }
+    console.log(`  ssh -L ${port}:localhost:${port} <user>@<this-machine>`);
     console.log('Press Ctrl+C to stop the server.');
     console.log('');
 }

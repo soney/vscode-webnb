@@ -54,6 +54,10 @@ node scripts/vscode-test-web.js samplenotebooks/<file>.webnb --watch --remote --
 - `--remote` starts the server without a local browser; connect Playwright (or
   any browser) to the printed URL. The session runner auto-opens the file and
   reload-on-rebuild works in whichever browser is connected.
+- Connect via `http://localhost:<port>` — literally `localhost`. On any other
+  origin (127.0.0.1, LAN IP, hostname) the extension host cannot start (it is
+  served from a `v--<uuid>.<host>` subdomain, plus secure-context rules), so
+  the workbench loads with no files and no extensions.
 - A cached VS Code build lives in `.vscode-test-web/` (gitignored); symlink it
   from the main checkout into a worktree to skip the download.
 - Notebook cell outputs live in nested webview **iframes** — `page.locator()`
