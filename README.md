@@ -67,6 +67,7 @@ Common cell languages include:
 - `react` or `jsx` for React components (with JSX support).
 - `mcq` for multiple choice questions.
 - `external` for automatically checked workspace files and directories.
+- `walkthrough` for annotated code walkthroughs of workspace files.
 
 ## Node Cells
 
@@ -621,6 +622,78 @@ check.file('xyz/index.html')
   .run('Add a `main` element to `xyz/index.html`.', 'Found a `main` element.');
 ```
 ````
+
+## Code Walkthroughs
+
+Use `{walkthrough}` cells to offer commentary on snippets of a larger codebase. A walkthrough is a sequence of steps; each step points at a workspace file, selects which lines to show, and attaches markdown commentary — including annotations pinned to specific lines. Walkthrough cells are widgets like `{mcq}` and `{external}` cells: they render automatically when the notebook opens and collapse their source.
+
+````
+```{walkthrough}
+title: How the demo server works
+Intro commentary shown before the first step.
+
+step: Setup
+file: demo-src/server.js
+region: setup
+Commentary for this step, in markdown.
+@"const notes": An annotation pinned to the first shown line containing this text.
+
+step: The helpers
+file: demo-src/utils.js
+lines: 3-18, 20-23
+highlight: 11
+@13: An annotation pinned to line 13 of the file.
+```
+````
+
+### Picking Lines With Region Markers
+
+`region: name` anchors a step to a marked region in the target file. Mark the region with `#region name` and `#endregion` comments in whatever comment style the file uses:
+
+```js
+// #region setup
+const app = express();
+app.use(express.json());
+// #endregion
+```
+
+The marker comments themselves are not shown, the displayed line numbers match the real file, and the snippet keeps tracking the region as the file grows or shifts — which makes regions more robust than line numbers. Regions can nest; the marker names are matched case-insensitively. These are the same `#region` markers VS Code uses for code folding.
+
+### Picking Lines By Number
+
+`lines:` takes comma-separated line numbers or ranges, using the file's real 1-based line numbers:
+
+```
+lines: 3-18, 20-23
+```
+
+Disjoint ranges render with a `⋯` separator between them. A step with neither `region:` nor `lines:` shows the whole file. If a step has both, the region wins.
+
+### Step Keys
+
+- `step: title` starts a new step (a bare `file:` line also starts one).
+- `file: path` is the file to show. Paths resolve relative to the notebook file; use a `workspace:` prefix (for example `workspace:src/app.js`) to resolve from the workspace root, matching external checks.
+- `region: name` / `lines: ranges` select what to show.
+- `highlight: ranges` emphasizes lines without attaching a note.
+- `title:` before the first step names the whole walkthrough.
+- `watch: 2s` re-runs the cell on an interval so snippets track files a learner is editing (`watch: on` uses 2 seconds; the default is off).
+
+### Line Annotations
+
+Annotation lines attach a note directly under a line of code and highlight it:
+
+- `@12: note` pins to line 12 of the file.
+- `@12-15: note` highlights the range and pins the note under line 15.
+- `@"text": note` pins to the first shown line containing `text`, which stays correct as the file shifts.
+- Indent a following line by two or more spaces to continue a note.
+
+Annotations whose anchor is not among the shown lines render as a warning note under the code, so stale line numbers are visible instead of silently dropped.
+
+### Opening The Real File
+
+The rendered file name is a link: clicking it opens the actual file beside the notebook, scrolled to the first shown line.
+
+See `samplenotebooks/walkthrough.webnb` for a complete example that walks through `samplenotebooks/demo-src/`.
 
 ## Multiple Choice Questions
 

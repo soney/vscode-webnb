@@ -183,6 +183,9 @@ export class CellView {
                     if (normalizeAddonType(message.addonType) === 'selection') {
                         this.ctx.scratch.setSelection(this.cellKey, message.content);
                     }
+                } else if (message.type === 'webnb.openWorkspaceFile') {
+                    // In VS Code this opens the real file beside the notebook.
+                    // The browser preview has no workspace editor, so ignore it.
                 }
             }
         };

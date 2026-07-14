@@ -30,7 +30,7 @@ export function isExternalCheckLanguage(languageId: string): boolean {
 }
 
 export function isAutoWidgetLanguage(languageId: string): boolean {
-    return languageId === 'mcq' || isExternalCheckLanguage(languageId);
+    return languageId === 'mcq' || languageId === 'walkthrough' || isExternalCheckLanguage(languageId);
 }
 
 /** Cells that run on open (autorun/runonstart) or are auto-widgets (mcq/external/checklist). */

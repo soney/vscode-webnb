@@ -18,7 +18,14 @@ interface WebNbUpsertCellAddonMessage {
     content: string;
 }
 
-type WebNbRendererMessage = WebNbRefreshCellMessage | WebNbUpsertCellAddonMessage;
+interface WebNbOpenWorkspaceFileMessage {
+    type: 'webnb.openWorkspaceFile';
+    cellUri: string;
+    path: string;
+    line?: number;
+}
+
+type WebNbRendererMessage = WebNbRefreshCellMessage | WebNbUpsertCellAddonMessage | WebNbOpenWorkspaceFileMessage;
 
 interface WorkspaceFileSnapshotEntry {
     path: string;
@@ -38,9 +45,10 @@ interface RequestedPathReference {
     base: RequestedPathBase;
 }
 
-const SUPPORTED_LANGUAGES = ['javascript', 'node', 'html', 'css', 'js', 'javascriptreact', 'react', 'jsx', 'mcq', 'external', 'checklist'];
+const SUPPORTED_LANGUAGES = ['javascript', 'node', 'html', 'css', 'js', 'javascriptreact', 'react', 'jsx', 'mcq', 'external', 'checklist', 'walkthrough'];
 const FILE_SNAPSHOT_ADDON_TYPES = new Set(['file', 'files', 'workspace-files']);
 const EXTERNAL_CHECK_LANGUAGES = new Set(['external', 'checklist']);
+const WALKTHROUGH_LANGUAGES = new Set(['walkthrough']);
 const RENDERER_ID = 'practical-javascript-reading-notebook';
 const MAX_FILE_SNAPSHOT_BYTES = 1024 * 1024;
 const MAX_AUTORUN_DISCOVERY_RETRIES = 10;
@@ -124,6 +132,21 @@ function normalizeAddonType(type: string | undefined): string {
 
 function isExternalCheckLanguage(languageId: string): boolean {
     return EXTERNAL_CHECK_LANGUAGES.has(languageId.toLowerCase());
+}
+
+function isWalkthroughLanguage(languageId: string): boolean {
+    return WALKTHROUGH_LANGUAGES.has(languageId.toLowerCase());
+}
+
+function getRequestedWalkthroughFilePaths(source: string): RequestedPathReference[] {
+    const paths: RequestedPathReference[] = [];
+    for (const rawLine of source.split(/\r?\n/g)) {
+        const match = rawLine.match(/^file\s*:\s*(.+)$/i);
+        if (match && match[1].trim()) {
+            paths.push(parseRequestedPathReference(match[1].trim()));
+        }
+    }
+    return paths;
 }
 
 function parseRequestedPathLine(line: string): string | undefined {
@@ -331,6 +354,10 @@ function getRequestedFilePaths(addons: WebNbAddon[], languageId: string, source:
         }
     }
 
+    if (isWalkthroughLanguage(languageId)) {
+        paths.push(...getRequestedWalkthroughFilePaths(source));
+    }
+
     const uniquePaths = new Map<string, RequestedPathReference>();
     for (const pathRef of paths) {
         uniquePaths.set(pathRef.requestPath, pathRef);
@@ -401,6 +428,13 @@ function isRendererMessage(message: unknown): message is WebNbRendererMessage {
 
     if (candidate.type === 'webnb.upsertCellAddon') {
         return typeof candidate.cellUri === 'string' && typeof candidate.addonType === 'string' && typeof candidate.content === 'string';
+    }
+
+    if (candidate.type === 'webnb.openWorkspaceFile') {
+        const openCandidate = candidate as Partial<WebNbOpenWorkspaceFileMessage>;
+        return typeof openCandidate.cellUri === 'string'
+            && typeof openCandidate.path === 'string'
+            && (openCandidate.line === undefined || typeof openCandidate.line === 'number');
     }
 
     return false;
@@ -569,6 +603,11 @@ export class WebNotebookKernel implements vscode.Disposable {
                     return;
                 }
 
+                if (message.type === 'webnb.openWorkspaceFile') {
+                    void this._openWorkspaceFile(cell, message.path, message.line);
+                    return;
+                }
+
                 void this._upsertCellAddon(cell, message.addonType, message.content);
             }),
             vscode.workspace.onDidCloseNotebookDocument(notebook => {
@@ -690,7 +729,8 @@ export class WebNotebookKernel implements vscode.Disposable {
     }
 
     private _isAutoRefreshingCell(cell: vscode.NotebookCell): boolean {
-        return isExternalCheckLanguage(cell.document.languageId);
+        return isExternalCheckLanguage(cell.document.languageId)
+            || isWalkthroughLanguage(cell.document.languageId);
     }
 
     private async _executeAutorunCells(editor: vscode.NotebookEditor, ranges: vscode.NotebookRange[], autorunSignature: string): Promise<void> {
@@ -966,6 +1006,34 @@ export class WebNotebookKernel implements vscode.Disposable {
         const currentAddons = getCellAddons(cell);
         const nextAddons = upsertAddon(currentAddons, addonType, content);
         await this._replaceCellAddons(cell, nextAddons);
+    }
+
+    private async _openWorkspaceFile(cell: vscode.NotebookCell, requestPath: string, line?: number): Promise<void> {
+        const reference = parseRequestedPathReference(requestPath);
+        const normalizedPath = normalizeWorkspacePath(reference.path);
+        const workspaceFolder = vscode.workspace.getWorkspaceFolder(cell.notebook.uri) ?? vscode.workspace.workspaceFolders?.[0];
+        if (!normalizedPath || !workspaceFolder) {
+            return;
+        }
+
+        const notebookRelativeDir = getNotebookRelativeDir(cell, workspaceFolder);
+        const workspaceResolvedPath = reference.base === 'workspace' || !notebookRelativeDir
+            ? normalizedPath
+            : `${notebookRelativeDir}/${normalizedPath}`;
+        const uri = vscode.Uri.joinPath(workspaceFolder.uri, ...workspaceResolvedPath.split('/'));
+
+        const selectionLine = Math.max(0, Math.floor(line ?? 1) - 1);
+        try {
+            const document = await vscode.workspace.openTextDocument(uri);
+            const clampedLine = Math.min(selectionLine, Math.max(0, document.lineCount - 1));
+            await vscode.window.showTextDocument(document, {
+                viewColumn: vscode.ViewColumn.Beside,
+                preview: true,
+                selection: new vscode.Range(clampedLine, 0, clampedLine, 0)
+            });
+        } catch (error) {
+            warnExecution('openWorkspaceFile failed path=%s error=%s', requestPath, String(error));
+        }
     }
 
     private async _snapshotWorkspaceFiles(cell: vscode.NotebookCell, addons: WebNbAddon[], languageId: string, source: string): Promise<Record<string, WorkspaceFileSnapshotEntry>> {

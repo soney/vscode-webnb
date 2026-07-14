@@ -47,7 +47,8 @@ export interface WebnbOutputValue {
 /** Messages render() posts back through the (faked) renderer context. */
 export type RendererMessage =
     | { type: 'webnb.refreshCell'; cellUri: string }
-    | { type: 'webnb.upsertCellAddon'; cellUri: string; addonType: string; content: string };
+    | { type: 'webnb.upsertCellAddon'; cellUri: string; addonType: string; content: string }
+    | { type: 'webnb.openWorkspaceFile'; cellUri: string; path: string; line?: number };
 
 /** Custom HMR event payload pushed by the dev server when disk changes. */
 export interface FsChangeEvent {

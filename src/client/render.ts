@@ -7,6 +7,15 @@ import cy from './lite-cy';
 import { marked } from 'marked';
 import smartypants from 'smartypants';
 import ConsoleObjectView from './consoleobjectview';
+import {
+    decorateWalkthroughStep,
+    describeWalkthroughSegments,
+    parseWalkthroughSource,
+    resolveWalkthroughStep,
+    toWalkthroughSnapshotKey,
+    type ParsedWalkthrough,
+    type WalkthroughStep
+} from './walkthrough';
 import { Terminal } from '@xterm/xterm';
 import * as Babel from '@babel/standalone';
 import * as React from 'react';
@@ -729,6 +738,221 @@ function parseTerminalAddon(content: string): ParsedTerminalAddon {
     }
 
     return parsed;
+}
+
+function createWalkthroughMessage(markdown: string, kind: 'info' | 'warning' | 'error'): HTMLElement {
+    const message = document.createElement('div');
+    message.classList.add('walkthrough-message', kind);
+    message.innerHTML = renderMarkdownInline(markdown);
+    return message;
+}
+
+function renderWalkthroughStep(
+    step: WalkthroughStep,
+    index: number,
+    showStepNumbers: boolean,
+    files: Record<string, WorkspaceFileSnapshotEntry>,
+    openFile?: (path: string, line?: number) => void
+): HTMLElement {
+    const stepEl = document.createElement('section');
+    stepEl.classList.add('walkthrough-step');
+
+    if (step.title || showStepNumbers) {
+        const header = document.createElement('div');
+        header.classList.add('walkthrough-step-header');
+        if (showStepNumbers) {
+            const badge = document.createElement('span');
+            badge.classList.add('walkthrough-step-number');
+            badge.textContent = `${index + 1}`;
+            header.appendChild(badge);
+        }
+        if (step.title) {
+            const title = document.createElement('span');
+            title.classList.add('walkthrough-step-title');
+            title.innerHTML = renderMarkdownInline(step.title);
+            header.appendChild(title);
+        }
+        stepEl.appendChild(header);
+    }
+
+    if (step.commentary) {
+        const commentary = document.createElement('div');
+        commentary.classList.add('walkthrough-commentary');
+        commentary.innerHTML = renderMarkdownBlock(step.commentary);
+        stepEl.appendChild(commentary);
+    }
+
+    if (!step.file) {
+        stepEl.appendChild(createWalkthroughMessage('This step needs a `file:` line pointing at a workspace file.', 'error'));
+        return stepEl;
+    }
+
+    const snapshot = files[toWalkthroughSnapshotKey(step.file)];
+    if (!snapshot) {
+        stepEl.appendChild(createWalkthroughMessage(`Could not load \`${step.file}\` — run the cell again to snapshot it.`, 'error'));
+        return stepEl;
+    }
+    if (!snapshot.exists) {
+        stepEl.appendChild(createWalkthroughMessage(`\`${step.file}\` was not found. Paths are relative to the notebook file; use a \`workspace:\` prefix to resolve from the workspace root.`, 'error'));
+        return stepEl;
+    }
+    if (snapshot.type === 'directory') {
+        stepEl.appendChild(createWalkthroughMessage(`\`${step.file}\` is a directory. Point the step at a file instead.`, 'error'));
+        return stepEl;
+    }
+    if (typeof snapshot.content !== 'string') {
+        stepEl.appendChild(createWalkthroughMessage(snapshot.error || `Could not read the contents of \`${step.file}\`.`, 'error'));
+        return stepEl;
+    }
+
+    const resolved = resolveWalkthroughStep(step, snapshot.content);
+    for (const warning of resolved.warnings) {
+        stepEl.appendChild(createWalkthroughMessage(warning, 'warning'));
+    }
+    if (resolved.error) {
+        stepEl.appendChild(createWalkthroughMessage(resolved.error, 'error'));
+        return stepEl;
+    }
+
+    const decorated = decorateWalkthroughStep(step, resolved.segments);
+    const firstShownLine = resolved.segments.find(segment => segment.lines.length > 0)?.lines[0]?.number;
+
+    const panel = document.createElement('figure');
+    panel.classList.add('walkthrough-code');
+
+    const codeHeader = document.createElement('figcaption');
+    codeHeader.classList.add('walkthrough-code-header');
+    let fileLabel: HTMLElement;
+    if (openFile) {
+        const openButton = document.createElement('button');
+        openButton.type = 'button';
+        openButton.title = 'Open this file in the editor';
+        openButton.addEventListener('click', () => openFile(step.file!, firstShownLine));
+        fileLabel = openButton;
+    } else {
+        fileLabel = document.createElement('span');
+    }
+    fileLabel.classList.add('walkthrough-file-name');
+    fileLabel.textContent = step.file;
+    codeHeader.appendChild(fileLabel);
+
+    const rangeParts: string[] = [];
+    if (step.region) {
+        rangeParts.push(`region \`${step.region}\``);
+    }
+    const segmentSummary = describeWalkthroughSegments(resolved.segments);
+    if (segmentSummary) {
+        rangeParts.push(segmentSummary);
+    }
+    if (rangeParts.length > 0) {
+        const rangeEl = document.createElement('span');
+        rangeEl.classList.add('walkthrough-code-range');
+        rangeEl.innerHTML = renderMarkdownInline(rangeParts.join(' · '));
+        codeHeader.appendChild(rangeEl);
+    }
+    panel.appendChild(codeHeader);
+
+    const hasLines = resolved.segments.some(segment => segment.lines.length > 0);
+    if (!hasLines) {
+        panel.appendChild(createWalkthroughMessage('There are no lines to show for this step.', 'warning'));
+        stepEl.appendChild(panel);
+        return stepEl;
+    }
+
+    const maxLineNumber = Math.max(...resolved.segments.flatMap(segment => segment.lines.map(line => line.number)));
+    const codeBody = document.createElement('div');
+    codeBody.classList.add('walkthrough-code-lines');
+    codeBody.style.setProperty('--walkthrough-gutter-width', `${String(maxLineNumber).length}ch`);
+
+    resolved.segments.forEach((segment, segmentIndex) => {
+        if (segment.lines.length === 0) {
+            return;
+        }
+        if (segmentIndex > 0) {
+            const ellipsis = document.createElement('div');
+            ellipsis.classList.add('walkthrough-ellipsis');
+            ellipsis.textContent = '⋯';
+            codeBody.appendChild(ellipsis);
+        }
+
+        for (const line of segment.lines) {
+            const decoration = decorated.byLine.get(line.number);
+            const row = document.createElement('div');
+            row.classList.add('walkthrough-line');
+            if (decoration?.highlight) {
+                row.classList.add('highlighted');
+            }
+
+            const gutter = document.createElement('span');
+            gutter.classList.add('walkthrough-line-number');
+            gutter.textContent = `${line.number}`;
+
+            const text = document.createElement('span');
+            text.classList.add('walkthrough-line-text');
+            text.textContent = line.text;
+
+            row.append(gutter, text);
+            codeBody.appendChild(row);
+
+            for (const note of decoration?.notes ?? []) {
+                const noteEl = document.createElement('div');
+                noteEl.classList.add('walkthrough-note');
+                noteEl.innerHTML = renderMarkdownBlock(note);
+                codeBody.appendChild(noteEl);
+            }
+        }
+    });
+
+    panel.appendChild(codeBody);
+    stepEl.appendChild(panel);
+
+    for (const orphan of decorated.orphanNotes) {
+        const noteEl = document.createElement('div');
+        noteEl.classList.add('walkthrough-note', 'walkthrough-note-orphan');
+        noteEl.innerHTML = renderMarkdownBlock(`${orphan.label} (not shown): ${orphan.text}`);
+        stepEl.appendChild(noteEl);
+    }
+
+    return stepEl;
+}
+
+function renderParsedWalkthrough(
+    container: HTMLElement,
+    parsed: ParsedWalkthrough,
+    files: Record<string, WorkspaceFileSnapshotEntry>,
+    openFile?: (path: string, line?: number) => void
+): void {
+    const wrapper = document.createElement('div');
+    wrapper.classList.add('walkthrough');
+
+    if (parsed.title) {
+        const title = document.createElement('div');
+        title.classList.add('walkthrough-title');
+        title.innerHTML = renderMarkdownInline(parsed.title);
+        wrapper.appendChild(title);
+    }
+
+    if (parsed.intro) {
+        const intro = document.createElement('div');
+        intro.classList.add('walkthrough-commentary', 'walkthrough-intro');
+        intro.innerHTML = renderMarkdownBlock(parsed.intro);
+        wrapper.appendChild(intro);
+    }
+
+    for (const error of parsed.errors) {
+        wrapper.appendChild(createWalkthroughMessage(error, 'error'));
+    }
+
+    if (parsed.steps.length === 0) {
+        wrapper.appendChild(createWalkthroughMessage('Add a `file:` line (plus optional `region:` or `lines:`) to show code from the workspace.', 'info'));
+    }
+
+    const showStepNumbers = parsed.steps.length > 1;
+    parsed.steps.forEach((step, index) => {
+        wrapper.appendChild(renderWalkthroughStep(step, index, showStepNumbers, files, openFile));
+    });
+
+    container.appendChild(wrapper);
 }
 
 // This function is called to render your contents.
@@ -1583,6 +1807,25 @@ export function render({ container, feedback, mime, value, style, addStyle, cons
         });
 
         refreshCleanup = shouldRefresh ? scheduleChecklistRefresh(allPassed, parsedChecklist.intervalMs) : undefined;
+    } else if (language === 'walkthrough') {
+        const parsedWalkthrough = parseWalkthroughSource(source);
+        const canOpenFiles = typeof value.cellUri === 'string' && typeof context.postMessage === 'function';
+        const openFile = canOpenFiles
+            ? (path: string, line?: number) => {
+                context.postMessage?.({
+                    type: 'webnb.openWorkspaceFile',
+                    cellUri: value.cellUri,
+                    path,
+                    line
+                });
+            }
+            : undefined;
+        renderParsedWalkthrough(container, parsedWalkthrough, files, openFile);
+        if (parsedWalkthrough.watchIntervalMs > 0) {
+            // Re-run the cell periodically so the snippets track the real files
+            // while a learner edits them (same mechanism external checks use).
+            refreshCleanup = scheduleChecklistRefresh(false, parsedWalkthrough.watchIntervalMs);
+        }
     } else if (language === 'mcq') {
         const { question, options, correctFeedback, wrongFeedback, shuffle, deterministic } = parseMcqSource(source);
         if (!question || options.length === 0) {

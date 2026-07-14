@@ -46,7 +46,7 @@
   font-size: var(--vscode-font-size);
 }
 
-div#html-output:not(.webnb-output-mcq):not(.webnb-output-external):not(.webnb-output-checklist) {
+div#html-output:not(.webnb-output-mcq):not(.webnb-output-external):not(.webnb-output-checklist):not(.webnb-output-walkthrough) {
   background-color: white;
   color: black;
   font-family: 'Times New Roman', Times, serif;
@@ -55,7 +55,7 @@ div#html-output:not(.webnb-output-mcq):not(.webnb-output-external):not(.webnb-ou
   border-radius: 3px;
 }
 
-div#html-output.webnb-output-empty:not(.webnb-output-mcq):not(.webnb-output-external):not(.webnb-output-checklist) {
+div#html-output.webnb-output-empty:not(.webnb-output-mcq):not(.webnb-output-external):not(.webnb-output-checklist):not(.webnb-output-walkthrough) {
   display: none;
 }
 
@@ -314,6 +314,220 @@ div#html-output.webnb-output-empty:not(.webnb-output-mcq):not(.webnb-output-exte
 .mcq-check-button:focus-visible {
   outline: 1px solid var(--vscode-focusBorder);
   outline-offset: 2px;
+}
+
+.webnb-output-walkthrough {
+  background: transparent;
+  color: var(--vscode-editor-foreground);
+  font-family: var(--vscode-font-family);
+}
+
+.walkthrough {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.walkthrough-title {
+  font-weight: 700;
+  font-size: calc(var(--vscode-font-size) + 2px);
+}
+
+.walkthrough-commentary {
+  line-height: 1.5;
+}
+
+.walkthrough-commentary p {
+  margin: 0 0 8px;
+}
+
+.walkthrough-commentary p:last-child {
+  margin-bottom: 0;
+}
+
+.walkthrough code {
+  border-radius: 4px;
+  padding: 1px 3px;
+  background: var(--vscode-textCodeBlock-background, var(--vscode-editorWidget-background, rgba(127, 127, 127, 0.14)));
+  color: var(--vscode-editor-foreground);
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 0.95em;
+}
+
+.walkthrough-message {
+  border-left: 3px solid var(--vscode-descriptionForeground, var(--vscode-editor-foreground));
+  padding: 6px 10px;
+  color: var(--vscode-descriptionForeground, var(--vscode-editor-foreground));
+  line-height: 1.4;
+}
+
+.walkthrough-message.warning {
+  border-left-color: var(--vscode-editorWarning-foreground, var(--vscode-charts-yellow, orange));
+  color: var(--vscode-editorWarning-foreground, var(--vscode-editor-foreground));
+}
+
+.walkthrough-message.error {
+  border-left-color: var(--vscode-testing-iconFailed, var(--vscode-errorForeground));
+  color: var(--vscode-errorForeground, var(--vscode-editor-foreground));
+}
+
+.walkthrough-step {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border: 1px solid var(--vscode-notebook-cellBorderColor, var(--vscode-panel-border, transparent));
+  border-radius: 8px;
+  padding: 12px;
+  background: var(--vscode-editor-background);
+}
+
+.walkthrough-step-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.walkthrough-step-number {
+  flex: none;
+  min-width: 20px;
+  height: 20px;
+  border-radius: 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--vscode-badge-background, var(--vscode-button-background, rgba(127, 127, 127, 0.3)));
+  color: var(--vscode-badge-foreground, var(--vscode-button-foreground, inherit));
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.walkthrough-step-title {
+  font-weight: 700;
+}
+
+.walkthrough-code {
+  margin: 0;
+  border: 1px solid var(--vscode-notebook-cellBorderColor, var(--vscode-panel-border, rgba(127, 127, 127, 0.3)));
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.walkthrough-code-header {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--vscode-notebook-cellBorderColor, var(--vscode-panel-border, rgba(127, 127, 127, 0.3)));
+  background: var(--vscode-textCodeBlock-background, var(--vscode-editorWidget-background, rgba(127, 127, 127, 0.08)));
+  font-size: 12px;
+}
+
+.walkthrough-file-name {
+  font-family: var(--vscode-editor-font-family, monospace);
+  color: var(--vscode-editor-foreground);
+}
+
+button.walkthrough-file-name {
+  appearance: none;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: none;
+  font-size: inherit;
+  color: var(--vscode-textLink-foreground, var(--vscode-editor-foreground));
+  cursor: pointer;
+}
+
+button.walkthrough-file-name:hover {
+  text-decoration: underline;
+}
+
+button.walkthrough-file-name:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: 2px;
+}
+
+.walkthrough-code-range {
+  margin-left: auto;
+  color: var(--vscode-descriptionForeground, var(--vscode-editor-foreground));
+  white-space: nowrap;
+}
+
+.walkthrough-code-range code {
+  background: transparent;
+  padding: 0;
+  color: inherit;
+}
+
+.walkthrough-code-lines {
+  padding: 6px 0;
+  background: var(--vscode-editor-background);
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: var(--vscode-editor-font-size, 13px);
+  line-height: 1.5;
+  overflow-x: auto;
+}
+
+.walkthrough-line {
+  display: flex;
+  border-left: 3px solid transparent;
+}
+
+.walkthrough-line.highlighted {
+  border-left-color: var(--vscode-focusBorder, var(--vscode-button-background, #007acc));
+  background: var(--vscode-editor-rangeHighlightBackground, rgba(127, 127, 127, 0.12));
+}
+
+.walkthrough-line-number {
+  flex: none;
+  width: var(--walkthrough-gutter-width, 3ch);
+  padding: 0 10px 0 8px;
+  text-align: right;
+  color: var(--vscode-editorLineNumber-foreground, var(--vscode-descriptionForeground, rgba(127, 127, 127, 0.8)));
+  user-select: none;
+}
+
+.walkthrough-line-text {
+  flex: 1;
+  padding-right: 12px;
+  white-space: pre;
+  tab-size: 4;
+}
+
+.walkthrough-line-text:empty::before {
+  content: "\00a0";
+}
+
+.walkthrough-ellipsis {
+  padding: 2px 0 2px calc(var(--walkthrough-gutter-width, 3ch) + 21px);
+  color: var(--vscode-descriptionForeground, rgba(127, 127, 127, 0.8));
+  user-select: none;
+}
+
+.walkthrough-note {
+  margin: 4px 12px 8px calc(var(--walkthrough-gutter-width, 3ch) + 21px);
+  padding: 6px 10px;
+  border-left: 3px solid var(--vscode-focusBorder, var(--vscode-button-background, #007acc));
+  border-radius: 0 4px 4px 0;
+  background: color-mix(in srgb, var(--vscode-focusBorder, #007acc) 8%, transparent);
+  font-family: var(--vscode-font-family);
+  font-size: calc(var(--vscode-font-size) - 1px);
+  line-height: 1.5;
+  white-space: normal;
+}
+
+.walkthrough-note p {
+  margin: 0 0 4px;
+}
+
+.walkthrough-note p:last-child {
+  margin-bottom: 0;
+}
+
+.walkthrough-note-orphan {
+  margin: 0;
+  border-left-color: var(--vscode-editorWarning-foreground, var(--vscode-charts-yellow, orange));
+  background: color-mix(in srgb, var(--vscode-editorWarning-foreground, orange) 8%, transparent);
 }
 
 .console {

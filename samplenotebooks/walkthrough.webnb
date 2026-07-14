@@ -1,0 +1,41 @@
+# Code Walkthroughs
+
+A `{walkthrough}` cell narrates snippets of a larger codebase. Each step points at a real workspace file and shows a slice of it — picked out with a named `#region` comment marker in the file, or with explicit `lines:` ranges — together with markdown commentary and per-line annotations.
+
+The walkthrough below reads through the little "notes API" in `demo-src/`.
+
+```{walkthrough}
+title: How the demo notes server works
+The next few steps read through `demo-src/server.js`, a tiny HTTP API that stores notes in memory, and then peek at its helpers.
+
+step: Setup
+file: demo-src/server.js
+region: setup
+The file starts by pulling in Node's `http` module and two helpers, then sets up the server's state. This snippet is anchored by the `#region setup` marker in the file, so it keeps working even when the file grows.
+@"const notes": All the notes live in this `Map`, keyed by id — restart the server and they are gone.
+@"nextId": Ids are handed out from a simple counter.
+
+step: Routing
+file: demo-src/server.js
+region: routes
+All routing happens in one function: check the method and URL, handle the match, and fall through to a 404.
+@"GET": Listing notes is just serializing the map's values.
+@"await readBody": The request body is parsed before the note is created.
+  Everything after this line can assume `body` is a plain object.
+
+step: Starting up
+file: demo-src/server.js
+region: startup
+Finally the server is created and started.
+@"catch": Any error thrown by a route handler is turned into a JSON `500` response here, so one bad request cannot crash the server.
+
+step: The helpers
+file: demo-src/utils.js
+lines: 3-18, 20-23
+highlight: 11
+This step uses explicit `lines:` ranges instead of region markers, so the two helpers show with a gap between them.
+@13: If the body is not valid JSON, the promise rejects and the routing layer turns it into an error response.
+@20-23: `sendJson` is the only place that writes to the response, which keeps the content-type header consistent everywhere.
+```
+
+The `file:` paths above are relative to this notebook. Use a `workspace:` prefix (for example `workspace:src/app.js`) to resolve a path from the workspace root instead, and click a file name in the rendered walkthrough to open the real file beside the notebook.

@@ -4,10 +4,12 @@
  * extension's webnbProvider.ts (the parts that compute requested paths). Disk
  * resolution happens server-side; this only figures out *what* to ask for.
  */
+import { getWalkthroughFilePaths } from '../../src/client/walkthrough';
 import type { Addon, SnapshotRequest } from './types';
 
 const FILE_SNAPSHOT_ADDON_TYPES = new Set(['file', 'files', 'workspace-files']);
 const EXTERNAL_CHECK_LANGUAGES = new Set(['external', 'checklist']);
+const WALKTHROUGH_LANGUAGES = new Set(['walkthrough']);
 
 function normalizeAddonType(type: string | undefined): string {
     return (type || '').trim().toLowerCase().replace(/^\+/, '');
@@ -138,6 +140,10 @@ export function getRequestedFilePaths(addons: Addon[], languageId: string, sourc
                 paths.push(...getRequestedFilePathsFromTestSource(addon.content));
             }
         }
+    }
+
+    if (WALKTHROUGH_LANGUAGES.has(languageId.toLowerCase())) {
+        paths.push(...getWalkthroughFilePaths(source).map(parseRequestedPathReference));
     }
 
     const unique = new Map<string, SnapshotRequest>();
