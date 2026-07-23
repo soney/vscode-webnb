@@ -1865,13 +1865,21 @@ export function render({ container, feedback, mime, value, style, addStyle, cons
             }
             window.console.log(toEval);
 
-            const hasModuleSyntax = /(^|\n)\s*(import|export)\s/m.test(toEval);
+            const hasModuleSyntax = /(^|\n)\s*(import|export)[\s{]/m.test(toEval);
             const shouldCompileWithBabel = isReactLanguage || hasModuleSyntax;
 
             if (shouldCompileWithBabel) {
                 const babelOptions: Record<string, unknown> = {};
                 if (isReactLanguage) {
-                    babelOptions.presets = ['react'];
+                    // Use the classic JSX runtime so JSX compiles to
+                    // `React.createElement`, resolved against the injected `React`
+                    // global. Babel's default (automatic) runtime instead injects
+                    // `import { jsx } from "react/jsx-runtime"`; when the cell has no
+                    // other module syntax that import is never transformed to
+                    // CommonJS and blows up inside `new Function` (WebKit:
+                    // "import call expects one or two arguments"; V8: "Cannot use
+                    // import statement outside a module").
+                    babelOptions.presets = [['react', { runtime: 'classic' }]];
                 }
                 if (hasModuleSyntax) {
                     babelOptions.plugins = ['transform-modules-commonjs'];
