@@ -51,6 +51,14 @@
                 "mimeTypes": [
                     "x-application/webnb-output"
                 ]
+            },
+            {
+                "id": "webnb-markdown-image-size",
+                "displayName": "Web Notebook image sizing",
+                "entrypoint": {
+                    "extends": "vscode.markdown-it-renderer",
+                    "path": "./out/markdownItPlugin/index.js"
+                }
             }
         ],
         "languages": [
