@@ -25,6 +25,11 @@ document.querySelector('#el').addEventListener('click', () => {
 assert('#el').click().run('Failed to click button', 'Clicked button');
 assert('#outp').should('have.text', 'Hello').run('Failed to set output', 'Set output');
 ```
+```+solution
+document.querySelector('#el').addEventListener('click', () => {
+    document.querySelector('#outp').textContent += 'Hello';
+});
+```
 ```html id=blahblah
 <html>
   <body>
@@ -47,6 +52,10 @@ h1 {
 ```+test
 assert('h1').should('exist').should('have.css', 'color: blue').run('Failed to find blue h1 rule', 'Found blue h1 rule');
 ```
+```+solution
+<h1 style="color: blue">Hello</h1>
+<button>Click me</button>
+```
 
 ## HTML Console Check Example
 
@@ -56,6 +65,9 @@ assert('h1').should('exist').should('have.css', 'color: blue').run('Failed to fi
 ```+test
 assert('#console-button').click().run('Could not click the console button', 'Clicked the console button');
 check.consoleLogged('Hello!').run('Expected the button to log `Hello!`', 'Button logged to the fake console');
+```
+```+solution
+<button id="console-button" onclick="console.log('Hello!')">Click me!</button>
 ```
 
 ```{html}
@@ -75,6 +87,10 @@ console.log("OK");
 console.log("x is", x);
 wrap(x).should('equal', 1).run('Failed; x should be 1', 'x is 1');
 ```
+```+solution
+const x = 1;
+console.log(x);
+```
 
 ## Node Example
 
@@ -86,6 +102,11 @@ module.exports = { answer };
 ```+test
 wrap(typeof process.cwd).should('equal', 'function').run('Node process API not available', 'Node process API available');
 wrap(answer).should('equal', 42).run('Node computation failed', 'Node computation succeeded');
+```
+```+solution
+const answer = 6 * 7;
+console.log('node-like cwd:', process.cwd());
+module.exports = { answer };
 ```
 
 ## Optional Solution Addon Example
@@ -118,6 +139,12 @@ console.log('lesson file:', lessonFile);
 ```+test
 wrap(lessonFile).should('equal', 'lesson.txt').run('Module import/export did not run correctly', 'Module import/export worked');
 ```
+```+solution
+import path from 'path';
+
+export const lessonFile = path.basename('/workspace/lesson.txt');
+console.log('lesson file:', lessonFile);
+```
 
 ```{css}
 h1 {
@@ -129,6 +156,11 @@ h1 {
 ```
 ```+test
 assert('h1').should('exist').should('have.css', 'color: red').run('Failed to find red h1 rule', 'Found red h1 rule');
+```
+```+solution
+h1 {
+  color: red;
+}
 ```
 
 ## React Example
@@ -147,6 +179,18 @@ renderReact(<App />);
 ```
 ```+test
 assert('#react-message').should('have.text', 'Hello from JSX').run('React output was not rendered', 'React output rendered correctly');
+```
+```+solution
+const App = () => {
+  return (
+    <section>
+      <h2>React Cell</h2>
+      <p id="react-message">Hello from JSX</p>
+    </section>
+  );
+};
+
+renderReact(<App />);
 ```
 
 ## JSX Alias + Custom Mount Example
@@ -179,6 +223,16 @@ renderReact(<ProductCard title="Notebook Pro" price={49} />, '#app');
 ```+test
 assert('#app h3').should('have.text', 'Notebook Pro').run('Failed to render JSX title', 'Rendered JSX title');
 assert('#app .price').should('have.text', '$49').run('Failed to render JSX price', 'Rendered JSX price');
+```
+```+solution
+const ProductCard = ({ title, price }) => (
+  <article className="card">
+    <h3>{title}</h3>
+    <p className="price">${price}</p>
+  </article>
+);
+
+renderReact(<ProductCard title="Notebook Pro" price={49} />, '#app');
 ```
 
 ## Autorun Example
@@ -218,6 +272,11 @@ Edit the CSS so the heading is green:
 ```
 ```+id=greeting
 ```
+```+solution
+h1 {
+  color: green;
+}
+```
 
 ## External Check Example
 
@@ -240,6 +299,23 @@ checklist([
   check.file(stylesheetPath, 'Inside `external-example`, create `styles.css`'),
   check.file(stylesheetPath).contains('font-family', 'In `styles.css`, set a `font-family`')
 ]);
+```
+```+solution
+<!-- external-example/index.html -->
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>External Example</title>
+  </head>
+  <body>
+    <h1>Hello, external world!</h1>
+  </body>
+</html>
+
+/* external-example/styles.css */
+body {
+  font-family: sans-serif;
+}
 ```
 
 ## Terminal Exercise Example
@@ -271,6 +347,11 @@ checklist([
   )
 ]);
 ```
+```+solution
+mkdir terminal-example
+cd terminal-example
+npm init -y
+```
 
 ## Terminal Test Helper Example
 
@@ -298,6 +379,10 @@ checklist([
     run() {}
   }
 ]);
+```
+```+solution
+git init
+git status
 ```
 
 ## Multiple Choice Examples

@@ -23,7 +23,7 @@ export function deactivate() {
 function reopenWebnbFiles(): void {
     const WEB_NOTEBOOK_VIEW_TYPE = 'web-notebook';
     const WEBNB_EXTENSION = '.webnb';
-    const STARTUP_OPEN_SWEEP_DELAYS_MS = [1000, 2000, 2500, 2700, 2800, 3000, 3200, 3500, 3250, 5000, 10000, 15000];
+    const SWEEP_INTERVAL_MS = 1000;
 
     function checkIfOneWebnbEditorOpen(): vscode.TextEditor | vscode.NotebookEditor | undefined {
         function isWebnbFileUri(uri: vscode.Uri): boolean {
@@ -56,9 +56,9 @@ function reopenWebnbFiles(): void {
         return undefined;
     }
 
-    // if there is just one .webnb file open, assume that it was opened programmatically. check at every STARTUP_OPEN_SWEEP_DELAYS_MS delay (and clear timeouts if we find a single webnb editor) and if we find a single webnb editor, close it and reopen it as a web notebook.
+    // if there is just one .webnb file open, assume that it was opened programmatically. keep checking every SWEEP_INTERVAL_MS indefinitely, and once we find a single webnb editor, stop checking, close it, and reopen it as a web notebook.
 
-    const sweepTimeouts: NodeJS.Timeout[] = STARTUP_OPEN_SWEEP_DELAYS_MS.map(delayMs => setTimeout(async () => {
+    const sweepInterval: NodeJS.Timeout = setInterval(async () => {
         const editor = checkIfOneWebnbEditorOpen();
         if (editor) {
             const uri = getEditorUri(editor);
@@ -68,15 +68,13 @@ function reopenWebnbFiles(): void {
 
             const notebookUri = vscode.Uri.parse(uri.toString());
 
-            // clear all other sweep timeouts since we found the single editor
-            for (const timeout of sweepTimeouts) {
-                clearTimeout(timeout);
-            }
+            // stop sweeping since we found the single editor
+            clearInterval(sweepInterval);
 
-            console.log(`[webnb] Found a single open .webnb editor for ${uri.toString()} after ${delayMs}ms delay, reopening as notebook`);
+            console.log(`[webnb] Found a single open .webnb editor for ${uri.toString()}, reopening as notebook`);
             await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
             console.log(`--------------------------------------------------------------------------`);
             await vscode.commands.executeCommand('vscode.openWith', notebookUri, WEB_NOTEBOOK_VIEW_TYPE);
         }
-    }, delayMs));
+    }, SWEEP_INTERVAL_MS);
 }
