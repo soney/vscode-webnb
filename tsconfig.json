@@ -5,6 +5,9 @@
       "path": "./src/client"
     },
     {
+      "path": "./src/markdownItPlugin"
+    },
+    {
       "path": "./src/test"
     },
     {

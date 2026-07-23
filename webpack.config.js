@@ -80,6 +80,7 @@ const makeConfig = (argv, { entry, out, target, library = 'commonjs' }) => ({
 
 module.exports = (env, argv) => [
     makeConfig(argv, { entry: './src/client/index.ts', out: './out/client/index.js', target: 'web', library: 'module' }),
+    makeConfig(argv, { entry: './src/markdownItPlugin/index.ts', out: './out/markdownItPlugin/index.js', target: 'web', library: 'module' }),
     makeConfig(argv, { entry: './src/extension/extension.ts', out: './out/extension/extension.js', target: 'node' }),
     makeConfig(argv, { entry: './src/extension/extension.ts', out: './out/extension/extension.web.js', target: 'webworker' }),
 ];

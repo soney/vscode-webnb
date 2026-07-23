@@ -5,6 +5,7 @@
 import type { RendererContext } from 'vscode-notebook-renderer';
 import cy from './lite-cy';
 import { marked } from 'marked';
+import { installMarkedImageSize } from './markedImageSize';
 import smartypants from 'smartypants';
 import ConsoleObjectView from './consoleobjectview';
 import {
@@ -273,6 +274,9 @@ type RuntimeLanguageKind = 'javascript' | 'node' | 'react';
 function isExternalCheckLanguage(language: string): boolean {
     return language === 'external' || language === 'checklist';
 }
+
+// Teach marked the `![alt](url =WIDTHxHEIGHT)` image-size syntax.
+installMarkedImageSize();
 
 function renderMarkdownInline(text: string): string {
     const html = marked.parseInline(text) as string;

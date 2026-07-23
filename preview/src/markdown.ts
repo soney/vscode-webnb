@@ -9,8 +9,12 @@
 import { marked } from 'marked';
 import smartypants from 'smartypants';
 import { assetUrl } from './api';
+import { installMarkedImageSize } from '../../src/client/markedImageSize';
 
 const SMARTYPANTS_ATTR = '2';
+
+// Teach marked the `![alt](url =WIDTHxHEIGHT)` image-size syntax.
+installMarkedImageSize();
 
 export function renderMarkdownBlock(text: string): string {
     const html = marked.parse(text) as string;

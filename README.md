@@ -69,6 +69,26 @@ Common cell languages include:
 - `external` for automatically checked workspace files and directories.
 - `walkthrough` for annotated code walkthroughs of workspace files.
 
+## Markdown Images (Sizing)
+
+Prose between cells is regular Markdown, so images use the usual
+`![alt](path)` syntax. To size an image, add a `=WIDTHxHEIGHT` suffix inside the
+parentheses (the Typora / GitLab convention). Either dimension may be omitted to
+preserve the aspect ratio:
+
+```
+![Diagram](images/diagram.png =300x180)   width 300, height 180
+![Logo](images/logo.svg =120x)            width 120 (height auto)
+![Banner](images/banner.jpg =x80)         height 80 (width auto)
+![Screenshot](shot.png =400)              width 400 (height auto)
+![Titled](shot.png "Hover text" =400x250) with a title
+```
+
+Sizes are in pixels and become `width` / `height` attributes on the `<img>`.
+Images without a size suffix render exactly as before. Sizing works in the VS
+Code notebook, in the web preview, and in Markdown shown inside outputs (MCQ
+questions, checklists, and feedback).
+
 ## Node Cells
 
 Node cells run with Node-like globals (`process`, `module`, `exports`, `__dirname`, `__filename`) so learners can practice server-side JavaScript syntax and patterns.
