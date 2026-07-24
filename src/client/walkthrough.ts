@@ -32,6 +32,8 @@ export interface WalkthroughStep {
     lines: WalkthroughRange[];
     region?: string;
     highlights: WalkthroughRange[];
+    /** Overrides the language guessed from the file extension for highlighting. */
+    language?: string;
     /** Markdown shown above the code. */
     commentary: string;
     annotations: WalkthroughAnnotation[];
@@ -78,7 +80,7 @@ export interface DecoratedWalkthroughStep {
 const DEFAULT_WATCH_INTERVAL_MS = 2000;
 const MIN_WATCH_INTERVAL_MS = 500;
 
-const KEY_LINE = /^(title|step|file|lines|region|highlight|watch)\s*:\s*(.*)$/i;
+const KEY_LINE = /^(title|step|file|lines|region|highlight|watch|language|lang)\s*:\s*(.*)$/i;
 const ANNOTATION_LINE = /^@\s*(?:(\d+)(?:\s*-\s*(\d+))?|"([^"]+)"|'([^']+)')\s*:\s*(.*)$/;
 const ANNOTATION_CONTINUATION = /^(?:[ ]{2,}|\t)\S/;
 const REGION_START = /#region\b[ \t]*(.*)$/;
@@ -204,6 +206,12 @@ export function parseWalkthroughSource(source: string): ParsedWalkthrough {
                 const { ranges, errors } = parseRangeList(value);
                 ensureStep().highlights.push(...ranges);
                 parsed.errors.push(...errors);
+            } else if (key === 'language' || key === 'lang') {
+                if (!value) {
+                    parsed.errors.push('A `language:` line needs a language name (or `none` to turn highlighting off).');
+                } else {
+                    ensureStep().language = value;
+                }
             }
             continue;
         }

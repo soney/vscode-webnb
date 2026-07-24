@@ -15,8 +15,17 @@ import {
     resolveWalkthroughStep,
     toWalkthroughSnapshotKey,
     type ParsedWalkthrough,
+    type WalkthroughRange,
     type WalkthroughStep
 } from './walkthrough';
+import {
+    detectHighlightLanguage,
+    escapeHtml,
+    highlightToHtml,
+    highlightToLines,
+    isPlainLanguageName,
+    resolveHighlightLanguage
+} from './syntaxHighlight';
 import { Terminal } from '@xterm/xterm';
 import * as Babel from '@babel/standalone';
 import * as React from 'react';
@@ -277,6 +286,21 @@ function isExternalCheckLanguage(language: string): boolean {
 
 // Teach marked the `![alt](url =WIDTHxHEIGHT)` image-size syntax.
 installMarkedImageSize();
+
+// Syntax-highlight fenced code blocks in the markdown this renderer owns —
+// walkthrough commentary and notes, MCQ questions, checklist labels — with the
+// same palette walkthrough snippets use.
+marked.use({
+    renderer: {
+        code({ text, lang, escaped }) {
+            const language = resolveHighlightLanguage(lang);
+            const highlighted = escaped ? undefined : highlightToHtml(text, language);
+            const languageClass = language ? ` language-${language}` : '';
+            const body = highlighted ?? (escaped ? text : escapeHtml(text));
+            return `<pre class="webnb-code-block"><code class="hljs${languageClass}">${body}</code></pre>\n`;
+        }
+    }
+});
 
 function renderMarkdownInline(text: string): string {
     const html = marked.parseInline(text) as string;
@@ -751,13 +775,200 @@ function createWalkthroughMessage(markdown: string, kind: 'info' | 'warning' | '
     return message;
 }
 
+/**
+ * What a walkthrough can do beyond rendering, when the renderer can reach the
+ * extension host. Both are absent in the preview harness and in plain webviews.
+ */
+interface WalkthroughInteractions {
+    openFile?: (path: string, line?: number) => void;
+    /** Mirrors what the reader is hovering into an editor that has the file open. */
+    hover?: WalkthroughHoverBridge;
+}
+
+/**
+ * What the reader is pointing at: the step's shown ranges, plus the one line
+ * under the pointer when they are over the code itself.
+ */
+interface WalkthroughHoverFocus {
+    path: string;
+    ranges: WalkthroughRange[];
+    line?: number;
+}
+
+interface WalkthroughHoverBridge {
+    /** Reports what the pointer is on now; the last report wins. */
+    enter(focus: WalkthroughHoverFocus): void;
+    leave(): void;
+    dispose(): void;
+}
+
+/** How long the pointer rests before the editor follows it. */
+const WALKTHROUGH_HOVER_DELAY_MS = 120;
+
+/**
+ * Debounces hover reports to the extension host. Sweeping the pointer down a
+ * walkthrough should not send one message — and one editor scroll — per line or
+ * per step it crosses on the way.
+ */
+function createWalkthroughHoverBridge(
+    send: (focus?: WalkthroughHoverFocus) => void
+): WalkthroughHoverBridge {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let focus: WalkthroughHoverFocus | undefined;
+    let sent: string | undefined;
+
+    const describe = (candidate?: WalkthroughHoverFocus): string => candidate
+        ? `${candidate.path}|${candidate.ranges.map(range => `${range.start}-${range.end}`).join(',')}|${candidate.line ?? ''}`
+        : '';
+
+    const schedule = (next?: WalkthroughHoverFocus) => {
+        focus = next;
+        if (timer !== undefined) {
+            clearTimeout(timer);
+        }
+        timer = setTimeout(() => {
+            timer = undefined;
+            const key = describe(focus);
+            if (key === sent) {
+                return;
+            }
+            sent = key;
+            send(focus);
+        }, WALKTHROUGH_HOVER_DELAY_MS);
+    };
+
+    return {
+        enter(next) {
+            schedule(next);
+        },
+        leave() {
+            schedule();
+        },
+        dispose() {
+            if (timer !== undefined) {
+                clearTimeout(timer);
+                timer = undefined;
+            }
+            if (sent) {
+                sent = undefined;
+                send();
+            }
+        }
+    };
+}
+
+/** "Open in editor" glyph: an arrow leaving a box, drawn to match codicons. */
+const OPEN_FILE_ICON = '<svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true" focusable="false">'
+    + '<path d="M9.75 2.75h3.5v3.5M13.25 2.75 8.25 7.75" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>'
+    + '<path d="M11.75 9.5v2.75a1 1 0 0 1-1 1h-7a1 1 0 0 1-1-1v-7a1 1 0 0 1 1-1H6.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>'
+    + '</svg>';
+
+/**
+ * The file name shown above a snippet: a link that opens the real file when the
+ * renderer can talk to the extension host, plain text otherwise.
+ */
+function createWalkthroughFileLink(
+    path: string,
+    line: number | undefined,
+    openFile?: (path: string, line?: number) => void
+): HTMLElement {
+    const separator = path.lastIndexOf('/');
+    const label = document.createElement('span');
+    label.classList.add('walkthrough-file-label');
+    if (separator >= 0) {
+        const directory = document.createElement('span');
+        directory.classList.add('walkthrough-file-directory');
+        directory.textContent = path.slice(0, separator + 1);
+        label.appendChild(directory);
+    }
+    const basename = document.createElement('span');
+    basename.classList.add('walkthrough-file-basename');
+    basename.textContent = path.slice(separator + 1);
+    label.appendChild(basename);
+
+    if (!openFile) {
+        const plain = document.createElement('span');
+        plain.classList.add('walkthrough-file-name');
+        plain.appendChild(label);
+        return plain;
+    }
+
+    const link = document.createElement('button');
+    link.type = 'button';
+    link.classList.add('walkthrough-file-name');
+    const description = line === undefined
+        ? `Open ${path} in the editor`
+        : `Open ${path} in the editor, at line ${line}`;
+    link.title = description;
+    link.setAttribute('aria-label', description);
+    link.appendChild(label);
+
+    const icon = document.createElement('span');
+    icon.classList.add('walkthrough-file-open-icon');
+    icon.innerHTML = OPEN_FILE_ICON;
+    link.appendChild(icon);
+
+    link.addEventListener('click', () => openFile(path, line));
+    return link;
+}
+
+/** The line number beside a snippet line; clickable when the file can be opened. */
+function createWalkthroughLineNumber(
+    lineNumber: number,
+    path: string,
+    openFile?: (path: string, line?: number) => void
+): HTMLElement {
+    if (!openFile) {
+        const gutter = document.createElement('span');
+        gutter.classList.add('walkthrough-line-number');
+        gutter.textContent = `${lineNumber}`;
+        return gutter;
+    }
+
+    const gutter = document.createElement('button');
+    gutter.type = 'button';
+    gutter.classList.add('walkthrough-line-number');
+    const description = `Open ${path} in the editor, at line ${lineNumber}`;
+    gutter.title = description;
+    gutter.setAttribute('aria-label', description);
+    gutter.textContent = `${lineNumber}`;
+    // The header link already reaches this file from the keyboard, so the
+    // gutter stays out of the tab order instead of making every shown line a
+    // tab stop.
+    gutter.tabIndex = -1;
+    gutter.addEventListener('click', () => openFile(path, lineNumber));
+    return gutter;
+}
+
+/** Highlighted HTML per line (indexed by `lineNumber - 1`) for a step's file. */
+function highlightWalkthroughFile(
+    path: string,
+    language: string | undefined,
+    content: string,
+    cache: Map<string, string[] | undefined>
+): string[] | undefined {
+    if (!language) {
+        return undefined;
+    }
+
+    // Steps of one walkthrough often revisit the same file, and highlighting it
+    // is by far the most expensive thing this renderer does per step.
+    const key = `${language} ${toWalkthroughSnapshotKey(path)}`;
+    if (!cache.has(key)) {
+        cache.set(key, highlightToLines(content, language));
+    }
+    return cache.get(key);
+}
+
 function renderWalkthroughStep(
     step: WalkthroughStep,
     index: number,
     showStepNumbers: boolean,
     files: Record<string, WorkspaceFileSnapshotEntry>,
-    openFile?: (path: string, line?: number) => void
+    highlightCache: Map<string, string[] | undefined>,
+    interactions: WalkthroughInteractions
 ): HTMLElement {
+    const { openFile, hover } = interactions;
     const stepEl = document.createElement('section');
     stepEl.classList.add('walkthrough-step');
 
@@ -818,7 +1029,18 @@ function renderWalkthroughStep(
         return stepEl;
     }
 
+    const language = step.language
+        ? resolveHighlightLanguage(step.language)
+        : detectHighlightLanguage(step.file);
+    if (step.language && !language && !isPlainLanguageName(step.language)) {
+        stepEl.appendChild(createWalkthroughMessage(
+            `\`language: ${step.language}\` is not a language this notebook can highlight; showing the snippet as plain text.`,
+            'warning'
+        ));
+    }
+
     const decorated = decorateWalkthroughStep(step, resolved.segments);
+    const highlightedLines = highlightWalkthroughFile(step.file, language, snapshot.content, highlightCache);
     const firstShownLine = resolved.segments.find(segment => segment.lines.length > 0)?.lines[0]?.number;
 
     const panel = document.createElement('figure');
@@ -826,23 +1048,11 @@ function renderWalkthroughStep(
 
     const codeHeader = document.createElement('figcaption');
     codeHeader.classList.add('walkthrough-code-header');
-    let fileLabel: HTMLElement;
-    if (openFile) {
-        const openButton = document.createElement('button');
-        openButton.type = 'button';
-        openButton.title = 'Open this file in the editor';
-        openButton.addEventListener('click', () => openFile(step.file!, firstShownLine));
-        fileLabel = openButton;
-    } else {
-        fileLabel = document.createElement('span');
-    }
-    fileLabel.classList.add('walkthrough-file-name');
-    fileLabel.textContent = step.file;
-    codeHeader.appendChild(fileLabel);
+    codeHeader.appendChild(createWalkthroughFileLink(step.file, firstShownLine, openFile));
 
     const rangeParts: string[] = [];
     if (step.region) {
-        rangeParts.push(`region \`${step.region}\``);
+        rangeParts.push(`\`${step.region}\``);
     }
     const segmentSummary = describeWalkthroughSegments(resolved.segments);
     if (segmentSummary) {
@@ -867,6 +1077,10 @@ function renderWalkthroughStep(
     const codeBody = document.createElement('div');
     codeBody.classList.add('walkthrough-code-lines');
     codeBody.style.setProperty('--walkthrough-gutter-width', `${String(maxLineNumber).length}ch`);
+    // The rows live in their own box so it can size to the longest line: row
+    // backgrounds then span the whole scrollable width, not just their own text.
+    const codeRows = document.createElement('div');
+    codeRows.classList.add('walkthrough-code-rows');
 
     resolved.segments.forEach((segment, segmentIndex) => {
         if (segment.lines.length === 0) {
@@ -876,7 +1090,7 @@ function renderWalkthroughStep(
             const ellipsis = document.createElement('div');
             ellipsis.classList.add('walkthrough-ellipsis');
             ellipsis.textContent = '⋯';
-            codeBody.appendChild(ellipsis);
+            codeRows.appendChild(ellipsis);
         }
 
         for (const line of segment.lines) {
@@ -887,26 +1101,57 @@ function renderWalkthroughStep(
                 row.classList.add('highlighted');
             }
 
-            const gutter = document.createElement('span');
-            gutter.classList.add('walkthrough-line-number');
-            gutter.textContent = `${line.number}`;
+            row.dataset.line = `${line.number}`;
+
+            const gutter = createWalkthroughLineNumber(line.number, step.file!, openFile);
 
             const text = document.createElement('span');
             text.classList.add('walkthrough-line-text');
-            text.textContent = line.text;
+            const highlighted = highlightedLines?.[line.number - 1];
+            if (highlighted === undefined) {
+                text.textContent = line.text;
+            } else {
+                text.innerHTML = highlighted;
+            }
 
             row.append(gutter, text);
-            codeBody.appendChild(row);
+            codeRows.appendChild(row);
 
             for (const note of decoration?.notes ?? []) {
                 const noteEl = document.createElement('div');
                 noteEl.classList.add('walkthrough-note');
                 noteEl.innerHTML = renderMarkdownBlock(note);
-                codeBody.appendChild(noteEl);
+                codeRows.appendChild(noteEl);
             }
         }
     });
 
+    if (hover) {
+        // Pointing anywhere in the step marks everything it shows; pointing at a
+        // line narrows that to the line.
+        const focus: WalkthroughHoverFocus = {
+            path: step.file,
+            ranges: resolved.segments
+                .filter(segment => segment.lines.length > 0)
+                .map(segment => ({
+                    start: segment.lines[0].number,
+                    end: segment.lines[segment.lines.length - 1].number
+                }))
+        };
+        stepEl.addEventListener('mouseenter', () => hover.enter(focus));
+        stepEl.addEventListener('mouseleave', () => hover.leave());
+        codeRows.addEventListener('mouseover', event => {
+            const row = (event.target as HTMLElement | null)?.closest?.('.walkthrough-line');
+            const line = row instanceof HTMLElement ? Number(row.dataset.line) : NaN;
+            if (Number.isFinite(line)) {
+                hover.enter({ ...focus, line });
+            }
+        });
+        // Off the code but still in the step: back to the whole region.
+        codeRows.addEventListener('mouseleave', () => hover.enter(focus));
+    }
+
+    codeBody.appendChild(codeRows);
     panel.appendChild(codeBody);
     stepEl.appendChild(panel);
 
@@ -924,7 +1169,7 @@ function renderParsedWalkthrough(
     container: HTMLElement,
     parsed: ParsedWalkthrough,
     files: Record<string, WorkspaceFileSnapshotEntry>,
-    openFile?: (path: string, line?: number) => void
+    interactions: WalkthroughInteractions
 ): void {
     const wrapper = document.createElement('div');
     wrapper.classList.add('walkthrough');
@@ -952,8 +1197,9 @@ function renderParsedWalkthrough(
     }
 
     const showStepNumbers = parsed.steps.length > 1;
+    const highlightCache = new Map<string, string[] | undefined>();
     parsed.steps.forEach((step, index) => {
-        wrapper.appendChild(renderWalkthroughStep(step, index, showStepNumbers, files, openFile));
+        wrapper.appendChild(renderWalkthroughStep(step, index, showStepNumbers, files, highlightCache, interactions));
     });
 
     container.appendChild(wrapper);
@@ -1000,6 +1246,7 @@ export function render({ container, feedback, mime, value, style, addStyle, cons
     let terminalInputBuffer = '';
     let refreshCleanup: void | (() => void);
     let htmlConsoleCleanup: void | (() => void);
+    let walkthroughHoverBridge: WalkthroughHoverBridge | undefined;
     const consoleHistory: ConsoleHistoryEntry[] = [];
 
     function getTerminalCommandOutput(command: string, historySnapshot: string[]): string {
@@ -1824,7 +2071,23 @@ export function render({ container, feedback, mime, value, style, addStyle, cons
                 });
             }
             : undefined;
-        renderParsedWalkthrough(container, parsedWalkthrough, files, openFile);
+        // Hovering a step highlights the lines it shows in any editor that already
+        // has the file open, narrowing to one line over the code; no path clears it.
+        walkthroughHoverBridge = canOpenFiles
+            ? createWalkthroughHoverBridge(focus => {
+                context.postMessage?.({
+                    type: 'webnb.highlightWorkspaceLines',
+                    cellUri: value.cellUri,
+                    path: focus?.path,
+                    ranges: focus?.ranges,
+                    line: focus?.line
+                });
+            })
+            : undefined;
+        renderParsedWalkthrough(container, parsedWalkthrough, files, {
+            openFile,
+            hover: walkthroughHoverBridge
+        });
         if (parsedWalkthrough.watchIntervalMs > 0) {
             // Re-run the cell periodically so the snippets track the real files
             // while a learner edits them (same mechanism external checks use).
@@ -1836,6 +2099,7 @@ export function render({ container, feedback, mime, value, style, addStyle, cons
             addFeedback('MCQ cells need a question plus at least one option.', 'error');
             return () => {
                 refreshCleanup?.();
+                walkthroughHoverBridge?.dispose();
                 reactRoot?.unmount();
                 terminalInstance?.dispose();
             };
@@ -2157,6 +2421,7 @@ export function render({ container, feedback, mime, value, style, addStyle, cons
     return () => {
         htmlConsoleCleanup?.();
         refreshCleanup?.();
+        walkthroughHoverBridge?.dispose();
         reactRoot?.unmount();
         terminalInstance?.dispose();
     };

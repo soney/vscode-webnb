@@ -36,6 +36,21 @@ highlight: 11
 This step uses explicit `lines:` ranges instead of region markers, so the two helpers show with a gap between them.
 @13: If the body is not valid JSON, the promise rejects and the routing layer turns it into an error response.
 @20-23: `sendJson` is the only place that writes to the response, which keeps the content-type header consistent everywhere.
+
+step: One line
+file: demo-src/utils.js
+lines: 25
+A step can be as small as a single line. Both helpers leave through this one export.
 ```
 
-The `file:` paths above are relative to this notebook. Use a `workspace:` prefix (for example `workspace:src/app.js`) to resolve a path from the workspace root instead, and click a file name in the rendered walkthrough to open the real file beside the notebook.
+## Writing One Yourself
+
+Expand the source of the walkthrough cell above to see exactly how it is written. A walkthrough cell is a `{walkthrough}` fenced block whose lines are read three ways:
+
+- **Key lines** describe the step: `step: title` starts one, `file: path` names the file, and `region: name` or `lines: 3-18, 20-23` choose what to show. `highlight: 11` emphasizes lines, `language: python` overrides the highlighting language (`none` turns it off), `title:` before the first step names the whole walkthrough, and `watch: 2s` re-reads the files on an interval.
+- **Annotations** pin notes to code. `@13: note` pins a note under line 13, `@20-23: note` covers a range, and `@"text": note` finds the first shown line containing `text` — which keeps working as the file shifts. Indent a following line by two spaces to continue a note.
+- **Everything else** is markdown commentary for the current step; commentary above the first step introduces the walkthrough.
+
+`file:` paths are relative to this notebook; use a `workspace:` prefix (for example `workspace:src/app.js`) to resolve from the workspace root instead. Region markers (`// #region setup` … `// #endregion` in the target file) survive edits better than line numbers, so prefer them when you can add markers to the file.
+
+Snippets are syntax highlighted using the language of the file they come from, and hovering a line tints it so it is easy to keep your place. If the file is already open in another tab, hovering a step highlights the lines it covers there too, and pointing at one line narrows that to the line. Both the file name above a snippet and each line number beside it open the real file beside the notebook — the line number lands on that exact line.

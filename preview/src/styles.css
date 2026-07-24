@@ -45,6 +45,19 @@
     --vscode-descriptionForeground: #9a9a9a;
     --vscode-notebookStatusRunningIcon-foreground: #4daafc;
     --vscode-progressBar-background: #0e70c0;
+    --vscode-list-hoverBackground: #2a2d2e;
+    --vscode-textLink-foreground: #3794ff;
+    --vscode-textLink-activeForeground: #4daafc;
+    --vscode-editorLineNumber-foreground: #858585;
+    --vscode-editorLineNumber-activeForeground: #c6c6c6;
+    /* Colors the syntax-highlighting palette in style.css reads (Dark+ values). */
+    --vscode-charts-blue: #3794ff;
+    --vscode-charts-orange: #d18616;
+    --vscode-charts-purple: #b180d7;
+    --vscode-charts-yellow: #cca700;
+    --vscode-debugTokenExpression-name: #c586c0;
+    --vscode-debugTokenExpression-number: #b5cea8;
+    --vscode-debugTokenExpression-string: #ce9178;
 }
 
 * {

@@ -423,8 +423,25 @@ div#html-output.webnb-output-empty:not(.webnb-output-mcq):not(.webnb-output-exte
 }
 
 .walkthrough-file-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   font-family: var(--vscode-editor-font-family, monospace);
   color: var(--vscode-editor-foreground);
+}
+
+.walkthrough-file-directory {
+  opacity: 0.7;
+}
+
+.walkthrough-file-basename {
+  font-weight: 600;
+}
+
+.walkthrough-file-open-icon {
+  display: inline-flex;
+  align-items: center;
+  opacity: 0.75;
 }
 
 button.walkthrough-file-name {
@@ -439,7 +456,16 @@ button.walkthrough-file-name {
 }
 
 button.walkthrough-file-name:hover {
+  color: var(--vscode-textLink-activeForeground, var(--vscode-textLink-foreground, var(--vscode-editor-foreground)));
+}
+
+button.walkthrough-file-name:hover .walkthrough-file-label {
   text-decoration: underline;
+}
+
+button.walkthrough-file-name:hover .walkthrough-file-open-icon,
+button.walkthrough-file-name:focus-visible .walkthrough-file-open-icon {
+  opacity: 1;
 }
 
 button.walkthrough-file-name:focus-visible {
@@ -466,6 +492,15 @@ button.walkthrough-file-name:focus-visible {
   font-size: var(--vscode-editor-font-size, 13px);
   line-height: 1.5;
   overflow-x: auto;
+  /* Query container so notes can size to the panel's visible width instead of
+     to the longest line, which may be far wider. */
+  container-type: inline-size;
+}
+
+.walkthrough-code-rows {
+  /* Sized to the longest line, so every row's background covers the full
+     scrollable width instead of stopping where its own code ends. */
+  min-width: max-content;
 }
 
 .walkthrough-line {
@@ -478,6 +513,20 @@ button.walkthrough-file-name:focus-visible {
   background: var(--vscode-editor-rangeHighlightBackground, rgba(127, 127, 127, 0.12));
 }
 
+/* Follow the reader's cursor down the snippet, the way VS Code highlights the
+   row under the pointer, and point at the line number they can click. */
+.walkthrough-line:hover {
+  background: var(--vscode-list-hoverBackground, rgba(127, 127, 127, 0.14));
+}
+
+.walkthrough-line.highlighted:hover {
+  background: color-mix(in srgb, var(--vscode-focusBorder, #007acc) 16%, var(--vscode-editor-background, transparent));
+}
+
+.walkthrough-line:hover .walkthrough-line-number {
+  color: var(--vscode-editorLineNumber-activeForeground, var(--vscode-editor-foreground));
+}
+
 .walkthrough-line-number {
   flex: none;
   width: var(--walkthrough-gutter-width, 3ch);
@@ -485,6 +534,27 @@ button.walkthrough-file-name:focus-visible {
   text-align: right;
   color: var(--vscode-editorLineNumber-foreground, var(--vscode-descriptionForeground, rgba(127, 127, 127, 0.8)));
   user-select: none;
+}
+
+button.walkthrough-line-number {
+  appearance: none;
+  margin: 0;
+  border: none;
+  background: none;
+  box-sizing: content-box;
+  font-family: inherit;
+  font-size: inherit;
+  line-height: inherit;
+  cursor: pointer;
+}
+
+button.walkthrough-line-number:hover {
+  color: var(--vscode-textLink-activeForeground, var(--vscode-textLink-foreground, var(--vscode-editor-foreground)));
+  text-decoration: underline;
+}
+
+.walkthrough-line.highlighted .walkthrough-line-number {
+  color: var(--vscode-editorLineNumber-activeForeground, var(--vscode-editor-foreground));
 }
 
 .walkthrough-line-text {
@@ -524,10 +594,140 @@ button.walkthrough-file-name:focus-visible {
   margin-bottom: 0;
 }
 
+/* Notes sit beside the code rows, which stretch to the longest line, so they
+   are pinned back to the width the reader can actually see. */
+.walkthrough-code-lines .walkthrough-note {
+  /* The visible width, less this note's own indent and right margin. */
+  box-sizing: border-box;
+  max-width: calc(100cqi - var(--walkthrough-gutter-width, 3ch) - 33px);
+}
+
 .walkthrough-note-orphan {
   margin: 0;
   border-left-color: var(--vscode-editorWarning-foreground, var(--vscode-charts-yellow, orange));
   background: color-mix(in srgb, var(--vscode-editorWarning-foreground, orange) 8%, transparent);
+}
+
+/* Syntax highlighting.
+   highlight.js tags tokens with `hljs-*` classes. VS Code does not hand
+   webviews its editor token colors, so the palette below is built from theme
+   colors that do reach us — the debug-token and chart colors, which both track
+   the active theme — with Dark+ values as the fallback for the preview harness. */
+:host {
+  --webnb-hl-comment: color-mix(in srgb, var(--vscode-charts-green, #6a9955) 85%, var(--vscode-editor-foreground, #cccccc));
+  --webnb-hl-keyword: var(--vscode-debugTokenExpression-name, var(--vscode-charts-purple, #c586c0));
+  --webnb-hl-string: var(--vscode-debugTokenExpression-string, var(--vscode-charts-orange, #ce9178));
+  --webnb-hl-number: var(--vscode-debugTokenExpression-number, var(--vscode-charts-green, #b5cea8));
+  --webnb-hl-function: var(--vscode-charts-yellow, #dcdcaa);
+  --webnb-hl-type: var(--vscode-charts-blue, #4ec9b0);
+  --webnb-hl-attribute: color-mix(in srgb, var(--vscode-charts-blue, #3794ff) 65%, var(--vscode-editor-foreground, #cccccc));
+  --webnb-hl-muted: var(--vscode-descriptionForeground, rgba(127, 127, 127, 0.9));
+  --webnb-hl-added: var(--vscode-charts-green, #89d185);
+  --webnb-hl-removed: var(--vscode-errorForeground, #f14c4c);
+}
+
+.hljs-comment,
+.hljs-quote {
+  color: var(--webnb-hl-comment);
+}
+
+.hljs-keyword,
+.hljs-literal,
+.hljs-doctag,
+.hljs-selector-tag,
+.hljs-meta .hljs-keyword {
+  color: var(--webnb-hl-keyword);
+}
+
+.hljs-string,
+.hljs-regexp,
+.hljs-symbol,
+.hljs-char.escape_,
+.hljs-code,
+.hljs-meta .hljs-string {
+  color: var(--webnb-hl-string);
+}
+
+.hljs-number,
+.hljs-bullet {
+  color: var(--webnb-hl-number);
+}
+
+.hljs-title,
+.hljs-title.function_,
+.hljs-section {
+  color: var(--webnb-hl-function);
+}
+
+.hljs-built_in,
+.hljs-type,
+.hljs-title.class_,
+.hljs-class .hljs-title,
+.hljs-name {
+  color: var(--webnb-hl-type);
+}
+
+.hljs-attr,
+.hljs-attribute,
+.hljs-property,
+.hljs-variable,
+.hljs-template-variable,
+.hljs-selector-attr,
+.hljs-selector-class,
+.hljs-selector-id,
+.hljs-selector-pseudo {
+  color: var(--webnb-hl-attribute);
+}
+
+.hljs-meta,
+.hljs-tag,
+.hljs-punctuation,
+.hljs-operator {
+  color: var(--webnb-hl-muted);
+}
+
+.hljs-addition {
+  color: var(--webnb-hl-added);
+}
+
+.hljs-deletion {
+  color: var(--webnb-hl-removed);
+}
+
+.hljs-emphasis {
+  font-style: italic;
+}
+
+.hljs-strong {
+  font-weight: 600;
+}
+
+.hljs-link {
+  color: var(--webnb-hl-attribute);
+  text-decoration: underline;
+}
+
+/* Fenced code blocks inside this renderer's markdown (walkthrough commentary
+   and notes, MCQ questions, checklist labels). */
+.webnb-code-block {
+  margin: 8px 0;
+  padding: 8px 10px;
+  border: 1px solid var(--vscode-notebook-cellBorderColor, var(--vscode-panel-border, rgba(127, 127, 127, 0.3)));
+  border-radius: 6px;
+  background: var(--vscode-textCodeBlock-background, var(--vscode-editorWidget-background, rgba(127, 127, 127, 0.08)));
+  overflow-x: auto;
+}
+
+.webnb-code-block code {
+  display: block;
+  padding: 0;
+  background: none;
+  color: var(--vscode-editor-foreground);
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: var(--vscode-editor-font-size, 13px);
+  line-height: 1.5;
+  white-space: pre;
+  tab-size: 4;
 }
 
 .console {

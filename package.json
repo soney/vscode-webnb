@@ -149,6 +149,7 @@
     "dependencies": {
         "@babel/standalone": "^8.0.3",
         "@xterm/xterm": "^6.0.0",
+        "highlight.js": "^11.11.1",
         "marked": "^18.0.5",
         "react": "^19.2.7",
         "react-dom": "^19.2.7",

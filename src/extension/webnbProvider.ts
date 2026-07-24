@@ -25,7 +25,22 @@ interface WebNbOpenWorkspaceFileMessage {
     line?: number;
 }
 
-type WebNbRendererMessage = WebNbRefreshCellMessage | WebNbUpsertCellAddonMessage | WebNbOpenWorkspaceFileMessage;
+/**
+ * Mirrors what a reader is hovering in a walkthrough: the ranges the step shows,
+ * narrowed to one line when they point at the code. No path clears the highlight.
+ */
+interface WebNbHighlightWorkspaceLinesMessage {
+    type: 'webnb.highlightWorkspaceLines';
+    cellUri: string;
+    path?: string;
+    ranges?: { start: number; end: number }[];
+    line?: number;
+}
+
+type WebNbRendererMessage = WebNbRefreshCellMessage
+    | WebNbUpsertCellAddonMessage
+    | WebNbOpenWorkspaceFileMessage
+    | WebNbHighlightWorkspaceLinesMessage;
 
 interface WorkspaceFileSnapshotEntry {
     path: string;
@@ -437,6 +452,15 @@ function isRendererMessage(message: unknown): message is WebNbRendererMessage {
             && (openCandidate.line === undefined || typeof openCandidate.line === 'number');
     }
 
+    if (candidate.type === 'webnb.highlightWorkspaceLines') {
+        const highlightCandidate = candidate as Partial<WebNbHighlightWorkspaceLinesMessage>;
+        return typeof highlightCandidate.cellUri === 'string'
+            && (highlightCandidate.path === undefined || typeof highlightCandidate.path === 'string')
+            && (highlightCandidate.line === undefined || typeof highlightCandidate.line === 'number')
+            && (highlightCandidate.ranges === undefined || (Array.isArray(highlightCandidate.ranges)
+                && highlightCandidate.ranges.every(range => typeof range?.start === 'number' && typeof range?.end === 'number')));
+    }
+
     return false;
 }
 
@@ -461,6 +485,25 @@ export class WebNotebookKernel implements vscode.Disposable {
     private readonly _autorunDiscoveryRetries = new Map<string, number>();
     private readonly _runOnStartExecutedNotebooks = new Set<string>();
     private readonly _cellExecutionVersions = new Map<string, number>();
+
+    /** The lines a hovered walkthrough step shows, marked in open editors. */
+    private readonly _hoveredRegionDecoration = vscode.window.createTextEditorDecorationType({
+        isWholeLine: true,
+        backgroundColor: new vscode.ThemeColor('editor.rangeHighlightBackground'),
+        overviewRulerColor: new vscode.ThemeColor('editorOverviewRuler.rangeHighlightForeground'),
+        overviewRulerLane: vscode.OverviewRulerLane.Full
+    });
+    /** The single line under the pointer, marked more strongly inside that region. */
+    private readonly _hoveredLineDecoration = vscode.window.createTextEditorDecorationType({
+        isWholeLine: true,
+        backgroundColor: new vscode.ThemeColor('editor.hoverHighlightBackground'),
+        borderWidth: '0 0 0 2px',
+        borderStyle: 'solid',
+        borderColor: new vscode.ThemeColor('focusBorder'),
+        overviewRulerColor: new vscode.ThemeColor('editorOverviewRuler.findMatchForeground'),
+        overviewRulerLane: vscode.OverviewRulerLane.Full
+    });
+    private _hoveredLineKey: string | undefined;
 
     private _ensureControllerAssociation(notebook: vscode.NotebookDocument): void {
         if (notebook.notebookType !== this.notebookType || isRemoteNotebookAlias(notebook.uri)) {
@@ -608,6 +651,11 @@ export class WebNotebookKernel implements vscode.Disposable {
                     return;
                 }
 
+                if (message.type === 'webnb.highlightWorkspaceLines') {
+                    this._highlightWorkspaceLines(cell, message.path, message.ranges, message.line);
+                    return;
+                }
+
                 void this._upsertCellAddon(cell, message.addonType, message.content);
             }),
             vscode.workspace.onDidCloseNotebookDocument(notebook => {
@@ -619,6 +667,8 @@ export class WebNotebookKernel implements vscode.Disposable {
                 for (const cell of notebook.getCells()) {
                     this._cellExecutionVersions.delete(cell.document.uri.toString());
                 }
+                // The renderer cannot send its own clear once the webview is gone.
+                this._clearHoveredLines();
             }),
             vscode.workspace.onDidOpenNotebookDocument(notebook => {
                 this._ensureControllerAssociation(notebook);
@@ -667,6 +717,8 @@ export class WebNotebookKernel implements vscode.Disposable {
     }
 
     public dispose(): void {
+        this._hoveredRegionDecoration.dispose();
+        this._hoveredLineDecoration.dispose();
         this._controller.dispose();
         this._disposables.forEach(d => d.dispose());
     }
@@ -1008,19 +1060,92 @@ export class WebNotebookKernel implements vscode.Disposable {
         await this._replaceCellAddons(cell, nextAddons);
     }
 
-    private async _openWorkspaceFile(cell: vscode.NotebookCell, requestPath: string, line?: number): Promise<void> {
+    /** Resolves a `file:` path written in a cell to a workspace file URI. */
+    private _resolveWorkspaceFileUri(cell: vscode.NotebookCell, requestPath: string): vscode.Uri | undefined {
         const reference = parseRequestedPathReference(requestPath);
         const normalizedPath = normalizeWorkspacePath(reference.path);
         const workspaceFolder = vscode.workspace.getWorkspaceFolder(cell.notebook.uri) ?? vscode.workspace.workspaceFolders?.[0];
         if (!normalizedPath || !workspaceFolder) {
-            return;
+            return undefined;
         }
 
         const notebookRelativeDir = getNotebookRelativeDir(cell, workspaceFolder);
         const workspaceResolvedPath = reference.base === 'workspace' || !notebookRelativeDir
             ? normalizedPath
             : `${notebookRelativeDir}/${normalizedPath}`;
-        const uri = vscode.Uri.joinPath(workspaceFolder.uri, ...workspaceResolvedPath.split('/'));
+        return vscode.Uri.joinPath(workspaceFolder.uri, ...workspaceResolvedPath.split('/'));
+    }
+
+    /** Drops the walkthrough hover highlight wherever it is currently drawn. */
+    private _clearHoveredLines(): void {
+        if (this._hoveredLineKey === undefined) {
+            return;
+        }
+        this._hoveredLineKey = undefined;
+        for (const editor of vscode.window.visibleTextEditors) {
+            editor.setDecorations(this._hoveredRegionDecoration, []);
+            editor.setDecorations(this._hoveredLineDecoration, []);
+        }
+    }
+
+    /**
+     * Highlights what a reader is hovering in a walkthrough — the step's shown
+     * ranges, plus the one line under the pointer — in editors that already show
+     * the file, scrolling to it when it sits outside the viewport. Files that are
+     * not open are left alone: hovering should never open an editor.
+     */
+    private _highlightWorkspaceLines(
+        cell: vscode.NotebookCell,
+        requestPath?: string,
+        ranges?: { start: number; end: number }[],
+        line?: number
+    ): void {
+        const uri = requestPath ? this._resolveWorkspaceFileUri(cell, requestPath) : undefined;
+        const hasTarget = !!uri && ((ranges?.length ?? 0) > 0 || line !== undefined);
+        const key = hasTarget
+            ? `${uri!.toString()}|${(ranges ?? []).map(range => `${range.start}-${range.end}`).join(',')}|${line ?? ''}`
+            : undefined;
+        if (key === this._hoveredLineKey) {
+            return;
+        }
+        if (!key) {
+            this._clearHoveredLines();
+            return;
+        }
+        this._hoveredLineKey = key;
+
+        for (const editor of vscode.window.visibleTextEditors) {
+            if (editor.document.uri.toString() !== uri?.toString()) {
+                editor.setDecorations(this._hoveredRegionDecoration, []);
+                editor.setDecorations(this._hoveredLineDecoration, []);
+                continue;
+            }
+
+            const toRange = (start: number, end: number): vscode.Range => {
+                const lastLine = Math.max(0, editor.document.lineCount - 1);
+                const first = Math.min(Math.max(0, Math.floor(start) - 1), lastLine);
+                const last = Math.min(Math.max(first, Math.floor(end) - 1), lastLine);
+                return new vscode.Range(first, 0, last, editor.document.lineAt(last).range.end.character);
+            };
+
+            const regionRanges = (ranges ?? []).map(range => toRange(range.start, range.end));
+            const lineRanges = line === undefined ? [] : [toRange(line, line)];
+            editor.setDecorations(this._hoveredRegionDecoration, regionRanges);
+            editor.setDecorations(this._hoveredLineDecoration, lineRanges);
+
+            // Follow the narrowest thing being pointed at.
+            const reveal = lineRanges[0] ?? regionRanges[0];
+            if (reveal) {
+                editor.revealRange(reveal, vscode.TextEditorRevealType.InCenterIfOutsideViewport);
+            }
+        }
+    }
+
+    private async _openWorkspaceFile(cell: vscode.NotebookCell, requestPath: string, line?: number): Promise<void> {
+        const uri = this._resolveWorkspaceFileUri(cell, requestPath);
+        if (!uri) {
+            return;
+        }
 
         const selectionLine = Math.max(0, Math.floor(line ?? 1) - 1);
         try {
