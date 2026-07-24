@@ -2,7 +2,7 @@ const ForkTsCheckerWebpackPlugin = require('fork-ts-checker-webpack-plugin');
 const { DefinePlugin } = require('webpack');
 const path = require('path');
 
-const makeConfig = (argv, { entry, out, target, library = 'commonjs' }) => ({
+const makeConfig = (argv, { entry, out, target, library = 'commonjs', chunkFormat = library, outputModule = false }) => ({
     mode: argv.mode,
     devtool: argv.mode === 'production' ? false : 'inline-source-map',
     entry,
@@ -12,7 +12,7 @@ const makeConfig = (argv, { entry, out, target, library = 'commonjs' }) => ({
         filename: path.basename(out),
         publicPath: '',
         libraryTarget: library,
-        chunkFormat: library,
+        chunkFormat,
     },
     externals: {
         vscode: 'commonjs vscode',
@@ -22,7 +22,7 @@ const makeConfig = (argv, { entry, out, target, library = 'commonjs' }) => ({
         fallback: { "util": require.resolve("util/") }
     },
     experiments: {
-        outputModule: true,
+        outputModule,
     },
     module: {
         rules: [
@@ -79,8 +79,8 @@ const makeConfig = (argv, { entry, out, target, library = 'commonjs' }) => ({
 });
 
 module.exports = (env, argv) => [
-    makeConfig(argv, { entry: './src/client/index.ts', out: './out/client/index.js', target: 'web', library: 'module' }),
-    makeConfig(argv, { entry: './src/markdownItPlugin/index.ts', out: './out/markdownItPlugin/index.js', target: 'web', library: 'module' }),
-    makeConfig(argv, { entry: './src/extension/extension.ts', out: './out/extension/extension.js', target: 'node' }),
-    makeConfig(argv, { entry: './src/extension/extension.ts', out: './out/extension/extension.web.js', target: 'webworker' }),
+    makeConfig(argv, { entry: './src/client/index.ts', out: './out/client/index.js', target: 'web', library: 'module', outputModule: true }),
+    makeConfig(argv, { entry: './src/markdownItPlugin/index.ts', out: './out/markdownItPlugin/index.js', target: 'web', library: 'module', outputModule: true }),
+    makeConfig(argv, { entry: './src/extension/extension.ts', out: './out/extension/extension.js', target: 'node', library: 'commonjs2', chunkFormat: 'commonjs' }),
+    makeConfig(argv, { entry: './src/extension/extension.ts', out: './out/extension/extension.web.js', target: 'webworker', library: 'commonjs2', chunkFormat: 'commonjs' }),
 ];
