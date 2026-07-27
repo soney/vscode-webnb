@@ -3,12 +3,16 @@
 import * as vscode from 'vscode';
 import { activate as activateSerializer, deactivate as deactivateSerializer } from './serializer';
 import { activate as activateKernel, deactivate as deactivateKernel } from './webnbProvider';
+import { activate as activateCellStructureLock, deactivate as deactivateCellStructureLock } from './cellStructureLock';
+import { activate as activateReadOnlyMode, deactivate as deactivateReadOnlyMode } from './readOnlyMode';
 
 // This method is called when your extension is activated
 // Your extension is activated the very first time the command is executed
 export function activate(context: vscode.ExtensionContext) {
     activateSerializer(context);
     activateKernel(context);
+    activateCellStructureLock(context);
+    activateReadOnlyMode(context);
     reopenWebnbFiles(); // For some reason, when we open .webnb files programmatically (via a payload openFile command), it doesn't properly open the file
 }
 
@@ -16,6 +20,8 @@ export function activate(context: vscode.ExtensionContext) {
 export function deactivate() {
     deactivateSerializer();
     deactivateKernel();
+    deactivateCellStructureLock();
+    deactivateReadOnlyMode();
 }
 
 

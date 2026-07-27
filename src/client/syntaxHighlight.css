@@ -1,0 +1,105 @@
+/* Syntax highlighting palette.
+   highlight.js tags tokens with `hljs-*` classes. VS Code does not hand
+   webviews its editor token colors, so the palette below is built from theme
+   colors that do reach us — the debug-token and chart colors, which both track
+   the active theme — with Dark+ values as the fallback for the preview harness.
+
+   This lives apart from style.css because it has two homes: the renderer's
+   shadow roots (via style.css's siblings in index.ts / rendererHost.ts) and the
+   preview page's light DOM, where markup cells render their code fences. Hence
+   `:host, :root` — the first matches in a shadow tree, the second in a
+   document. */
+:host,
+:root {
+  --webnb-hl-comment: color-mix(in srgb, var(--vscode-charts-green, #6a9955) 85%, var(--vscode-editor-foreground, #cccccc));
+  --webnb-hl-keyword: var(--vscode-debugTokenExpression-name, var(--vscode-charts-purple, #c586c0));
+  --webnb-hl-string: var(--vscode-debugTokenExpression-string, var(--vscode-charts-orange, #ce9178));
+  --webnb-hl-number: var(--vscode-debugTokenExpression-number, var(--vscode-charts-green, #b5cea8));
+  --webnb-hl-function: var(--vscode-charts-yellow, #dcdcaa);
+  --webnb-hl-type: var(--vscode-charts-blue, #4ec9b0);
+  --webnb-hl-attribute: color-mix(in srgb, var(--vscode-charts-blue, #3794ff) 65%, var(--vscode-editor-foreground, #cccccc));
+  --webnb-hl-muted: var(--vscode-descriptionForeground, rgba(127, 127, 127, 0.9));
+  --webnb-hl-added: var(--vscode-charts-green, #89d185);
+  --webnb-hl-removed: var(--vscode-errorForeground, #f14c4c);
+}
+
+.hljs-comment,
+.hljs-quote {
+  color: var(--webnb-hl-comment);
+}
+
+.hljs-keyword,
+.hljs-literal,
+.hljs-doctag,
+.hljs-selector-tag,
+.hljs-meta .hljs-keyword {
+  color: var(--webnb-hl-keyword);
+}
+
+.hljs-string,
+.hljs-regexp,
+.hljs-symbol,
+.hljs-char.escape_,
+.hljs-code,
+.hljs-meta .hljs-string {
+  color: var(--webnb-hl-string);
+}
+
+.hljs-number,
+.hljs-bullet {
+  color: var(--webnb-hl-number);
+}
+
+.hljs-title,
+.hljs-title.function_,
+.hljs-section {
+  color: var(--webnb-hl-function);
+}
+
+.hljs-built_in,
+.hljs-type,
+.hljs-title.class_,
+.hljs-class .hljs-title,
+.hljs-name {
+  color: var(--webnb-hl-type);
+}
+
+.hljs-attr,
+.hljs-attribute,
+.hljs-property,
+.hljs-variable,
+.hljs-template-variable,
+.hljs-selector-attr,
+.hljs-selector-class,
+.hljs-selector-id,
+.hljs-selector-pseudo {
+  color: var(--webnb-hl-attribute);
+}
+
+.hljs-meta,
+.hljs-tag,
+.hljs-punctuation,
+.hljs-operator {
+  color: var(--webnb-hl-muted);
+}
+
+.hljs-addition {
+  color: var(--webnb-hl-added);
+}
+
+.hljs-deletion {
+  color: var(--webnb-hl-removed);
+}
+
+.hljs-emphasis {
+  font-style: italic;
+}
+
+.hljs-strong {
+  font-weight: 600;
+}
+
+.hljs-link {
+  color: var(--webnb-hl-attribute);
+  text-decoration: underline;
+}

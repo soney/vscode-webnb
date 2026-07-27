@@ -335,6 +335,11 @@ Supported element assertions:
 - `.should('have.class', 'active')`
 - `.should('have.attribute', 'disabled')`
 - `.should('have.css', 'color: blue')`
+- `.should('have.property', 'value', 'Ada')` — the DOM *property*, not the
+  attribute. Use this when the two diverge: typing into an `<input>` changes
+  `.value` but leaves the `value` attribute at whatever the HTML said. The
+  expected value is optional; without it the assertion only checks the property
+  exists.
 
 Supported actions:
 
@@ -392,6 +397,38 @@ const user = { name: 'Ada' };
 ```+test
 wrap(x).should('equal', 1).run('x should be 1', 'x is 1');
 wrap(user).should('equal', { name: 'Ada' }).run('user should match', 'user matches');
+```
+````
+
+`equal` compares deeply, so objects, arrays, `Date`s, `Map`s and `Set`s are
+compared by what they hold rather than by identity. Values of different kinds
+are never equal — `[1, 2]` does not match `{ 0: 1, 1: 2 }` — and `NaN` equals
+`NaN`, so a test can assert a computation produced it.
+
+Two more assertions work on wrapped values:
+
+- `.should('be.an', 'array')` / `.should('be.a', 'string')` — checks the type.
+  Accepts `array`, `object`, `string`, `number`, `boolean`, `null`, `function`,
+  `date`, `regexp`, `map`, `set`, `error`, `promise`, `symbol`, `bigint`, and
+  `element` for a DOM node. `object` means a plain object or class instance:
+  unlike `typeof`, an array and a `null` are not objects here. (`wrap()` cannot
+  carry an `undefined` value, so there is no `be.an('undefined')` — check with
+  `wrap(typeof x).should('equal', 'undefined')` instead.)
+- `.should('have.property', 'name')` — checks the property exists. Pass a third
+  argument to check its value too, compared with the same deep equality as
+  `equal`.
+
+````
+```{javascript}
+const scores = [10, 20];
+const user = { name: 'Ada', tags: ['admin'] };
+```
+```+test
+wrap(scores).should('be.an', 'array').run('scores should be an array', 'scores is an array');
+wrap(scores).should('have.property', 'length', 2).run('expected two scores', 'got two scores');
+wrap(user).should('have.property', 'name', 'Ada').run('name should be Ada', 'name is Ada');
+wrap(user).should('have.property', 'tags', ['admin']).run('tags should match', 'tags match');
+wrap(user).should('not.have.property', 'password').run('do not store a password', 'no password stored');
 ```
 ````
 

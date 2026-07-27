@@ -2,6 +2,7 @@ import { render } from './render';
 import errorOverlay from 'vscode-notebook-error-overlay';
 import type { ActivationFunction } from 'vscode-notebook-renderer';
 import xtermCss from '@xterm/xterm/css/xterm.css';
+import highlightCss from './syntaxHighlight.css';
 import styleCss from './style.css';
 
 // Fix the public path so that any async import()'s work as expected.
@@ -20,7 +21,7 @@ __webpack_public_path__ = new URL(scriptUrl.replace(/[^/]+$/, '') + __webpack_re
 export const activate: ActivationFunction = (context) => {
     const style = document.createElement('style');
     style.setAttribute('type', 'text/css');
-    style.textContent = `${xtermCss}\n${styleCss}`;
+    style.textContent = `${xtermCss}\n${highlightCss}\n${styleCss}`;
 
 
     return {

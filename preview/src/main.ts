@@ -3,11 +3,17 @@
  * virtual-files panel, and the live-reload wiring.
  */
 import './styles.css';
+// The renderer injects this into its shadow roots; markup cells render their
+// code fences out in the page, so the light DOM needs the palette too.
+import '../../src/client/syntaxHighlight.css';
 import { bumpAssetVersion, fetchNotebookList } from './api';
 import { NotebookView } from './notebook';
 import { VirtualFs } from './vfs';
 import { VFilesPanel } from './vfilesPanel';
+import { getChoice, initTheme, onThemeChange, setChoice, type ThemeChoice } from './theme';
 import type { FsChangeEvent, NotebookSummary } from './types';
+
+initTheme();
 
 interface TreeNode {
     name: string;
@@ -93,6 +99,11 @@ class App {
                     <header class="main-header">
                         <div class="crumbs"></div>
                         <div class="header-actions">
+                            <div class="theme-picker" role="group" aria-label="Theme">
+                                <button type="button" data-choice="auto" title="Follow the system theme" aria-label="Auto theme">◐</button>
+                                <button type="button" data-choice="light" title="Always light" aria-label="Light theme">☀</button>
+                                <button type="button" data-choice="dark" title="Always dark" aria-label="Dark theme">☾</button>
+                            </div>
                             <button type="button" class="btn-vfiles">Virtual Files</button>
                             <button type="button" class="btn-reset-cells" hidden>Reset cell edits</button>
                         </div>
@@ -116,6 +127,23 @@ class App {
                 : this.notebooks;
             this.renderTree(filtered, query.length > 0);
         });
+
+        const themeButtons = Array.from(
+            this.root.querySelectorAll<HTMLButtonElement>('.theme-picker button')
+        );
+        // `aria-pressed` marks the choice, not the resolved theme: with `auto`
+        // selected it stays on `auto` whichever way the OS happens to be set.
+        const paintThemePicker = () => {
+            const choice = getChoice();
+            for (const button of themeButtons) {
+                button.setAttribute('aria-pressed', String(button.dataset.choice === choice));
+            }
+        };
+        paintThemePicker();
+        onThemeChange(paintThemePicker);
+        for (const button of themeButtons) {
+            button.addEventListener('click', () => setChoice(button.dataset.choice as ThemeChoice));
+        }
 
         (this.root.querySelector('.btn-vfiles') as HTMLButtonElement).addEventListener('click', () => {
             this.vfilesPanel?.toggle();

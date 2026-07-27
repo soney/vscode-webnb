@@ -10,11 +10,22 @@ import { marked } from 'marked';
 import smartypants from 'smartypants';
 import { assetUrl } from './api';
 import { installMarkedImageSize } from '../../src/client/markedImageSize';
+import { renderCodeBlockHtml } from '../../src/client/syntaxHighlight';
 
 const SMARTYPANTS_ATTR = '2';
 
 // Teach marked the `![alt](url =WIDTHxHEIGHT)` image-size syntax.
 installMarkedImageSize();
+
+// Syntax-highlight fenced code blocks, which VS Code's built-in markdown
+// engine does for markup cells. A non-runnable fence (```js without braces)
+// parses into a markup cell holding just that fence, so this is what colors
+// the read-only code samples a notebook shows.
+//
+// render.ts registers the same renderer on this shared `marked` instance; both
+// are declared because either module may be the one loaded, and re-registering
+// an identical renderer is a no-op in effect.
+marked.use({ renderer: { code: renderCodeBlockHtml } });
 
 export function renderMarkdownBlock(text: string): string {
     const html = marked.parse(text) as string;

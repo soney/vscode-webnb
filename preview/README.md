@@ -15,6 +15,9 @@ with instant feedback.
   virtual exercise files that `{external}` / `+files` checks look for) are kept in
   an in-browser overlay saved to `localStorage`. **They are never written to
   disk.** Disk is read-only; your real files are safe.
+- **Light and dark themes.** The ◐ / ☀ / ☾ picker in the header switches between
+  following the system theme, always-light, and always-dark. The choice is saved
+  to `localStorage`, and `auto` keeps tracking the OS while it is selected.
 
 ## Run it
 
@@ -67,4 +70,6 @@ would open in VS Code). Resolution order:
   order a student sees in VS Code. Feedback/correctness logic is unaffected.
 - Markup cells are rendered with `marked` (the same engine the renderer uses for
   inline markdown), which is very close to but not identical to VS Code's built-in
-  markdown rendering for edge-case extensions.
+  markdown rendering for edge-case extensions. Their code fences are highlighted
+  with highlight.js via `src/client/syntaxHighlight.ts`, so the token colors match
+  the renderer's rather than whatever theme VS Code's markdown engine would apply.

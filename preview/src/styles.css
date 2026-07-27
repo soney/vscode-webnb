@@ -3,29 +3,51 @@
 
    The cell outputs render inside shadow roots that inherit the --vscode-*
    custom properties defined on :root below, so the extension's renderer styles
-   (which reference those variables) resolve to a sensible dark theme.
+   (which reference those variables) resolve to a sensible theme. Custom
+   properties inherit through shadow boundaries, so swapping the values here is
+   all it takes to retheme the renderer too.
+
+   Themes are keyed off `data-theme` on <html>, which theme.ts sets from the
+   stored choice or the OS preference. Every color the shell paints comes from
+   a variable in one of the two theme blocks — a literal color anywhere below
+   would survive the switch and break one of the two themes.
    =========================================================================== */
 
 :root {
+    /* Theme-independent: type and metrics. */
+    --vscode-font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    --vscode-font-size: 14px;
+    --vscode-editor-font-family: "SF Mono", Menlo, Monaco, Consolas, "Courier New", monospace;
+    --vscode-editor-font-size: 13px;
+    --vscode-button-border: transparent;
+}
+
+:root[data-theme="dark"] {
     color-scheme: dark;
 
     /* App palette */
     --bg: #1e1e1e;
     --bg-elevated: #252526;
     --bg-sidebar: #1c1c1c;
+    --bg-code: #1b1b1b;
+    --bg-toolbar: #2a2a2b;
+    --bg-editor: #282c34;
     --border: #333333;
     --fg: #e6e6e6;
     --fg-dim: #9a9a9a;
     --accent: #4daafc;
     --accent-bg: #0e639c;
+    --shadow-panel: rgba(0, 0, 0, 0.4);
+    --warn-bg: #3a2f12;
+    --warn-border: #6a5418;
+    --badge-fg: #e2c08d;
+    --badge-bg: rgba(226, 192, 141, 0.12);
+    --solution-bg: #14211a;
+    --solution-fg: #b6e6c5;
 
     /* VS Code variables consumed by the renderer / style.css */
     --vscode-editor-foreground: #e6e6e6;
     --vscode-editor-background: #252526;
-    --vscode-font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-    --vscode-font-size: 14px;
-    --vscode-editor-font-family: "SF Mono", Menlo, Monaco, Consolas, "Courier New", monospace;
-    --vscode-editor-font-size: 13px;
     --vscode-notebook-cellBorderColor: #3a3a3a;
     --vscode-panel-border: #3a3a3a;
     --vscode-textCodeBlock-background: rgba(127, 127, 127, 0.18);
@@ -33,7 +55,6 @@
     --vscode-button-background: #0e639c;
     --vscode-button-foreground: #ffffff;
     --vscode-button-hoverBackground: #1177bb;
-    --vscode-button-border: transparent;
     --vscode-focusBorder: #4daafc;
     --vscode-list-activeSelectionBackground: #094771;
     --vscode-list-activeSelectionForeground: #ffffff;
@@ -50,7 +71,7 @@
     --vscode-textLink-activeForeground: #4daafc;
     --vscode-editorLineNumber-foreground: #858585;
     --vscode-editorLineNumber-activeForeground: #c6c6c6;
-    /* Colors the syntax-highlighting palette in style.css reads (Dark+ values). */
+    /* Colors syntaxHighlight.css reads for its token palette (Dark+ values). */
     --vscode-charts-blue: #3794ff;
     --vscode-charts-orange: #d18616;
     --vscode-charts-purple: #b180d7;
@@ -58,6 +79,65 @@
     --vscode-debugTokenExpression-name: #c586c0;
     --vscode-debugTokenExpression-number: #b5cea8;
     --vscode-debugTokenExpression-string: #ce9178;
+}
+
+:root[data-theme="light"] {
+    color-scheme: light;
+
+    /* App palette */
+    --bg: #ffffff;
+    --bg-elevated: #f8f8f8;
+    --bg-sidebar: #f3f3f3;
+    --bg-code: #f5f5f5;
+    --bg-toolbar: #eeeeee;
+    --bg-editor: #ffffff;
+    --border: #d4d4d4;
+    --fg: #3b3b3b;
+    --fg-dim: #6a6a6a;
+    --accent: #005fb8;
+    --accent-bg: #005fb8;
+    --shadow-panel: rgba(0, 0, 0, 0.14);
+    --warn-bg: #fdf6dd;
+    --warn-border: #d9bf6b;
+    --badge-fg: #7a5c17;
+    --badge-bg: rgba(190, 150, 60, 0.16);
+    --solution-bg: #eef8f0;
+    --solution-fg: #205c33;
+
+    /* VS Code variables consumed by the renderer / style.css */
+    --vscode-editor-foreground: #3b3b3b;
+    --vscode-editor-background: #ffffff;
+    --vscode-notebook-cellBorderColor: #e5e5e5;
+    --vscode-panel-border: #e5e5e5;
+    --vscode-textCodeBlock-background: rgba(127, 127, 127, 0.12);
+    --vscode-editorWidget-background: #f3f3f3;
+    --vscode-button-background: #005fb8;
+    --vscode-button-foreground: #ffffff;
+    --vscode-button-hoverBackground: #0258a8;
+    --vscode-focusBorder: #005fb8;
+    --vscode-list-activeSelectionBackground: #0060c0;
+    --vscode-list-activeSelectionForeground: #ffffff;
+    --vscode-list-inactiveSelectionBackground: #e4e6f1;
+    --vscode-testing-iconPassed: #007100;
+    --vscode-testing-iconFailed: #a1260d;
+    --vscode-charts-green: #388a34;
+    --vscode-errorForeground: #a1260d;
+    --vscode-descriptionForeground: #717171;
+    --vscode-notebookStatusRunningIcon-foreground: #0069c2;
+    --vscode-progressBar-background: #0e70c0;
+    --vscode-list-hoverBackground: #e8e8e8;
+    --vscode-textLink-foreground: #005fb8;
+    --vscode-textLink-activeForeground: #005fb8;
+    --vscode-editorLineNumber-foreground: #6e7681;
+    --vscode-editorLineNumber-activeForeground: #171184;
+    /* Colors syntaxHighlight.css reads for its token palette (Light+ values). */
+    --vscode-charts-blue: #1a85ff;
+    --vscode-charts-orange: #d18616;
+    --vscode-charts-purple: #652d90;
+    --vscode-charts-yellow: #715100;
+    --vscode-debugTokenExpression-name: #9b46b0;
+    --vscode-debugTokenExpression-number: #098658;
+    --vscode-debugTokenExpression-string: #a31515;
 }
 
 * {
@@ -262,6 +342,40 @@ body {
     border-color: var(--accent);
 }
 
+/* Three glyph buttons welded into one segmented control: auto / light / dark. */
+.theme-picker {
+    display: flex;
+    flex: none;
+}
+
+.header-actions .theme-picker button {
+    width: 30px;
+    padding: 6px 0;
+    line-height: 1;
+    font-size: 13px;
+    border-radius: 0;
+    color: var(--fg-dim);
+}
+
+.header-actions .theme-picker button:first-child {
+    border-radius: 6px 0 0 6px;
+}
+
+.header-actions .theme-picker button:last-child {
+    border-radius: 0 6px 6px 0;
+}
+
+/* Collapse the seam between neighbours so the group reads as one control. */
+.header-actions .theme-picker button + button {
+    border-left: none;
+}
+
+.header-actions .theme-picker button[aria-pressed="true"] {
+    background: var(--vscode-button-background);
+    border-color: var(--vscode-button-background);
+    color: var(--vscode-button-foreground);
+}
+
 .notebook-pane {
     flex: 1;
     min-height: 0;
@@ -303,8 +417,8 @@ body {
     gap: 12px;
     margin-bottom: 16px;
     padding: 10px 14px;
-    background: #3a2f12;
-    border: 1px solid #6a5418;
+    background: var(--warn-bg);
+    border: 1px solid var(--warn-border);
     border-radius: 8px;
     font-size: 13px;
 }
@@ -358,7 +472,7 @@ body {
 }
 
 .cell-markup pre {
-    background: #1b1b1b;
+    background: var(--bg-code);
     border: 1px solid var(--border);
     border-radius: 8px;
     padding: 12px 14px;
@@ -385,7 +499,7 @@ body {
 }
 
 .cell-code.is-edited {
-    border-color: #6a5418;
+    border-color: var(--warn-border);
 }
 
 .cell-toolbar {
@@ -394,7 +508,7 @@ body {
     gap: 10px;
     padding: 7px 10px;
     border-bottom: 1px solid var(--border);
-    background: #2a2a2b;
+    background: var(--bg-toolbar);
 }
 
 .cell-run {
@@ -430,8 +544,8 @@ body {
 
 .cell-edited-badge {
     font-size: 11px;
-    color: #e2c08d;
-    background: rgba(226, 192, 141, 0.12);
+    color: var(--badge-fg);
+    background: var(--badge-bg);
     padding: 2px 8px;
     border-radius: 10px;
 }
@@ -457,8 +571,8 @@ body {
     margin: 0;
     padding: 10px 14px;
     border-bottom: 1px solid var(--border);
-    background: #14211a;
-    color: #b6e6c5;
+    background: var(--solution-bg);
+    color: var(--solution-fg);
     font-family: var(--vscode-editor-font-family);
     font-size: 12px;
     white-space: pre-wrap;
@@ -466,7 +580,7 @@ body {
 }
 
 .cell-editor {
-    background: #282c34;
+    background: var(--bg-editor);
 }
 
 .cell-editor .cm-editor {
@@ -486,8 +600,8 @@ body {
     min-height: 120px;
     border: none;
     padding: 10px 12px;
-    background: #282c34;
-    color: #e6e6e6;
+    background: var(--bg-editor);
+    color: var(--fg);
     font-family: var(--vscode-editor-font-family);
     font-size: 13px;
     resize: vertical;
@@ -519,7 +633,7 @@ body {
     flex-direction: column;
     background: var(--bg-elevated);
     border-left: 1px solid var(--border);
-    box-shadow: -8px 0 30px rgba(0, 0, 0, 0.4);
+    box-shadow: -8px 0 30px var(--shadow-panel);
 }
 
 .vfiles-header {
@@ -645,7 +759,7 @@ body {
     border: none;
     border-top: 1px solid var(--border);
     padding: 10px 12px;
-    background: #1b1b1b;
+    background: var(--bg-code);
     color: var(--fg);
     font-family: var(--vscode-editor-font-family);
     font-size: 12px;

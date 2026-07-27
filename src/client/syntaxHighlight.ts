@@ -144,6 +144,24 @@ export function highlightToHtml(code: string, language: string | undefined): str
 }
 
 /**
+ * Renders one fenced code block, matching marked's `code` renderer signature.
+ *
+ * Both the renderer's own markdown (walkthrough commentary and notes, MCQ
+ * questions, checklist labels) and the preview's markup cells pass this to
+ * `marked.use({ renderer: { code } })`, so a fence looks the same wherever it
+ * is read.
+ */
+export function renderCodeBlockHtml(
+    { text, lang, escaped }: { text: string; lang?: string; escaped?: boolean }
+): string {
+    const language = resolveHighlightLanguage(lang);
+    const highlighted = escaped ? undefined : highlightToHtml(text, language);
+    const languageClass = language ? ` language-${language}` : '';
+    const body = highlighted ?? (escaped ? text : escapeHtml(text));
+    return `<pre class="webnb-code-block"><code class="hljs${languageClass}">${body}</code></pre>\n`;
+}
+
+/**
  * Highlights a whole document and returns one HTML fragment per line, indexed
  * by `lineNumber - 1`. Returns `undefined` when the text should render plain.
  */

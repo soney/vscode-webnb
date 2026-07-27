@@ -8,6 +8,7 @@
  */
 import { render } from '../../src/client/render';
 import styleCss from '../../src/client/style.css?raw';
+import highlightCss from '../../src/client/syntaxHighlight.css?raw';
 import xtermCss from '@xterm/xterm/css/xterm.css?raw';
 import type { RendererMessage, WebnbOutputValue } from './types';
 
@@ -46,7 +47,7 @@ export class CellOutputHost {
         this.shadow = host.attachShadow({ mode: 'open' });
         this.style = document.createElement('style');
         this.style.setAttribute('type', 'text/css');
-        this.style.textContent = `${xtermCss}\n${styleCss}`;
+        this.style.textContent = `${xtermCss}\n${highlightCss}\n${styleCss}`;
         this.shadow.append(this.style);
 
         const root = document.createElement('div');

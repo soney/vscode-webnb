@@ -10,7 +10,8 @@ import { css } from '@codemirror/lang-css';
 import { javascript } from '@codemirror/lang-javascript';
 import { markdown } from '@codemirror/lang-markdown';
 import { oneDark } from '@codemirror/theme-one-dark';
-import type { Extension } from '@codemirror/state';
+import { Compartment, type Extension } from '@codemirror/state';
+import { getTheme, onThemeChange, type Theme } from './theme';
 
 export interface CellEditor {
     dom: HTMLElement;
@@ -49,11 +50,28 @@ function languageExtension(language: string): Extension {
     }
 }
 
+/**
+ * CodeMirror's default look is already light, so the light theme is the absence
+ * of oneDark — plus a transparent background so the cell's own surface shows
+ * through and the editor tracks the app palette.
+ */
+const lightTheme: Extension = EditorView.theme({
+    '&': { backgroundColor: 'transparent' },
+    '.cm-gutters': { backgroundColor: 'transparent' }
+}, { dark: false });
+
+function themeExtension(theme: Theme): Extension {
+    return theme === 'dark' ? oneDark : lightTheme;
+}
+
 function createCodeMirror(options: EditorOptions): CellEditor {
+    // A compartment lets the theme be swapped in place, so toggling light/dark
+    // keeps each editor's cursor, selection, and undo history.
+    const themeCompartment = new Compartment();
     const extensions: Extension[] = [
         basicSetup,
         languageExtension(options.language),
-        oneDark,
+        themeCompartment.of(themeExtension(getTheme())),
         EditorView.lineWrapping,
         keymap.of([
             indentWithTab,
@@ -80,6 +98,10 @@ function createCodeMirror(options: EditorOptions): CellEditor {
         extensions
     });
 
+    const unsubscribe = onThemeChange(theme => {
+        view.dispatch({ effects: themeCompartment.reconfigure(themeExtension(theme)) });
+    });
+
     return {
         dom: view.dom,
         getValue: () => view.state.doc.toString(),
@@ -87,7 +109,10 @@ function createCodeMirror(options: EditorOptions): CellEditor {
             view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: value } });
         },
         focus: () => view.focus(),
-        destroy: () => view.destroy()
+        destroy: () => {
+            unsubscribe();
+            view.destroy();
+        }
     };
 }
 

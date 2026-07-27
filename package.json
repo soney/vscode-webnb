@@ -82,7 +82,20 @@
         ],
         "configuration": {
             "title": "Web-Notebook",
-            "properties": {}
+            "properties": {
+                "webnb.lockCellStructure": {
+                    "type": "boolean",
+                    "default": true,
+                    "scope": "resource",
+                    "description": "Prevent cells from being added, removed, or reordered in Web Notebooks. Cell contents stay editable, so learners can still edit code examples and answer multiple choice questions. Turn this off to author a notebook."
+                },
+                "webnb.readOnly": {
+                    "type": "boolean",
+                    "default": false,
+                    "scope": "window",
+                    "markdownDescription": "Make `.webnb` notebooks fully read-only, for notebooks meant purely for reading. This is much stricter than `#webnb.lockCellStructure#`: cell contents cannot be edited, and nothing the notebook records -- cell outputs, or a saved multiple choice answer -- can be written back to the file. Enabling this adds the `**/*.webnb` pattern to `#files.readonlyInclude#`, which is the VS Code setting that actually marks the files read-only."
+                }
+            }
         }
     },
     "scripts": {

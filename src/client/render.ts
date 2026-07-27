@@ -20,10 +20,9 @@ import {
 } from './walkthrough';
 import {
     detectHighlightLanguage,
-    escapeHtml,
-    highlightToHtml,
     highlightToLines,
     isPlainLanguageName,
+    renderCodeBlockHtml,
     resolveHighlightLanguage
 } from './syntaxHighlight';
 import { Terminal } from '@xterm/xterm';
@@ -290,17 +289,7 @@ installMarkedImageSize();
 // Syntax-highlight fenced code blocks in the markdown this renderer owns —
 // walkthrough commentary and notes, MCQ questions, checklist labels — with the
 // same palette walkthrough snippets use.
-marked.use({
-    renderer: {
-        code({ text, lang, escaped }) {
-            const language = resolveHighlightLanguage(lang);
-            const highlighted = escaped ? undefined : highlightToHtml(text, language);
-            const languageClass = language ? ` language-${language}` : '';
-            const body = highlighted ?? (escaped ? text : escapeHtml(text));
-            return `<pre class="webnb-code-block"><code class="hljs${languageClass}">${body}</code></pre>\n`;
-        }
-    }
-});
+marked.use({ renderer: { code: renderCodeBlockHtml } });
 
 function renderMarkdownInline(text: string): string {
     const html = marked.parseInline(text) as string;
@@ -319,7 +308,13 @@ function renderSmartText(text: string): string {
         .replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;')
         .replace(/'/g, '&#39;');
-    return smartypants(escaped, SMARTYPANTS_ATTR);
+    // Turn markdown-style `code` spans into <code>, which smartypants skips.
+    // Without this, literals a learner is meant to type get typographic
+    // substitutions applied to them: "<!--" would render as "<!-" with an en
+    // dash, and `map(...)` would render with an ellipsis character. Escaping
+    // already ran, so backticks here can only have come from the message.
+    const withCode = escaped.replace(/(`+)([\s\S]+?)\1/g, (_match, _ticks, code) => `<code>${code}</code>`);
+    return smartypants(withCode, SMARTYPANTS_ATTR);
 }
 
 function getRuntimeLanguageKind(language: string): RuntimeLanguageKind | undefined {
@@ -1623,11 +1618,17 @@ export function render({ container, feedback, mime, value, style, addStyle, cons
         // Browsers strip <html> and <body> when setting innerHTML on a div, so
         // these structural elements won't be found in the container. Parse the
         // source with DOMParser instead so document-structure assertions work.
+        // The nodes are flagged `sourceOnly` so negated assertions ignore them:
+        // this fallback only ever runs when the render matched nothing, which is
+        // exactly when `not.exist` should pass, so letting it match would turn a
+        // correct answer into a failure. DOMParser also synthesizes
+        // <html>/<head>/<body> even when the source has none, so source matches
+        // are no evidence at all that the learner wrote the element.
         if (language === 'html' && container.querySelectorAll(selector).length === 0) {
             const doc = new DOMParser().parseFromString(source, 'text/html');
             const nodes = Array.from(doc.querySelectorAll(selector)) as Element[];
             if (nodes.length > 0) {
-                return cy(nodes, onResult);
+                return cy(nodes, onResult, { sourceOnly: true });
             }
         }
         return cy(container, onResult).get(selector);

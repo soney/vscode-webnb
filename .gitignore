@@ -137,3 +137,5 @@ dist
 # Claude Code worktrees
 .claude/worktrees/
 .webnb-test-runner/
+
+._*
