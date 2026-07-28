@@ -17,7 +17,6 @@ export interface CellEditor {
     dom: HTMLElement;
     getValue(): string;
     setValue(value: string): void;
-    focus(): void;
     destroy(): void;
 }
 
@@ -26,7 +25,6 @@ export interface EditorOptions {
     language: string;
     onChange: (value: string) => void;
     onRun?: () => void;
-    readOnly?: boolean;
 }
 
 function languageExtension(language: string): Extension {
@@ -89,10 +87,6 @@ function createCodeMirror(options: EditorOptions): CellEditor {
             }
         })
     ];
-    if (options.readOnly) {
-        extensions.push(EditorView.editable.of(false));
-    }
-
     const view = new EditorView({
         doc: options.doc,
         extensions
@@ -108,7 +102,6 @@ function createCodeMirror(options: EditorOptions): CellEditor {
         setValue: (value: string) => {
             view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: value } });
         },
-        focus: () => view.focus(),
         destroy: () => {
             unsubscribe();
             view.destroy();
@@ -121,7 +114,6 @@ function createTextareaFallback(options: EditorOptions): CellEditor {
     textarea.className = 'cell-editor-fallback';
     textarea.value = options.doc;
     textarea.spellcheck = false;
-    textarea.readOnly = !!options.readOnly;
     textarea.addEventListener('input', () => options.onChange(textarea.value));
     textarea.addEventListener('keydown', event => {
         if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
@@ -133,7 +125,6 @@ function createTextareaFallback(options: EditorOptions): CellEditor {
         dom: textarea,
         getValue: () => textarea.value,
         setValue: (value: string) => { textarea.value = value; },
-        focus: () => textarea.focus(),
         destroy: () => textarea.remove()
     };
 }

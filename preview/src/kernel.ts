@@ -3,35 +3,18 @@
  * as the extension's webnbProvider._doExecuteCell does — except file snapshots
  * come from the dev server (disk, read-only) overlaid with the virtual
  * filesystem (browser edits), instead of vscode.workspace.fs.
+ *
+ * Path discovery and addon handling come from src/shared, the same modules the
+ * extension host uses, so the harness cannot drift from what VS Code snapshots.
  */
 import { fetchDiskSnapshot } from './api';
-import { getRequestedFilePaths } from './fileChecks';
+import { getRequestedFilePaths } from '../../src/shared/filePaths';
+import { getDefaultCaptureAddons, isAutoWidgetLanguage, isExternalCheckLanguage } from '../../src/shared/addons';
 import type { VirtualFs } from './vfs';
 import type { Addon, WebnbOutputValue, WorkspaceFileSnapshotEntry } from './types';
 import type { CellModel } from './notebookModel';
 
-function normalizeAddonType(type: string | undefined): string {
-    return (type || '').trim().toLowerCase().replace(/^\+/, '');
-}
-
-/** Mirror of webnbProvider.getDefaultCaptureAddons: fill an empty `default` addon with the source. */
-function applyDefaultCapture(addons: Addon[], source: string): Addon[] {
-    const idx = addons.findIndex(addon => normalizeAddonType(addon.type) === 'default');
-    if (idx < 0) { return addons; }
-    const existing = addons[idx];
-    if (existing.content.trim().length > 0) { return addons; }
-    const updated = addons.slice();
-    updated[idx] = { ...existing, content: source };
-    return updated;
-}
-
-export function isExternalCheckLanguage(languageId: string): boolean {
-    return languageId === 'external' || languageId === 'checklist';
-}
-
-export function isAutoWidgetLanguage(languageId: string): boolean {
-    return languageId === 'mcq' || languageId === 'walkthrough' || isExternalCheckLanguage(languageId);
-}
+export { isAutoWidgetLanguage, isExternalCheckLanguage } from '../../src/shared/addons';
 
 /** Cells that run on open (autorun/runonstart) or are auto-widgets (mcq/external/checklist). */
 export function shouldAutorun(model: CellModel): boolean {
@@ -71,7 +54,7 @@ export async function buildOutputValue(params: BuildOutputParams): Promise<Webnb
     return {
         source,
         language: languageId,
-        addons: applyDefaultCapture(addons, source),
+        addons: getDefaultCaptureAddons(addons, source).addons,
         files,
         cellUri,
         checkedAt: Date.now()

@@ -1,36 +1,15 @@
 /**
  * Markdown rendering for markup cells.
  *
- * In VS Code, markup cells are rendered by the built-in markdown engine. Here we
- * use the same `marked` + `smartypants` combination the renderer uses for inline
- * markdown, then rewrite relative media URLs (e.g. images) to the dev server's
- * asset endpoint so they load.
+ * In VS Code, markup cells are rendered by the built-in markdown engine. Here
+ * we reuse the renderer's own markdown pipeline, then rewrite relative media
+ * URLs (e.g. images) to the dev server's asset endpoint so they load.
  */
-import { marked } from 'marked';
-import smartypants from 'smartypants';
 import { assetUrl } from './api';
-import { installMarkedImageSize } from '../../src/client/markedImageSize';
-import { renderCodeBlockHtml } from '../../src/client/syntaxHighlight';
 
-const SMARTYPANTS_ATTR = '2';
-
-// Teach marked the `![alt](url =WIDTHxHEIGHT)` image-size syntax.
-installMarkedImageSize();
-
-// Syntax-highlight fenced code blocks, which VS Code's built-in markdown
-// engine does for markup cells. A non-runnable fence (```js without braces)
-// parses into a markup cell holding just that fence, so this is what colors
-// the read-only code samples a notebook shows.
-//
-// render.ts registers the same renderer on this shared `marked` instance; both
-// are declared because either module may be the one loaded, and re-registering
-// an identical renderer is a no-op in effect.
-marked.use({ renderer: { code: renderCodeBlockHtml } });
-
-export function renderMarkdownBlock(text: string): string {
-    const html = marked.parse(text) as string;
-    return smartypants(html, SMARTYPANTS_ATTR);
-}
+// The exact pipeline the renderer uses (image-size syntax, highlighted code
+// fences, smartypants), so markup cells here match VS Code's rendering.
+export { renderMarkdownBlock } from '../../src/client/markdown';
 
 function isAbsoluteUrl(url: string): boolean {
     return (

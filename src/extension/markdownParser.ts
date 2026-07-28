@@ -5,6 +5,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import * as vscode from 'vscode';
+import type { Addon } from '../shared/protocol';
 
 export interface RawNotebookCell {
 	indentation?: string;
@@ -13,12 +14,54 @@ export interface RawNotebookCell {
 	language: string;
 	content: string;
 	kind: vscode.NotebookCellKind;
-	addons?: {type: string, content: string, id?: string}[];
+	addons?: Addon[];
 	id?: string;
 	autorun?: boolean;
 	runonstart?: boolean;
 	rawCode?: string;
 	rawCodeLanguage?: string;
+}
+
+/** The cell metadata this serializer writes and the kernel reads back. */
+export interface WebNbCellMetadata {
+	leadingWhitespace?: string;
+	trailingWhitespace?: string;
+	indentation?: string;
+	addons?: Addon[];
+	id?: string;
+	autorun?: boolean;
+	runonstart?: boolean;
+	inputCollapsed?: boolean;
+}
+
+interface BlockAttributes {
+	id?: string;
+	autorun?: boolean;
+	runonstart?: boolean;
+}
+
+/** Parses the `id=5 autorun runonstart` attributes after a fence's language. */
+function parseBlockAttributes(rest: string): BlockAttributes {
+	const attributes: BlockAttributes = {};
+	const idMatch = rest.match(/id\s*=\s*(\S+)/);
+	if (idMatch) {
+		attributes.id = idMatch[1];
+	}
+	if (/\bautorun\b/.test(rest)) {
+		attributes.autorun = true;
+	}
+	if (/\brunonstart\b/.test(rest)) {
+		attributes.runonstart = true;
+	}
+	return attributes;
+}
+
+/** Renders the attributes back into fence text; the inverse of parseBlockAttributes. */
+function formatBlockAttributes(metadata: WebNbCellMetadata | undefined): string {
+	const idPart = metadata?.id ? ` id=${metadata.id}` : '';
+	const autorunPart = metadata?.autorun ? ' autorun' : '';
+	const runonstartPart = metadata?.runonstart ? ' runonstart' : '';
+	return idPart + autorunPart + runonstartPart;
 }
 
 const LANG_IDS = new Map([
@@ -55,26 +98,11 @@ function parseCodeBlockStart(line: string): ICodeBlockStart | null {
 	const userCodeBlockMatch = line.match(/^([ \t]*)```\{([^\}\s]+)(.*?)\}/);
 	if(userCodeBlockMatch) {
 		const langId = userCodeBlockMatch[2];
-		const rest = userCodeBlockMatch[3] || '';
-		let id, autorun, runonstart;
-		const idMatch = rest.match(/id=(\S+)/);
-		if (idMatch) {
-			id = idMatch[1];
-		}
-		if (/\bautorun\b/.test(rest)) {
-			autorun = true;
-		}
-		if (/\brunonstart\b/.test(rest)) {
-			runonstart = true;
-		}
-
 		return {
 			indentation: userCodeBlockMatch[1],
 			langId,
 			blockType: 'user-code',
-			id,
-			autorun,
-			runonstart
+			...parseBlockAttributes(userCodeBlockMatch[3] || '')
 		};
 	} else {
 		// Match addon references: ```+id=5
@@ -91,19 +119,7 @@ function parseCodeBlockStart(line: string): ICodeBlockStart | null {
 		// Match code blocks with type ```html id=5 or ```html autorun
 		const codeWithIdMatch = line.match(/^([ \t]*)```([^\s+]\S*)(?:\s+(.+))?/);
 		if(codeWithIdMatch && codeWithIdMatch[3]) {
-			const rest = codeWithIdMatch[3];
-			let id, autorun, runonstart;
-			const idMatch = rest.match(/id\s*=\s*(\S+)/);
-			if (idMatch) {
-				id = idMatch[1];
-			}
-			if (/\bautorun\b/.test(rest)) {
-				autorun = true;
-			}
-			if (/\brunonstart\b/.test(rest)) {
-				runonstart = true;
-			}
-			
+			const { id, autorun, runonstart } = parseBlockAttributes(codeWithIdMatch[3]);
 			if (id || autorun || runonstart) {
 				return {
 					indentation: codeWithIdMatch[1],
@@ -317,12 +333,10 @@ export function writeCellsToMarkdown(cells: ReadonlyArray<vscode.NotebookCellDat
 		}
 
 		if (cell.kind === vscode.NotebookCellKind.Code) {
-			const indentation = cell.metadata?.indentation || '';
+			const metadata = cell.metadata as WebNbCellMetadata | undefined;
+			const indentation = metadata?.indentation || '';
 			const languageAbbrev = LANG_ABBREVS.get(cell.languageId) ?? cell.languageId;
-			const idPart = cell.metadata?.id ? ` id=${cell.metadata.id}` : '';
-			const autorunPart = cell.metadata?.autorun ? ' autorun' : '';
-			const runonstartPart = cell.metadata?.runonstart ? ' runonstart' : '';
-			const codePrefix = indentation + '```{' + languageAbbrev + idPart + autorunPart + runonstartPart + '}\n';
+			const codePrefix = indentation + '```{' + languageAbbrev + formatBlockAttributes(metadata) + '}\n';
 			const contents = cell.value.split(/\r?\n/g)
 				.map(line => indentation + line)
 				.join('\n');
@@ -330,14 +344,14 @@ export function writeCellsToMarkdown(cells: ReadonlyArray<vscode.NotebookCellDat
 
 			result += codePrefix + contents + codeSuffix;
 
-			if(cell.metadata?.addons && cell.metadata.addons.length > 0) {
-				for(const addon of cell.metadata.addons) {
+			if(metadata?.addons && metadata.addons.length > 0) {
+				for(const addon of metadata.addons) {
 					if(addon.id) {
 						result += '\n' + indentation + '```+id=' + addon.id + '\n';
 						result += '\n' + indentation + '```';
 					} else {
 						const addonPrefix = '\n' + indentation + '```+' + addon.type + '\n';
-						const addonContents = addon.content.split(/\r?\n/g).map((line:string) => indentation + line).join('\n');
+						const addonContents = addon.content.split(/\r?\n/g).map(line => indentation + line).join('\n');
 						const addonSuffix = '\n' + indentation + '```';
 
 						result += addonPrefix + addonContents + addonSuffix;
@@ -345,14 +359,13 @@ export function writeCellsToMarkdown(cells: ReadonlyArray<vscode.NotebookCellDat
 				}
 			}
 		} else {
-			if((cell.metadata?.id || cell.metadata?.autorun || cell.metadata?.runonstart) && cell.value.startsWith('```')) {
-				const idPart = cell.metadata?.id ? ` id=${cell.metadata.id}` : '';
-				const autorunPart = cell.metadata?.autorun ? ' autorun' : '';
-				const runonstartPart = cell.metadata?.runonstart ? ' runonstart' : '';
+			const metadata = cell.metadata as WebNbCellMetadata | undefined;
+			if((metadata?.id || metadata?.autorun || metadata?.runonstart) && cell.value.startsWith('```')) {
+				const attributes = formatBlockAttributes(metadata);
 				const addedid = cell.value.replace(/```([^\s\n]+)([^\n]*)\n/g,
 												(_match, lang, rest) => {
 													let newRest = rest.replace(/\s+id=\S+/g, '').replace(/\bautorun\b/g, '').replace(/\brunonstart\b/g, '');
-													return `\`\`\`${lang}${idPart}${autorunPart}${runonstartPart}${newRest}\n`;
+													return `\`\`\`${lang}${attributes}${newRest}\n`;
 												});
 				result += addedid;
 			} else {

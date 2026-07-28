@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { errorExecution } from './log';
 
 const CONFIG_SECTION = 'webnb';
 const READ_ONLY_SETTING = 'readOnly';
@@ -85,8 +86,8 @@ export class ReadOnlyMode implements vscode.Disposable {
                 target
             );
         } catch (error) {
-            console.error('[webnb] Could not mirror %s.%s onto %s.%s:',
-                CONFIG_SECTION, READ_ONLY_SETTING, FILES_SECTION, READONLY_INCLUDE_SETTING, error);
+            errorExecution('Could not mirror %s.%s onto %s.%s: %s',
+                CONFIG_SECTION, READ_ONLY_SETTING, FILES_SECTION, READONLY_INCLUDE_SETTING, String(error));
         }
     }
 }

@@ -682,7 +682,9 @@ The widget re-runs every `interval` until all items pass. Use `interval: off` fo
 External check cells support these lines:
 
 - `title: Text shown at the top of the widget`
-- `interval: 2s`, `interval: 500ms`, or `interval: off`
+- `interval: 2s`, `interval: 500ms`, or `interval: off`. Always write an
+  explicit unit: a bare number (`interval: 500`) means **milliseconds** here,
+  but a bare number in a walkthrough's `watch:` means **seconds**.
 - `directory: path | optional label`
 - `file: path | optional label`
 - `path: path | optional label`
@@ -859,7 +861,7 @@ Disjoint ranges render with a `⋯` separator between them. A step with neither 
 - `highlight: ranges` emphasizes lines without attaching a note.
 - `language: name` (or `lang:`) overrides the language used for syntax highlighting (`language: none` shows the snippet as plain text).
 - `title:` before the first step names the whole walkthrough.
-- `watch: 2s` re-runs the cell on an interval so snippets track files a learner is editing (`watch: on` uses 2 seconds; the default is off).
+- `watch: 2s` re-runs the cell on an interval so snippets track files a learner is editing (`watch: on` uses 2 seconds; the default is off). Always write an explicit unit: a bare number (`watch: 30`) means **seconds** here, but a bare number in a checklist's `interval:` means **milliseconds**.
 
 ### Line Annotations
 

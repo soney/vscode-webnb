@@ -10,6 +10,7 @@ import { CellOutputHost, type PreviewRendererContext } from './rendererHost';
 import { renderMarkdownBlock, resolveRelativeAssets } from './markdown';
 import { buildOutputValue, dependsOnFiles, shouldAutorun } from './kernel';
 import { cellKeyFor, type CellModel } from './notebookModel';
+import { normalizeAddonType } from '../../src/shared/addons';
 import type { Addon, RendererMessage } from './types';
 import type { VirtualFs } from './vfs';
 import type { ScratchStore } from './scratch';
@@ -20,10 +21,6 @@ export interface CellContext {
     vfs: VirtualFs;
     scratch: ScratchStore;
     onEditedChange: () => void;
-}
-
-function normalizeAddonType(type: string | undefined): string {
-    return (type || '').trim().toLowerCase().replace(/^\+/, '');
 }
 
 const LANGUAGE_LABELS: Record<string, string> = {

@@ -5,65 +5,15 @@
  * (`vscode.markdown-it-renderer`), not by this extension's `marked` setup. This
  * renderer entrypoint hooks into that instance and teaches it the same
  * `![alt](url =WIDTHxHEIGHT)` size syntax the preview / output renderer supports
- * via `src/client/markedImageSize.ts`. Keep the two implementations in sync.
+ * via `src/client/markedImageSize.ts`; both import the parser from
+ * `src/shared/imageSize.ts`, so there is one implementation to maintain.
  *
  * Either dimension may be omitted to preserve the aspect ratio:
  *   ![alt](img.png =200x100)   ![alt](img.png =200x)   ![alt](img.png =x100)
  *   ![alt](img.png =200)       ![alt](img.png "title" =200x100)
  */
 import type { RendererContext } from 'vscode-notebook-renderer';
-
-// --- size parsing (kept dependency-free; mirrors markedImageSize.ts) ---------
-
-interface SizedImage {
-    alt: string;
-    href: string;
-    title?: string;
-    width?: string;
-    height?: string;
-    length: number;
-}
-
-// The alt branch `[^\\\]]` excludes backslash (as well as `]`) so an escaped
-// char is only ever consumed by the `\\.` branch — without that exclusion a run
-// of backslashes has 2^n ambiguous parses (catastrophic backtracking).
-const SIZED_IMAGE_RE =
-    /^!\[((?:\\.|[^\\\]])*)\]\(\s*(<[^>]*>|[^()\s]+)(?:\s+(?:"([^"]*)"|'([^']*)'))?\s+=(?:(\d*)x(\d*)|(\d+))\s*\)/;
-
-function parseSizedImage(src: string): SizedImage | null {
-    const match = SIZED_IMAGE_RE.exec(src);
-    if (!match) {
-        return null;
-    }
-
-    let href = match[2];
-    if (href.startsWith('<') && href.endsWith('>')) {
-        href = href.slice(1, -1);
-    }
-
-    // Regex capture groups: 1=alt, 2=href, 3="title", 4='title',
-    // 5=W (of WxH), 6=H (of WxH), 7=plain-N shorthand.
-    let width: string | undefined;
-    let height: string | undefined;
-    if (match[7] !== undefined) {
-        width = match[7];
-    } else {
-        width = match[5] || undefined;
-        height = match[6] || undefined;
-    }
-    if (width === undefined && height === undefined) {
-        return null;
-    }
-
-    return {
-        alt: match[1],
-        href,
-        title: match[3] ?? match[4],
-        width,
-        height,
-        length: match[0].length
-    };
-}
+import { parseSizedImage } from '../shared/imageSize';
 
 // --- markdown-it plugin ------------------------------------------------------
 // Minimal structural typing for the markdown-it pieces we touch, so the plugin

@@ -256,8 +256,8 @@ export function parseWalkthroughSource(source: string): ParsedWalkthrough {
 }
 
 /**
- * Builds the snapshot-map key the kernel uses for a `file:` path. Mirrors
- * parseRequestedPathReference in webnbProvider.ts / preview fileChecks.ts.
+ * Builds the snapshot-map key the kernel uses for a `file:` path. Mirrors the
+ * requestPath produced by parseRequestedPathReference in src/shared/filePaths.ts.
  */
 export function toWalkthroughSnapshotKey(path: string): string {
     const trimmed = path.trim().replace(/\\/g, '/');
@@ -266,18 +266,6 @@ export function toWalkthroughSnapshotKey(path: string): string {
         return `workspace:${workspaceScopedMatch[1].trim()}`;
     }
     return trimmed;
-}
-
-/** Extracts the `file:` paths a walkthrough cell references, in source order. */
-export function getWalkthroughFilePaths(source: string): string[] {
-    const paths: string[] = [];
-    for (const rawLine of source.split(/\r?\n/g)) {
-        const match = rawLine.match(/^file\s*:\s*(.+)$/i);
-        if (match && match[1].trim()) {
-            paths.push(match[1].trim());
-        }
-    }
-    return paths;
 }
 
 function stripRegionCommentTail(rest: string): string {

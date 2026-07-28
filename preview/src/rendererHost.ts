@@ -1,18 +1,17 @@
 /**
  * Hosts the extension's notebook renderer for a single cell output.
  *
- * This mirrors index.ts (the extension's renderer entrypoint): it attaches a
- * shadow root, injects the same CSS, builds the #root / #html-output / feedback
- * / console / widget-host structure, and calls the *same* render() function the
- * VS Code notebook uses. That is what makes the preview match VS Code exactly.
+ * This uses the extension's own mountRenderer (the same shadow-root + CSS +
+ * element structure index.ts mounts in VS Code) and calls the *same* render()
+ * function the VS Code notebook uses. That is what makes the preview match
+ * VS Code exactly.
  */
-import { render } from '../../src/client/render';
+import { createCellMount, type CellMount } from '../../src/client/mountRenderer';
+import { WEBNB_OUTPUT_MIME } from '../../src/shared/protocol';
 import styleCss from '../../src/client/style.css?raw';
 import highlightCss from '../../src/client/syntaxHighlight.css?raw';
 import xtermCss from '@xterm/xterm/css/xterm.css?raw';
 import type { RendererMessage, WebnbOutputValue } from './types';
-
-export const WEBNB_MIME = 'x-application/webnb-output';
 
 export interface PreviewRendererContext {
     postMessage(message: RendererMessage): void;
@@ -38,73 +37,20 @@ function wrapErrors(root: HTMLElement, fn: () => void): void {
 }
 
 export class CellOutputHost {
-    private readonly shadow: ShadowRoot;
-    private readonly root: HTMLElement;
-    private readonly style: HTMLStyleElement;
-    private cleanup?: () => void;
+    private readonly mount: CellMount;
 
-    constructor(private readonly host: HTMLElement, private readonly context: PreviewRendererContext) {
-        this.shadow = host.attachShadow({ mode: 'open' });
-        this.style = document.createElement('style');
-        this.style.setAttribute('type', 'text/css');
-        this.style.textContent = `${xtermCss}\n${highlightCss}\n${styleCss}`;
-        this.shadow.append(this.style);
-
-        const root = document.createElement('div');
-        root.id = 'root';
-        this.shadow.append(root);
-        this.root = root;
-    }
-
-    render(value: WebnbOutputValue): void {
-        wrapErrors(this.root, () => {
-            this.cleanup?.();
-            this.cleanup = undefined;
-            this.root.innerHTML = '';
-
-            const feedback = document.createElement('div');
-            feedback.classList.add('feedback');
-            const widgetHost = document.createElement('div');
-            widgetHost.classList.add('widget-host');
-            const consoleElement = document.createElement('div');
-            consoleElement.classList.add('console');
-            const node = document.createElement('div');
-            node.setAttribute('id', 'html-output');
-            this.root.append(node, widgetHost, feedback, consoleElement);
-
-            const addStyle = (css: string) => {
-                const styleEl = document.createElement('style');
-                styleEl.setAttribute('type', 'text/css');
-                styleEl.textContent = css;
-                this.shadow.insertBefore(styleEl, this.root);
-            };
-
-            const next = render({
-                feedback,
-                container: node,
-                mime: WEBNB_MIME,
-                style: this.style,
-                value,
-                context: this.context as never,
-                console: consoleElement,
-                widgetHost,
-                addStyle
-            } as never);
-
-            if (typeof next === 'function') {
-                this.cleanup = next;
-            }
+    constructor(host: HTMLElement, private readonly context: PreviewRendererContext) {
+        this.mount = createCellMount(host, {
+            cssText: `${xtermCss}\n${highlightCss}\n${styleCss}`,
+            wrapRender: wrapErrors
         });
     }
 
-    /** Whether this host currently shows any output. */
-    hasOutput(): boolean {
-        return !!this.root.querySelector('#html-output');
+    render(value: WebnbOutputValue): void {
+        this.mount.render(value, WEBNB_OUTPUT_MIME, this.context);
     }
 
     dispose(): void {
-        this.cleanup?.();
-        this.cleanup = undefined;
-        this.root.innerHTML = '';
+        this.mount.dispose();
     }
 }

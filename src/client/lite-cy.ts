@@ -1,21 +1,19 @@
 import { deepEqual } from './utils';
 /**
- * lite-cypress.ts
- * A minimal, standalone Cypress-like testing utility for the browser, written in TypeScript.
- * No dependencies, ~1KB minified.
+ * A minimal Cypress-like assertion chain — the grading engine behind the
+ * renderer's `assert()` / `assertRule()` / `wrap()` helpers (render.ts binds
+ * the default export as both `cy` and `sy` for notebook test code).
  *
- * Usage:
- *   <script src="lite-cypress.js"></script>
- *   <script>
- *     cy.get('h1')
+ *   cy(container, onResult).get('h1')
  *       .should('exist')
  *       .should('have.text', 'Heading')
- *       .click();
- *   </script>
+ *       .run();
  *
- * Every assertion also accepts a `not.` prefix, which inverts it:
- *   cy.get('h1').should('not.exist');
- *   cy.get('h1').should('not.have.text', 'Heading');
+ * Each chain carries an `onResult` callback that reports pass/fail messages to
+ * the cell's feedback pane, and a `sourceOnly` flag for elements recovered
+ * from raw source text (they cannot prove absence, so negated assertions
+ * ignore them). Every assertion also accepts a `not.` prefix, which inverts
+ * it: `should('not.exist')`, `should('not.have.text', 'Heading')`.
  */
 
 type BaseAssertion = 'exist' | 'have.text' | 'have.class' | 'have.attribute' | 'have.attr' | 'have.css' | 'have.length' | 'have.property' | 'be.a' | 'be.an' | 'equal' | 'contain';
@@ -76,6 +74,16 @@ interface Chainable {
     contains(text: string): Chainable;
     run(failMessage?: string, successMessage?: string): void;
     subject?: any;
+}
+
+/** Parses a `"property: value"` CSS assertion string; both forms share it. */
+function parseCssAssertion(expected?: any): { prop: string; expectedValue: string } | { error: string } {
+    const [prop, ...valParts] = expected?.split(':').map((s: string) => s.trim()) ?? [];
+    const expectedValue = valParts.join(':').trim();
+    if (!prop || expectedValue === undefined) {
+        return { error: `Invalid CSS assertion syntax. Use "property: value"` };
+    }
+    return { prop, expectedValue };
 }
 
 function normalizeCssValue(prop: string, value: string, tagName: string = 'div', parentElement?: Element | null): string {
@@ -230,11 +238,11 @@ function checkElement(el: Element, assertion: BaseAssertion, expected?: any, val
             return { status: 'failed', failMessage: `Expected attribute "${expected}" to be "${value}", got "${el.getAttribute(expected!)}"` };
         }
     } else if (assertion === 'have.css') {
-        const [prop, ...valParts] = expected?.split(':').map((s: string) => s.trim()) ?? [];
-        const expectedValue = valParts.join(':').trim();
-        if (!prop || expectedValue === undefined) {
-            return { error: `Invalid CSS assertion syntax. Use "property: value"` };
+        const parsed = parseCssAssertion(expected);
+        if ('error' in parsed) {
+            return parsed;
         }
+        const { prop, expectedValue } = parsed;
         if (!(el instanceof HTMLElement)) {
             return { status: 'skipped' };
         }
@@ -365,11 +373,11 @@ function evaluateAssertion(elements: Element[], subject: any, assertion: BaseAss
     }
 
     if (subject !== undefined && assertion === 'have.css') {
-        const [prop, ...valParts] = expected?.split(':').map((s: string) => s.trim()) ?? [];
-        const expectedValue = valParts.join(':').trim();
-        if (!prop || expectedValue === undefined) {
-            return { error: `Invalid CSS assertion syntax. Use "property: value"` };
+        const parsed = parseCssAssertion(expected);
+        if ('error' in parsed) {
+            return parsed;
         }
+        const { prop, expectedValue } = parsed;
 
         if (subject instanceof Element) {
             const computed = window.getComputedStyle(subject);
@@ -438,7 +446,7 @@ function createChain(elements: Element[], onResult: (passed: boolean, message: s
         subject,
         sourceOnly,
 
-        should(assertion: Assertion, expected?: string, value?: string): Chainable {
+        should(assertion: Assertion, expected?: any, value?: any): Chainable {
             if (failed) { return this; }
 
             const negated = assertion.startsWith(NOT_PREFIX);
@@ -521,7 +529,7 @@ function createChain(elements: Element[], onResult: (passed: boolean, message: s
 
             const all = Array.from(document.querySelectorAll('*'));
             const found = all.filter(el => el.textContent?.includes(text));
-            return createChain(found);
+            return createChain(found, this.onResult, this.messageTrace, this.failed, this.subject, this.sourceOnly);
         },
 
         run(failMessage?: string, successMessage?: string): void {
@@ -532,16 +540,6 @@ function createChain(elements: Element[], onResult: (passed: boolean, message: s
     };
     return chain;
 }
-
-/*
-declare global {
-    interface Window {
-        cy: {
-            get(selector: string): Chainable;
-        };
-    }
-}
-*/
 
 const sy = Object.assign(
     function (el: string | Element | Element[], onResult?: (passed: boolean, message: string, trace: string[]) => void, options?: { sourceOnly?: boolean }): Chainable {
@@ -589,18 +587,4 @@ const sy = Object.assign(
 }
 );
 
-// ——— support cy.wrap(obj) ———
-// function wrap<T>(subject: T, onResult?: (passed: boolean, message: string, trace: string[]) => void): Chainable {
-//   return createChain([], onResult, [], false, subject);
-// }
-// (sy as any).wrap = wrap;
-// export { wrap };
-
 export default sy;
-
-// export default {
-//     get(selector: string) {
-//         const nodes = Array.from(document.querySelectorAll(selector));
-//         return createChain(nodes);
-//     }
-// };
