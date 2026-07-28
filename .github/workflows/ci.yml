@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build (production, all four targets)
+        run: npm run compile
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Type-check every project
+        run: |
+          npx tsc --noEmit -p src/client
+          npx tsc --noEmit -p src/extension
+          npx tsc --noEmit -p src/markdownItPlugin
+          npx tsc --noEmit -p src/test
+
+      - name: Unit tests
+        run: npm run test:unit
+
+      - name: Install Chromium for browser tests
+        run: npx playwright install --with-deps chromium
+
+      - name: Renderer regression harness
+        run: npm run test:harness
+
+      - name: lite-cy browser specs
+        run: npm run test:browser

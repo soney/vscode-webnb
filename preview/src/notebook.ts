@@ -143,10 +143,6 @@ export class NotebookView {
         }
     }
 
-    hasScratchEdits(): boolean {
-        return this.scratch.editedCellKeys().length > 0;
-    }
-
     async resetAllCells(): Promise<void> {
         const anchor = this.captureScrollAnchor();
         this.scratch.clearAllCode();

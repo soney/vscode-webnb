@@ -1,22 +1,20 @@
-// The module 'vscode' contains the VS Code extensibility API
-// Import the module and reference it with the alias vscode in your code below
 import * as vscode from 'vscode';
+import { logExecution } from './log';
 import { activate as activateSerializer, deactivate as deactivateSerializer } from './serializer';
 import { activate as activateKernel, deactivate as deactivateKernel } from './webnbProvider';
 import { activate as activateCellStructureLock, deactivate as deactivateCellStructureLock } from './cellStructureLock';
 import { activate as activateReadOnlyMode, deactivate as deactivateReadOnlyMode } from './readOnlyMode';
 
-// This method is called when your extension is activated
-// Your extension is activated the very first time the command is executed
 export function activate(context: vscode.ExtensionContext) {
     activateSerializer(context);
     activateKernel(context);
     activateCellStructureLock(context);
     activateReadOnlyMode(context);
-    reopenWebnbFiles(); // For some reason, when we open .webnb files programmatically (via a payload openFile command), it doesn't properly open the file
+    // Files opened programmatically (via a payload openFile command) don't
+    // open as notebooks; watch for one and reopen it with the notebook editor.
+    context.subscriptions.push(reopenWebnbFiles());
 }
 
-// This method is called when your extension is deactivated
 export function deactivate() {
     deactivateSerializer();
     deactivateKernel();
@@ -26,7 +24,7 @@ export function deactivate() {
 
 
 
-function reopenWebnbFiles(): void {
+function reopenWebnbFiles(): vscode.Disposable {
     const WEB_NOTEBOOK_VIEW_TYPE = 'web-notebook';
     const WEBNB_EXTENSION = '.webnb';
     const SWEEP_INTERVAL_MS = 1000;
@@ -72,15 +70,14 @@ function reopenWebnbFiles(): void {
                 return;
             }
 
-            const notebookUri = vscode.Uri.parse(uri.toString());
-
             // stop sweeping since we found the single editor
             clearInterval(sweepInterval);
 
-            console.log(`[webnb] Found a single open .webnb editor for ${uri.toString()}, reopening as notebook`);
+            logExecution(`Found a single open .webnb editor for ${uri.toString()}, reopening as notebook`);
             await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
-            console.log(`--------------------------------------------------------------------------`);
-            await vscode.commands.executeCommand('vscode.openWith', notebookUri, WEB_NOTEBOOK_VIEW_TYPE);
+            await vscode.commands.executeCommand('vscode.openWith', uri, WEB_NOTEBOOK_VIEW_TYPE);
         }
     }, SWEEP_INTERVAL_MS);
+
+    return { dispose: () => clearInterval(sweepInterval) };
 }

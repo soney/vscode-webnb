@@ -1,471 +1,56 @@
-import * as vscode from 'vscode';
-
-interface WebNbAddon {
-    type: string;
-    content: string;
-    id?: string;
-}
-
-interface WebNbRefreshCellMessage {
-    type: 'webnb.refreshCell';
-    cellUri: string;
-}
-
-interface WebNbUpsertCellAddonMessage {
-    type: 'webnb.upsertCellAddon';
-    cellUri: string;
-    addonType: string;
-    content: string;
-}
-
-interface WebNbOpenWorkspaceFileMessage {
-    type: 'webnb.openWorkspaceFile';
-    cellUri: string;
-    path: string;
-    line?: number;
-}
-
 /**
- * Mirrors what a reader is hovering in a walkthrough: the ranges the step shows,
- * narrowed to one line when they point at the code. No path clears the highlight.
+ * The webnb notebook kernel: owns the notebook controller, executes cells
+ * (source + addons + workspace snapshots → one JSON output the renderer
+ * draws), and routes renderer messages. Scheduling, highlighting, and
+ * snapshotting live in their own modules:
+ *  - autorunScheduler.ts   when autorun/widget cells execute
+ *  - walkthroughHighlighter.ts  hover highlights + opening workspace files
+ *  - workspaceSnapshots.ts  path resolution + file snapshots
  */
-interface WebNbHighlightWorkspaceLinesMessage {
-    type: 'webnb.highlightWorkspaceLines';
-    cellUri: string;
-    path?: string;
-    ranges?: { start: number; end: number }[];
-    line?: number;
-}
-
-type WebNbRendererMessage = WebNbRefreshCellMessage
-    | WebNbUpsertCellAddonMessage
-    | WebNbOpenWorkspaceFileMessage
-    | WebNbHighlightWorkspaceLinesMessage;
-
-interface WorkspaceFileSnapshotEntry {
-    path: string;
-    exists: boolean;
-    type?: 'file' | 'directory' | 'symlink' | 'unknown';
-    content?: string;
-    entries?: { name: string; type: string }[];
-    size?: number;
-    error?: string;
-}
-
-type RequestedPathBase = 'notebook' | 'workspace';
-
-interface RequestedPathReference {
-    requestPath: string;
-    path: string;
-    base: RequestedPathBase;
-}
+import * as vscode from 'vscode';
+import {
+    isRendererMessage,
+    WEBNB_OUTPUT_MIME,
+    type Addon
+} from '../shared/protocol';
+import {
+    getDefaultCaptureAddons,
+    isAutoWidgetLanguage,
+    isExternalCheckLanguage,
+    isWalkthroughLanguage,
+    normalizeAddonType,
+    upsertAddon
+} from '../shared/addons';
+import { cellLabel, errorExecution, logChannel, logExecution, rangesLabel, uriLabel, visibleNotebookLabels, warnExecution } from './log';
+import { isRemoteNotebookAlias, notebookUrisMatch } from './notebookUris';
+import { AutorunScheduler } from './autorunScheduler';
+import { WalkthroughHighlighter } from './walkthroughHighlighter';
+import { snapshotWorkspaceFiles } from './workspaceSnapshots';
 
 const SUPPORTED_LANGUAGES = ['javascript', 'node', 'html', 'css', 'js', 'javascriptreact', 'react', 'jsx', 'mcq', 'external', 'checklist', 'walkthrough'];
-const FILE_SNAPSHOT_ADDON_TYPES = new Set(['file', 'files', 'workspace-files']);
-const EXTERNAL_CHECK_LANGUAGES = new Set(['external', 'checklist']);
-const WALKTHROUGH_LANGUAGES = new Set(['walkthrough']);
 const RENDERER_ID = 'practical-javascript-reading-notebook';
-const MAX_FILE_SNAPSHOT_BYTES = 1024 * 1024;
-const MAX_AUTORUN_DISCOVERY_RETRIES = 10;
-const AUTORUN_RETRY_DELAY_MS = 150;
-const AUTORUN_SWEEP_ATTEMPTS = 12;
-const AUTORUN_SWEEP_DELAY_MS = 250;
-const FILE_SCHEME = 'file';
-const VSCODE_REMOTE_SCHEME = 'vscode-remote';
-const WEBNB_EXTENSION = '.webnb';
 // VS Code's public API can mark this controller as preferred, but web notebooks
 // still need the internal command to select it before programmatic autorun.
 const SELECT_KERNEL_COMMAND = '_notebook.selectKernel';
 
-function isRemoteNotebookAlias(uri: vscode.Uri): boolean {
-    return uri.scheme === VSCODE_REMOTE_SCHEME
-        && uri.path.toLowerCase().endsWith(WEBNB_EXTENSION);
-}
-
-function getExecutionNotebookUri(uri: vscode.Uri): vscode.Uri {
-    if (isRemoteNotebookAlias(uri)) {
-        return uri.with({ scheme: FILE_SCHEME, authority: '' });
-    }
-
-    return uri;
-}
-
-function getNotebookKey(uri: vscode.Uri): string {
-    const executionUri = getExecutionNotebookUri(uri);
-    return [
-        executionUri.scheme,
-        executionUri.authority,
-        executionUri.path.replace(/\/+$/, '') || '/',
-        executionUri.query,
-        executionUri.fragment
-    ].join('\n');
-}
-
-function notebookUrisMatch(a: vscode.Uri, b: vscode.Uri): boolean {
-    const normalizedA = getExecutionNotebookUri(a);
-    const normalizedB = getExecutionNotebookUri(b);
-    if (normalizedA.toString() === normalizedB.toString()) {
-        return true;
-    }
-
-    return normalizedA.scheme === normalizedB.scheme
-        && normalizedA.path === normalizedB.path
-        && normalizedA.query === normalizedB.query
-        && normalizedA.fragment === normalizedB.fragment
-        && (!normalizedA.authority || !normalizedB.authority || normalizedA.authority === normalizedB.authority);
-}
-
-function logExecution(message: string, ...args: unknown[]): void {
-    console.log(`[webnb] ${message}`, ...args);
-}
-
-function warnExecution(message: string, ...args: unknown[]): void {
-    console.warn(`[webnb] ${message}`, ...args);
-}
-
-function uriLabel(uri: vscode.Uri | undefined): string {
-    return uri?.toString() ?? '<none>';
-}
-
-function cellLabel(cell: vscode.NotebookCell): string {
-    return `index=${cell.index} kind=${cell.kind} language=${cell.document.languageId} notebook=${uriLabel(cell.notebook.uri)} document=${uriLabel(cell.document.uri)} version=${cell.document.version}`;
-}
-
-function rangesLabel(ranges: vscode.NotebookRange[]): string {
-    return ranges.map(range => `${range.start}:${range.end}`).join(',') || '<none>';
-}
-
-function visibleNotebookLabels(): string {
-    return vscode.window.visibleNotebookEditors
-        .map(editor => uriLabel(editor.notebook.uri))
-        .join(' | ') || '<none>';
-}
-
-function normalizeAddonType(type: string | undefined): string {
-    return (type || '').trim().toLowerCase().replace(/^\+/, '');
-}
-
-function isExternalCheckLanguage(languageId: string): boolean {
-    return EXTERNAL_CHECK_LANGUAGES.has(languageId.toLowerCase());
-}
-
-function isWalkthroughLanguage(languageId: string): boolean {
-    return WALKTHROUGH_LANGUAGES.has(languageId.toLowerCase());
-}
-
-function getRequestedWalkthroughFilePaths(source: string): RequestedPathReference[] {
-    const paths: RequestedPathReference[] = [];
-    for (const rawLine of source.split(/\r?\n/g)) {
-        const match = rawLine.match(/^file\s*:\s*(.+)$/i);
-        if (match && match[1].trim()) {
-            paths.push(parseRequestedPathReference(match[1].trim()));
-        }
-    }
-    return paths;
-}
-
-function parseRequestedPathLine(line: string): string | undefined {
-    let path = line.trim();
-    if (!path || path.startsWith('#')) {
-        return undefined;
-    }
-
-    path = path.replace(/^[-*]\s+/, '').replace(/^\[[ xX]\]\s+/, '').trim();
-    const backtickMatch = path.match(/^`([^`]+)`$/);
-    if (backtickMatch) {
-        path = backtickMatch[1].trim();
-    }
-
-    return path || undefined;
-}
-
-function parseRequestedPathReference(requestPath: string): RequestedPathReference {
-    const trimmed = requestPath.trim().replace(/\\/g, '/');
-    const workspaceScopedMatch = trimmed.match(/^workspace\s*:\s*(.*)$/i);
-    if (workspaceScopedMatch) {
-        const scopedPath = workspaceScopedMatch[1].trim();
-        return {
-            requestPath: `workspace:${scopedPath}`,
-            path: scopedPath,
-            base: 'workspace'
-        };
-    }
-
-    return {
-        requestPath: trimmed,
-        path: trimmed,
-        base: 'notebook'
-    };
-}
-
-function stripChecklistLinePrefix(line: string): string {
-    return line.trim()
-        .replace(/^[-*]\s+/, '')
-        .replace(/^\[[ xX]\]\s+/, '')
-        .trim();
-}
-
-function splitChecklistFields(value: string): string[] {
-    const fields: string[] = [];
-    let current = '';
-
-    for (let index = 0; index < value.length; index++) {
-        const char = value[index];
-        if (char === '\\') {
-            const nextChar = value[index + 1];
-            if (nextChar === '|' || nextChar === '\\') {
-                current += nextChar;
-                index++;
-            } else {
-                current += char;
-            }
-            continue;
-        }
-
-        if (char === '|') {
-            fields.push(current.trim());
-            current = '';
-            continue;
-        }
-
-        current += char;
-    }
-
-    fields.push(current.trim());
-    return fields;
-}
-
-function normalizeChecklistCheckKind(kind: string): string {
-    const normalized = kind.toLowerCase().replace(/[\s_-]+/g, '');
-    if (normalized === 'dir') {
-        return 'directory';
-    }
-    if (normalized === 'exists') {
-        return 'path';
-    }
-    if (normalized === 'include' || normalized === 'includes') {
-        return 'contains';
-    }
-    if (normalized === 'notinclude' || normalized === 'notincludes' || normalized === 'doesnotcontain') {
-        return 'notcontains';
-    }
-    if (normalized === 'match' || normalized === 'regex') {
-        return 'matches';
-    }
-    if (normalized === 'equal') {
-        return 'equals';
-    }
-    if (normalized === 'entry' || normalized === 'containsentry') {
-        return 'hasentry';
-    }
-    return normalized;
-}
-
-function getRequestedChecklistFilePaths(source: string): RequestedPathReference[] {
-    const paths: RequestedPathReference[] = [];
-    for (const rawLine of source.split(/\r?\n/g)) {
-        const line = stripChecklistLinePrefix(rawLine);
-        if (!line || line.startsWith('#')) {
-            continue;
-        }
-
-        const colonIndex = line.indexOf(':');
-        if (colonIndex < 0) {
-            continue;
-        }
-
-        const kind = normalizeChecklistCheckKind(line.slice(0, colonIndex));
-        const fields = splitChecklistFields(line.slice(colonIndex + 1));
-        const path = fields[0];
-        if (
-            path &&
-            ['directory', 'file', 'path', 'contains', 'notcontains', 'matches', 'equals', 'hasentry'].includes(kind)
-        ) {
-            paths.push(parseRequestedPathReference(path));
-        }
-    }
-
-    return paths;
-}
-
-function getRequestedFilePathsFromTestSource(source: string): RequestedPathReference[] {
-    const paths: RequestedPathReference[] = [];
-    const patterns = [
-        /\bcheck\s*\.\s*(?:file|directory|path|exists)\s*\(\s*(['"`])([^'"`]+)\1/g,
-        /\bfile\s*\(\s*(['"`])([^'"`]+)\1/g
-    ];
-
-    for (const pattern of patterns) {
-        for (const match of source.matchAll(pattern)) {
-            if (match[2]) {
-                paths.push(parseRequestedPathReference(match[2]));
-            }
-        }
-    }
-
-    return paths;
-}
-
-function normalizeWorkspacePath(path: string): string | undefined {
-    const normalizedSlashes = path.trim().replace(/\\/g, '/');
-    if (!normalizedSlashes || normalizedSlashes.startsWith('/') || /^[A-Za-z]:\//.test(normalizedSlashes)) {
-        return undefined;
-    }
-
-    const parts = normalizedSlashes
-        .split('/')
-        .filter(part => part && part !== '.');
-
-    if (parts.length === 0 || parts.some(part => part === '..')) {
-        return undefined;
-    }
-
-    return parts.join('/');
-}
-
-function fileTypeToString(type: vscode.FileType): WorkspaceFileSnapshotEntry['type'] {
-    if (type & vscode.FileType.Directory) {
-        return 'directory';
-    }
-    if (type & vscode.FileType.File) {
-        return 'file';
-    }
-    if (type & vscode.FileType.SymbolicLink) {
-        return 'symlink';
-    }
-    return 'unknown';
-}
-
-function entryTypeToString(type: vscode.FileType): string {
-    return fileTypeToString(type) || 'unknown';
-}
-
-function getCellAddons(cell: vscode.NotebookCell): WebNbAddon[] {
+function getCellAddons(cell: vscode.NotebookCell): Addon[] {
     const addons = cell.metadata?.addons;
     return Array.isArray(addons) ? addons : [];
 }
 
-function getRequestedFilePaths(addons: WebNbAddon[], languageId: string, source: string): RequestedPathReference[] {
-    const paths: RequestedPathReference[] = [];
-    for (const addon of addons) {
-        if (!FILE_SNAPSHOT_ADDON_TYPES.has(normalizeAddonType(addon.type))) {
-            continue;
-        }
-
-        for (const line of addon.content.split(/\r?\n/g)) {
-            const path = parseRequestedPathLine(line);
-            if (path) {
-                paths.push(parseRequestedPathReference(path));
-            }
-        }
-    }
-
-    if (isExternalCheckLanguage(languageId)) {
-        paths.push(...getRequestedChecklistFilePaths(source));
-        for (const addon of addons) {
-            if (isScriptAddonType(addon.type)) {
-                paths.push(...getRequestedFilePathsFromTestSource(addon.content));
-            }
-        }
-    }
-
-    if (isWalkthroughLanguage(languageId)) {
-        paths.push(...getRequestedWalkthroughFilePaths(source));
-    }
-
-    const uniquePaths = new Map<string, RequestedPathReference>();
-    for (const pathRef of paths) {
-        uniquePaths.set(pathRef.requestPath, pathRef);
-    }
-    return Array.from(uniquePaths.values());
+/** Cells that render an interactive widget and should run on notebook open. */
+function isAutoWidgetCell(cell: vscode.NotebookCell): boolean {
+    return isAutoWidgetLanguage(cell.document.languageId);
 }
 
-function getNotebookRelativeDir(cell: vscode.NotebookCell, workspaceFolder: vscode.WorkspaceFolder): string {
-    const notebookPath = vscode.workspace.asRelativePath(cell.notebook.uri, false).replace(/\\/g, '/');
-    const slashIndex = notebookPath.lastIndexOf('/');
-    if (slashIndex < 0) {
-        return '';
-    }
-
-    return notebookPath.slice(0, slashIndex);
-}
-
-function isScriptAddonType(type: string | undefined): boolean {
-    const normalizedType = normalizeAddonType(type);
-    return normalizedType === 'test' || normalizedType === 'javascript' || normalizedType === 'js';
-}
-
-function upsertAddon(addons: WebNbAddon[], type: string, content: string): WebNbAddon[] {
-    const normalizedType = normalizeAddonType(type);
-    const existingIndex = addons.findIndex(addon => normalizeAddonType(addon.type) === normalizedType);
-    if (existingIndex >= 0) {
-        const updated = addons.slice();
-        updated[existingIndex] = {
-            ...updated[existingIndex],
-            type,
-            content
-        };
-        return updated;
-    }
-
-    return [...addons, { type, content }];
-}
-
-function getDefaultCaptureAddons(addons: WebNbAddon[], source: string): { addons: WebNbAddon[]; changed: boolean } {
-    const defaultIndex = addons.findIndex(addon => normalizeAddonType(addon.type) === 'default');
-    if (defaultIndex < 0) {
-        return { addons, changed: false };
-    }
-
-    const existing = addons[defaultIndex];
-    if (existing.content.trim().length > 0) {
-        return { addons, changed: false };
-    }
-
-    const updated = addons.slice();
-    updated[defaultIndex] = {
-        ...existing,
-        content: source
-    };
-
-    return { addons: updated, changed: true };
-}
-
-function isRendererMessage(message: unknown): message is WebNbRendererMessage {
-    if (!message || typeof message !== 'object') {
-        return false;
-    }
-
-    const candidate = message as Partial<WebNbRendererMessage>;
-    if (candidate.type === 'webnb.refreshCell') {
-        return typeof candidate.cellUri === 'string';
-    }
-
-    if (candidate.type === 'webnb.upsertCellAddon') {
-        return typeof candidate.cellUri === 'string' && typeof candidate.addonType === 'string' && typeof candidate.content === 'string';
-    }
-
-    if (candidate.type === 'webnb.openWorkspaceFile') {
-        const openCandidate = candidate as Partial<WebNbOpenWorkspaceFileMessage>;
-        return typeof openCandidate.cellUri === 'string'
-            && typeof openCandidate.path === 'string'
-            && (openCandidate.line === undefined || typeof openCandidate.line === 'number');
-    }
-
-    if (candidate.type === 'webnb.highlightWorkspaceLines') {
-        const highlightCandidate = candidate as Partial<WebNbHighlightWorkspaceLinesMessage>;
-        return typeof highlightCandidate.cellUri === 'string'
-            && (highlightCandidate.path === undefined || typeof highlightCandidate.path === 'string')
-            && (highlightCandidate.line === undefined || typeof highlightCandidate.line === 'number')
-            && (highlightCandidate.ranges === undefined || (Array.isArray(highlightCandidate.ranges)
-                && highlightCandidate.ranges.every(range => typeof range?.start === 'number' && typeof range?.end === 'number')));
-    }
-
-    return false;
+/** Cells whose renderer re-runs them (checklist polling, walkthrough watch). */
+function isAutoRefreshingCell(cell: vscode.NotebookCell): boolean {
+    return isExternalCheckLanguage(cell.document.languageId)
+        || isWalkthroughLanguage(cell.document.languageId);
 }
 
 export function activate(context: vscode.ExtensionContext) {
-    context.subscriptions.push(new WebNotebookKernel(context.extension.id));
+    context.subscriptions.push(logChannel, new WebNotebookKernel(context.extension.id));
 }
 
 export function deactivate() { }
@@ -475,35 +60,12 @@ export class WebNotebookKernel implements vscode.Disposable {
     public readonly notebookType = 'web-notebook';
     public readonly label = 'Web Notebook';
 
-
     private readonly _controller: vscode.NotebookController;
     private readonly _disposables: vscode.Disposable[] = [];
     private readonly _extensionId: string;
-
-    private readonly _autorunExecutedNotebookSignatures = new Map<string, string>();
-    private readonly _autorunPendingNotebooks = new Set<string>();
-    private readonly _autorunDiscoveryRetries = new Map<string, number>();
-    private readonly _runOnStartExecutedNotebooks = new Set<string>();
     private readonly _cellExecutionVersions = new Map<string, number>();
-
-    /** The lines a hovered walkthrough step shows, marked in open editors. */
-    private readonly _hoveredRegionDecoration = vscode.window.createTextEditorDecorationType({
-        isWholeLine: true,
-        backgroundColor: new vscode.ThemeColor('editor.rangeHighlightBackground'),
-        overviewRulerColor: new vscode.ThemeColor('editorOverviewRuler.rangeHighlightForeground'),
-        overviewRulerLane: vscode.OverviewRulerLane.Full
-    });
-    /** The single line under the pointer, marked more strongly inside that region. */
-    private readonly _hoveredLineDecoration = vscode.window.createTextEditorDecorationType({
-        isWholeLine: true,
-        backgroundColor: new vscode.ThemeColor('editor.hoverHighlightBackground'),
-        borderWidth: '0 0 0 2px',
-        borderStyle: 'solid',
-        borderColor: new vscode.ThemeColor('focusBorder'),
-        overviewRulerColor: new vscode.ThemeColor('editorOverviewRuler.findMatchForeground'),
-        overviewRulerLane: vscode.OverviewRulerLane.Full
-    });
-    private _hoveredLineKey: string | undefined;
+    private readonly _scheduler: AutorunScheduler;
+    private readonly _highlighter = new WalkthroughHighlighter();
 
     private _ensureControllerAssociation(notebook: vscode.NotebookDocument): void {
         if (notebook.notebookType !== this.notebookType || isRemoteNotebookAlias(notebook.uri)) {
@@ -525,104 +87,23 @@ export class WebNotebookKernel implements vscode.Disposable {
         this._controller.description = 'Web Notebook';
         this._controller.supportsExecutionOrder = true;
         this._controller.executeHandler = this.executeHandler.bind(this);
+        this._scheduler = new AutorunScheduler({
+            notebookType: this.notebookType,
+            ensureControllerAssociation: notebook => this._ensureControllerAssociation(notebook),
+            isAutoWidgetCell,
+            executeRanges: (notebook, ranges) => this._executeNotebookRanges(notebook, ranges)
+        });
         const rendererMessaging = vscode.notebooks.createRendererMessaging(RENDERER_ID);
-        const runAutorunCells = (editor: vscode.NotebookEditor) => {
-            const { notebook } = editor;
-            if (notebook.notebookType !== this.notebookType) {
-                return;
-            }
-            if (isRemoteNotebookAlias(notebook.uri)) {
-                warnExecution('autorun skipped remote notebook alias notebook=%s', uriLabel(notebook.uri));
-                return;
-            }
-
-            this._ensureControllerAssociation(notebook);
-
-            const notebookKey = getNotebookKey(notebook.uri);
-            if (this._autorunPendingNotebooks.has(notebookKey)) {
-                return;
-            }
-
-            const cellsToRun = this._getAutorunCells(notebook);
-            if (cellsToRun.length === 0) {
-                const nextRetry = (this._autorunDiscoveryRetries.get(notebookKey) ?? 0) + 1;
-                if (nextRetry <= MAX_AUTORUN_DISCOVERY_RETRIES) {
-                    this._autorunDiscoveryRetries.set(notebookKey, nextRetry);
-                    setTimeout(() => {
-                        const retryEditor = vscode.window.visibleNotebookEditors
-                            .find(candidate => !isRemoteNotebookAlias(candidate.notebook.uri) && notebookUrisMatch(candidate.notebook.uri, notebook.uri));
-                        if (retryEditor) {
-                            runAutorunCells(retryEditor);
-                        }
-                    }, AUTORUN_RETRY_DELAY_MS);
-                }
-                return;
-            }
-
-            const autorunSignature = this._getAutorunSignature(cellsToRun);
-            if (this._autorunExecutedNotebookSignatures.get(notebookKey) === autorunSignature) {
-                return;
-            }
-
-            this._autorunDiscoveryRetries.delete(notebookKey);
-
-            this._autorunPendingNotebooks.add(notebookKey);
-            setTimeout(() => {
-                void this._executeAutorunCells(editor, this._getCellRanges(cellsToRun), autorunSignature);
-            }, 0);
-        };
-        const collapseWidgetCells = (editor: vscode.NotebookEditor) => {
-            if (editor.notebook.notebookType !== this.notebookType || isRemoteNotebookAlias(editor.notebook.uri)) {
-                return;
-            }
-
-            const widgetIndexes = editor.notebook.getCells()
-                .map((cell, index) => this._isAutoWidgetCell(cell) ? index : -1)
-                .filter(index => index >= 0);
-
-            if (widgetIndexes.length === 0) {
-                return;
-            }
-
-            setTimeout(() => {
-                void this._collapseCellInputs(editor, widgetIndexes);
-            }, 700);
-        };
 
         const initializeEditor = (editor: vscode.NotebookEditor) => {
-            collapseWidgetCells(editor);
-            runAutorunCells(editor);
-        };
-
-        const scheduleAutorunSweep = (attemptsLeft: number = AUTORUN_SWEEP_ATTEMPTS) => {
-            if (attemptsLeft <= 0) {
-                return;
-            }
-
-            setTimeout(() => {
-                for (const visibleEditor of vscode.window.visibleNotebookEditors) {
-                    runAutorunCells(visibleEditor);
-                }
-                scheduleAutorunSweep(attemptsLeft - 1);
-            }, AUTORUN_SWEEP_DELAY_MS);
-        };
-
-        const runAutorunForNotebook = (notebook: vscode.NotebookDocument) => {
-            if (notebook.notebookType !== this.notebookType) {
-                return;
-            }
-
-            const matchingEditors = vscode.window.visibleNotebookEditors
-                .filter(editor => !isRemoteNotebookAlias(editor.notebook.uri) && notebookUrisMatch(editor.notebook.uri, notebook.uri));
-            for (const editor of matchingEditors) {
-                runAutorunCells(editor);
-            }
+            this._collapseWidgetCells(editor);
+            this._scheduler.runForEditor(editor);
         };
 
         this._disposables.push(
             this._controller.onDidChangeSelectedNotebooks(({ notebook, selected }) => {
                 if (selected) {
-                    runAutorunForNotebook(notebook);
+                    this._scheduler.runForNotebook(notebook);
                 }
             }),
             rendererMessaging.onDidReceiveMessage(({ editor, message }) => {
@@ -637,7 +118,7 @@ export class WebNotebookKernel implements vscode.Disposable {
                 }
 
                 if (message.type === 'webnb.refreshCell') {
-                    if (!this._isAutoRefreshingCell(cell)) {
+                    if (!isAutoRefreshingCell(cell)) {
                         return;
                     }
                     void this._executeNotebookRanges(editor.notebook, [
@@ -647,33 +128,29 @@ export class WebNotebookKernel implements vscode.Disposable {
                 }
 
                 if (message.type === 'webnb.openWorkspaceFile') {
-                    void this._openWorkspaceFile(cell, message.path, message.line);
+                    void this._highlighter.open(cell, message.path, message.line);
                     return;
                 }
 
                 if (message.type === 'webnb.highlightWorkspaceLines') {
-                    this._highlightWorkspaceLines(cell, message.path, message.ranges, message.line);
+                    this._highlighter.highlight(cell, message.path, message.ranges, message.line);
                     return;
                 }
 
                 void this._upsertCellAddon(cell, message.addonType, message.content);
             }),
             vscode.workspace.onDidCloseNotebookDocument(notebook => {
-                const notebookKey = getNotebookKey(notebook.uri);
-                this._autorunExecutedNotebookSignatures.delete(notebookKey);
-                this._autorunPendingNotebooks.delete(notebookKey);
-                this._autorunDiscoveryRetries.delete(notebookKey);
-                this._runOnStartExecutedNotebooks.delete(notebookKey);
+                this._scheduler.forgetNotebook(notebook.uri);
                 for (const cell of notebook.getCells()) {
                     this._cellExecutionVersions.delete(cell.document.uri.toString());
                 }
                 // The renderer cannot send its own clear once the webview is gone.
-                this._clearHoveredLines();
+                this._highlighter.clear();
             }),
             vscode.workspace.onDidOpenNotebookDocument(notebook => {
                 this._ensureControllerAssociation(notebook);
-                runAutorunForNotebook(notebook);
-                scheduleAutorunSweep();
+                this._scheduler.runForNotebook(notebook);
+                this._scheduler.scheduleSweep();
             }),
             vscode.workspace.onDidChangeNotebookDocument(event => {
                 if (event.notebook.notebookType !== this.notebookType) {
@@ -686,8 +163,8 @@ export class WebNotebookKernel implements vscode.Disposable {
                     return;
                 }
 
-                runAutorunForNotebook(event.notebook);
-                scheduleAutorunSweep(4);
+                this._scheduler.runForNotebook(event.notebook);
+                this._scheduler.scheduleSweep(4);
             }),
             vscode.window.onDidChangeActiveNotebookEditor(editor => {
                 if (!editor) {
@@ -711,14 +188,13 @@ export class WebNotebookKernel implements vscode.Disposable {
         if (vscode.window.activeNotebookEditor) {
             this._ensureControllerAssociation(vscode.window.activeNotebookEditor.notebook);
             void this._selectControllerForEditor(vscode.window.activeNotebookEditor);
-            runAutorunCells(vscode.window.activeNotebookEditor);
+            this._scheduler.runForEditor(vscode.window.activeNotebookEditor);
         }
-        scheduleAutorunSweep();
+        this._scheduler.scheduleSweep();
     }
 
     public dispose(): void {
-        this._hoveredRegionDecoration.dispose();
-        this._hoveredLineDecoration.dispose();
+        this._highlighter.dispose();
         this._controller.dispose();
         this._disposables.forEach(d => d.dispose());
     }
@@ -748,60 +224,6 @@ export class WebNotebookKernel implements vscode.Disposable {
         }
 
         logExecution('executeHandler end notebook=%s', uriLabel(_notebook.uri));
-    }
-
-    private _getAutorunCells(notebook: vscode.NotebookDocument): vscode.NotebookCell[] {
-        const notebookKey = getNotebookKey(notebook.uri);
-        const runOnStartAlreadyDone = this._runOnStartExecutedNotebooks.has(notebookKey);
-        return notebook.getCells()
-            .filter(cell =>
-                cell.kind === vscode.NotebookCellKind.Code &&
-                    (
-                        cell.metadata?.autorun ||
-                        this._isAutoWidgetCell(cell) ||
-                        (cell.metadata?.runonstart && !runOnStartAlreadyDone)
-                    )
-            );
-    }
-
-    private _getAutorunSignature(cells: vscode.NotebookCell[]): string {
-        return cells
-            .map(cell => `${cell.document.uri.toString()}@${cell.document.version}`)
-            .join('\n');
-    }
-
-    private _getCellRanges(cells: vscode.NotebookCell[]): vscode.NotebookRange[] {
-        return cells
-            .filter(cell => cell.index >= 0)
-            .map(cell => new vscode.NotebookRange(cell.index, cell.index + 1));
-    }
-
-    private _isAutoWidgetCell(cell: vscode.NotebookCell): boolean {
-        return cell.document.languageId === 'mcq' || this._isAutoRefreshingCell(cell);
-    }
-
-    private _isAutoRefreshingCell(cell: vscode.NotebookCell): boolean {
-        return isExternalCheckLanguage(cell.document.languageId)
-            || isWalkthroughLanguage(cell.document.languageId);
-    }
-
-    private async _executeAutorunCells(editor: vscode.NotebookEditor, ranges: vscode.NotebookRange[], autorunSignature: string): Promise<void> {
-        const notebookKey = getNotebookKey(editor.notebook.uri);
-        logExecution('autorun start notebook=%s ranges=%s signature=%s',
-            uriLabel(editor.notebook.uri),
-            rangesLabel(ranges),
-            autorunSignature);
-        try {
-            const executed = await this._executeNotebookRanges(editor.notebook, ranges);
-            if (executed) {
-                this._runOnStartExecutedNotebooks.add(notebookKey);
-                this._autorunExecutedNotebookSignatures.set(notebookKey, this._getAutorunSignature(this._getAutorunCells(editor.notebook)));
-                this._autorunDiscoveryRetries.delete(notebookKey);
-            }
-            logExecution('autorun end notebook=%s executed=%s', notebookKey, String(executed));
-        } finally {
-            this._autorunPendingNotebooks.delete(notebookKey);
-        }
     }
 
     private async _executeNotebookRanges(notebook: vscode.NotebookDocument, ranges: vscode.NotebookRange[]): Promise<boolean> {
@@ -856,7 +278,7 @@ export class WebNotebookKernel implements vscode.Disposable {
                 String(executed));
             return executed;
         } catch (error) {
-            console.error('[webnb] Could not execute notebook cells for %s:', notebook.uri.toString(), error);
+            errorExecution('Could not execute notebook cells for %s: %s', notebook.uri.toString(), String(error));
             return false;
         }
     }
@@ -934,7 +356,7 @@ export class WebNotebookKernel implements vscode.Disposable {
                 String(selected));
             return selected !== false;
         } catch (error) {
-            console.error('[webnb] Could not select notebook controller for %s:', notebook.uri.toString(), error);
+            errorExecution('Could not select notebook controller for %s: %s', notebook.uri.toString(), String(error));
             return false;
         }
     }
@@ -959,6 +381,25 @@ export class WebNotebookKernel implements vscode.Disposable {
         }
 
         return notebook.cellAt(cell.index);
+    }
+
+    /** Hides widget cells' source editors so learners see just the widget. */
+    private _collapseWidgetCells(editor: vscode.NotebookEditor): void {
+        if (editor.notebook.notebookType !== this.notebookType || isRemoteNotebookAlias(editor.notebook.uri)) {
+            return;
+        }
+
+        const widgetIndexes = editor.notebook.getCells()
+            .map((cell, index) => isAutoWidgetCell(cell) ? index : -1)
+            .filter(index => index >= 0);
+
+        if (widgetIndexes.length === 0) {
+            return;
+        }
+
+        setTimeout(() => {
+            void this._collapseCellInputs(editor, widgetIndexes);
+        }, 700);
     }
 
     private async _collapseCellInputs(editor: vscode.NotebookEditor, indexes: number[]): Promise<void> {
@@ -993,7 +434,7 @@ export class WebNotebookKernel implements vscode.Disposable {
             addons = defaultCapture.addons;
             await this._replaceCellAddons(cell, addons);
         }
-        const files = await this._snapshotWorkspaceFiles(cell, addons, languageId, source);
+        const files = await snapshotWorkspaceFiles(cell, addons, languageId, source);
         logExecution('cell snapshots ready index=%d snapshotKeys=%s',
             cell.index,
             Object.keys(files).join(',') || '<none>');
@@ -1006,7 +447,7 @@ export class WebNotebookKernel implements vscode.Disposable {
                 files,
                 cellUri: cell.document.uri.toString(),
                 checkedAt: Date.now(),
-            }, 'x-application/webnb-output')
+            }, WEBNB_OUTPUT_MIME)
         ]);
 
         try {
@@ -1025,12 +466,12 @@ export class WebNotebookKernel implements vscode.Disposable {
                 cellLabel(cell),
                 this._cellExecutionVersions.get(cellKey) ?? 0);
         } catch (error) {
-            console.error('[webnb] Cell execution failed for %s:', cellLabel(cell), error);
+            errorExecution('Cell execution failed for %s: %s', cellLabel(cell), String(error));
             throw error;
         }
     }
 
-    private async _replaceCellAddons(cell: vscode.NotebookCell, addons: WebNbAddon[]): Promise<boolean> {
+    private async _replaceCellAddons(cell: vscode.NotebookCell, addons: Addon[]): Promise<boolean> {
         const cellIndex = cell.index;
         if (cellIndex < 0) {
             return false;
@@ -1059,182 +500,4 @@ export class WebNotebookKernel implements vscode.Disposable {
         const nextAddons = upsertAddon(currentAddons, addonType, content);
         await this._replaceCellAddons(cell, nextAddons);
     }
-
-    /** Resolves a `file:` path written in a cell to a workspace file URI. */
-    private _resolveWorkspaceFileUri(cell: vscode.NotebookCell, requestPath: string): vscode.Uri | undefined {
-        const reference = parseRequestedPathReference(requestPath);
-        const normalizedPath = normalizeWorkspacePath(reference.path);
-        const workspaceFolder = vscode.workspace.getWorkspaceFolder(cell.notebook.uri) ?? vscode.workspace.workspaceFolders?.[0];
-        if (!normalizedPath || !workspaceFolder) {
-            return undefined;
-        }
-
-        const notebookRelativeDir = getNotebookRelativeDir(cell, workspaceFolder);
-        const workspaceResolvedPath = reference.base === 'workspace' || !notebookRelativeDir
-            ? normalizedPath
-            : `${notebookRelativeDir}/${normalizedPath}`;
-        return vscode.Uri.joinPath(workspaceFolder.uri, ...workspaceResolvedPath.split('/'));
-    }
-
-    /** Drops the walkthrough hover highlight wherever it is currently drawn. */
-    private _clearHoveredLines(): void {
-        if (this._hoveredLineKey === undefined) {
-            return;
-        }
-        this._hoveredLineKey = undefined;
-        for (const editor of vscode.window.visibleTextEditors) {
-            editor.setDecorations(this._hoveredRegionDecoration, []);
-            editor.setDecorations(this._hoveredLineDecoration, []);
-        }
-    }
-
-    /**
-     * Highlights what a reader is hovering in a walkthrough — the step's shown
-     * ranges, plus the one line under the pointer — in editors that already show
-     * the file, scrolling to it when it sits outside the viewport. Files that are
-     * not open are left alone: hovering should never open an editor.
-     */
-    private _highlightWorkspaceLines(
-        cell: vscode.NotebookCell,
-        requestPath?: string,
-        ranges?: { start: number; end: number }[],
-        line?: number
-    ): void {
-        const uri = requestPath ? this._resolveWorkspaceFileUri(cell, requestPath) : undefined;
-        const hasTarget = !!uri && ((ranges?.length ?? 0) > 0 || line !== undefined);
-        const key = hasTarget
-            ? `${uri!.toString()}|${(ranges ?? []).map(range => `${range.start}-${range.end}`).join(',')}|${line ?? ''}`
-            : undefined;
-        if (key === this._hoveredLineKey) {
-            return;
-        }
-        if (!key) {
-            this._clearHoveredLines();
-            return;
-        }
-        this._hoveredLineKey = key;
-
-        for (const editor of vscode.window.visibleTextEditors) {
-            if (editor.document.uri.toString() !== uri?.toString()) {
-                editor.setDecorations(this._hoveredRegionDecoration, []);
-                editor.setDecorations(this._hoveredLineDecoration, []);
-                continue;
-            }
-
-            const toRange = (start: number, end: number): vscode.Range => {
-                const lastLine = Math.max(0, editor.document.lineCount - 1);
-                const first = Math.min(Math.max(0, Math.floor(start) - 1), lastLine);
-                const last = Math.min(Math.max(first, Math.floor(end) - 1), lastLine);
-                return new vscode.Range(first, 0, last, editor.document.lineAt(last).range.end.character);
-            };
-
-            const regionRanges = (ranges ?? []).map(range => toRange(range.start, range.end));
-            const lineRanges = line === undefined ? [] : [toRange(line, line)];
-            editor.setDecorations(this._hoveredRegionDecoration, regionRanges);
-            editor.setDecorations(this._hoveredLineDecoration, lineRanges);
-
-            // Follow the narrowest thing being pointed at.
-            const reveal = lineRanges[0] ?? regionRanges[0];
-            if (reveal) {
-                editor.revealRange(reveal, vscode.TextEditorRevealType.InCenterIfOutsideViewport);
-            }
-        }
-    }
-
-    private async _openWorkspaceFile(cell: vscode.NotebookCell, requestPath: string, line?: number): Promise<void> {
-        const uri = this._resolveWorkspaceFileUri(cell, requestPath);
-        if (!uri) {
-            return;
-        }
-
-        const selectionLine = Math.max(0, Math.floor(line ?? 1) - 1);
-        try {
-            const document = await vscode.workspace.openTextDocument(uri);
-            const clampedLine = Math.min(selectionLine, Math.max(0, document.lineCount - 1));
-            await vscode.window.showTextDocument(document, {
-                viewColumn: vscode.ViewColumn.Beside,
-                preview: true,
-                selection: new vscode.Range(clampedLine, 0, clampedLine, 0)
-            });
-        } catch (error) {
-            warnExecution('openWorkspaceFile failed path=%s error=%s', requestPath, String(error));
-        }
-    }
-
-    private async _snapshotWorkspaceFiles(cell: vscode.NotebookCell, addons: WebNbAddon[], languageId: string, source: string): Promise<Record<string, WorkspaceFileSnapshotEntry>> {
-        const requestedPaths = getRequestedFilePaths(addons, languageId, source);
-        if (requestedPaths.length === 0) {
-            return {};
-        }
-
-        const workspaceFolder = vscode.workspace.getWorkspaceFolder(cell.notebook.uri) ?? vscode.workspace.workspaceFolders?.[0];
-        const snapshots: Record<string, WorkspaceFileSnapshotEntry> = {};
-        const notebookRelativeDir = workspaceFolder ? getNotebookRelativeDir(cell, workspaceFolder) : '';
-
-        if (!workspaceFolder) {
-            for (const requestedPath of requestedPaths) {
-                snapshots[requestedPath.requestPath] = {
-                    path: requestedPath.requestPath,
-                    exists: false,
-                    error: 'No workspace folder is open.'
-                };
-            }
-            return snapshots;
-        }
-
-        for (const requestedPath of requestedPaths) {
-            const normalizedPath = normalizeWorkspacePath(requestedPath.path);
-            const snapshotKey = requestedPath.requestPath;
-
-            if (!normalizedPath) {
-                snapshots[snapshotKey] = {
-                    path: requestedPath.requestPath,
-                    exists: false,
-                    error: 'File checks must use relative paths without ".." segments.'
-                };
-                continue;
-            }
-
-            const workspaceResolvedPath = requestedPath.base === 'workspace' || !notebookRelativeDir
-                ? normalizedPath
-                : `${notebookRelativeDir}/${normalizedPath}`;
-
-            const uri = vscode.Uri.joinPath(workspaceFolder.uri, ...workspaceResolvedPath.split('/'));
-            try {
-                const stat = await vscode.workspace.fs.stat(uri);
-                const type = fileTypeToString(stat.type);
-                const snapshot: WorkspaceFileSnapshotEntry = {
-                    path: requestedPath.requestPath,
-                    exists: true,
-                    type,
-                    size: stat.size
-                };
-
-                if (type === 'file') {
-                    if (stat.size <= MAX_FILE_SNAPSHOT_BYTES) {
-                        const bytes = await vscode.workspace.fs.readFile(uri);
-                        snapshot.content = new TextDecoder('utf-8').decode(bytes);
-                    } else {
-                        snapshot.error = `File is larger than ${MAX_FILE_SNAPSHOT_BYTES} bytes, so its contents were not loaded.`;
-                    }
-                } else if (type === 'directory') {
-                    const entries = await vscode.workspace.fs.readDirectory(uri);
-                    snapshot.entries = entries.map(([name, entryType]) => ({
-                        name,
-                        type: entryTypeToString(entryType)
-                    }));
-                }
-
-                snapshots[snapshotKey] = snapshot;
-            } catch (error) {
-                snapshots[snapshotKey] = {
-                    path: requestedPath.requestPath,
-                    exists: false
-                };
-            }
-        }
-
-        return snapshots;
-    }
-
 }

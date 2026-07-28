@@ -116,7 +116,12 @@
         "coursera:import": "node scripts/coursera-docker-dev.js import",
         "coursera:start": "node scripts/coursera-docker-dev.js start",
         "coursera:stop": "node scripts/coursera-docker-dev.js stop",
-        "preview": "vite --config preview/vite.config.ts"
+        "preview": "vite --config preview/vite.config.ts",
+        "test:unit": "tsc -p src/test && mocha \"out/test/test/unit/**/*.test.js\"",
+        "test:harness": "node tests/harness/run.js",
+        "test:harness:update": "node tests/harness/run.js --update",
+        "test:browser": "node tests/browser/run.js",
+        "test:all": "npm run test:unit && npm run test:harness && npm run test:browser"
     },
     "devDependencies": {
         "@codemirror/commands": "^6.10.4",
@@ -157,7 +162,8 @@
         "vscode-notebook-error-overlay": "^1.1.0",
         "webpack": "^5.108.4",
         "webpack-cli": "^7.2.1",
-        "yarn": "^1.22.22"
+        "yarn": "^1.22.22",
+        "playwright": "^1.61.1"
     },
     "dependencies": {
         "@babel/standalone": "^8.0.3",

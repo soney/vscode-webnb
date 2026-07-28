@@ -1,37 +1,63 @@
-// We've set up this sample using CSS modules, which lets you import class
-// names into JavaScript: https://github.com/css-modules/css-modules
-// You can configure or change this in the webpack.config.js file.
-// import * as style from './style.css';
-import type { RendererContext } from 'vscode-notebook-renderer';
+/**
+ * The notebook renderer: turns a cell's output payload into DOM inside the
+ * webview. render() dispatches on the cell language to the per-cell-type
+ * modules (mcq, checks, terminal, walkthroughRender, ...) and owns the
+ * lexical scope that evaluated notebook code sees.
+ *
+ * IMPORTANT: the bare eval() calls in the branches below deliberately expose
+ * this function's local bindings (console, document, assert, assertRule, wrap,
+ * check, checklist, file, createFileResult, files, source, cy, sy,
+ * defaultSource, terminal, renderReact, pathModule, ...) to notebook and addon
+ * code. Deep internals that were incidentally visible before the split
+ * (terminal/console/check-DSL implementation helpers) are intentionally no
+ * longer in scope. Renaming, moving, or removing
+ * any of those locals is an API change for existing notebooks, invisible to
+ * the type checker — keep the preview harness green across all languages.
+ */
 import cy from './lite-cy';
-import { marked } from 'marked';
-import { installMarkedImageSize } from './markedImageSize';
-import smartypants from 'smartypants';
-import ConsoleObjectView from './consoleobjectview';
+import { createNodeProcess, createRuntimeRequire, pathModule as importedPathModule } from './runtime';
+import { parseWalkthroughSource } from './walkthrough';
 import {
-    decorateWalkthroughStep,
-    describeWalkthroughSegments,
-    parseWalkthroughSource,
-    resolveWalkthroughStep,
-    toWalkthroughSnapshotKey,
-    type ParsedWalkthrough,
-    type WalkthroughRange,
-    type WalkthroughStep
-} from './walkthrough';
+    createWalkthroughHoverBridge,
+    renderParsedWalkthrough,
+    type WalkthroughHoverBridge
+} from './walkthroughRender';
+import { renderMarkdownBlock, renderMarkdownInline } from './markdown';
+import { createFeedback, type messageType } from './feedback';
+import { attachHtmlConsoleCapture, createCellConsole } from './consoleCapture';
+import { renderMcqCell } from './mcq';
+import { createTerminalController, parseTerminalAddon } from './terminal';
 import {
-    detectHighlightLanguage,
-    highlightToLines,
-    isPlainLanguageName,
-    renderCodeBlockHtml,
-    resolveHighlightLanguage
-} from './syntaxHighlight';
-import { Terminal } from '@xterm/xterm';
+    createCheckApi,
+    createChecklistFeedback,
+    parseFileChecklistSource
+} from './checks';
+import type {
+    Addon,
+    WebnbOutputValue,
+    WebNbRendererMessage,
+    WorkspaceFileSnapshotEntry
+} from '../shared/protocol';
+import {
+    getAddonContent,
+    isCssAddon,
+    isExternalCheckLanguage,
+    isHtmlAddon,
+    isScriptAddonType as isScriptAddon,
+    isSolutionAddon,
+    isTerminalAddon
+} from '../shared/addons';
 import * as Babel from '@babel/standalone';
 import * as React from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-// import * as css from "css";
 
-interface IRenderInfo {
+/** The slice of the notebook-renderer context render() actually uses; the
+ * preview harness provides just this instead of a full RendererContext. */
+export interface RendererHostContext {
+    postMessage?(message: unknown): void;
+}
+
+export interface IRenderInfo {
     container: HTMLElement;
     feedback: HTMLElement;
     console: HTMLElement;
@@ -39,283 +65,13 @@ interface IRenderInfo {
     style: HTMLStyleElement;
     addStyle: (css: string) => void;
     mime: string;
-    value: any;
-    context: RendererContext<unknown>;
+    value: WebnbOutputValue;
+    context: RendererHostContext;
 }
-type messageType = 'info' | 'success' | 'error';
-type ConsoleMethod = 'debug' | 'error' | 'info' | 'log' | 'trace' | 'warn';
-interface McqOption {
-    text: string;
-    correct: boolean;
-    correctFeedback?: string;
-    wrongFeedback?: string;
-}
-interface DisplayMcqOption extends McqOption {
-    originalIndex: number;
-}
-interface ParsedMcq {
-    question: string;
-    options: McqOption[];
-    correctFeedback?: string;
-    wrongFeedback?: string;
-    shuffle: boolean;
-    deterministic: boolean;
-}
-
-type FileChecklistCheckKind = 'directory' | 'file' | 'path' | 'contains' | 'notContains' | 'matches' | 'equals' | 'hasEntry' | 'command';
-
-interface FileChecklistCheck {
-    kind: FileChecklistCheckKind;
-    path: string;
-    value?: string;
-    label?: string;
-    rawLine: string;
-}
-
-interface ParsedFileChecklist {
-    title?: string;
-    intervalMs: number;
-    checks: FileChecklistCheck[];
-    errors: string[];
-}
-
-interface Addon {
-    type: string;
-    content: string;
-    id?: string;
-}
-
-interface WorkspaceFileSnapshotEntry {
-    path: string;
-    exists: boolean;
-    type?: 'file' | 'directory' | 'symlink' | 'unknown';
-    content?: string;
-    entries?: { name: string; type: string }[];
-    size?: number;
-    error?: string;
-}
-
-interface FileCheckResult {
-    label: string;
-    passed: boolean;
-    detail?: string;
-    path?: string;
-    run: (failMessage?: string, successMessage?: string) => void;
-}
-
-interface FileCheckBuilder {
-    toResult: () => FileCheckResult;
-    run: (failMessage?: string, successMessage?: string) => void;
-    exists: (label?: string) => FileCheckResult;
-    isFile: (label?: string) => FileCheckResult;
-    isDirectory: (label?: string) => FileCheckResult;
-    contains: (text: string, label?: string) => FileCheckResult;
-    notContains: (text: string, label?: string) => FileCheckResult;
-    matches: (pattern: RegExp | string, label?: string) => FileCheckResult;
-    equals: (text: string, label?: string) => FileCheckResult;
-    hasEntry: (name: string, label?: string) => FileCheckResult;
-}
-
-type ChecklistInput = FileCheckResult | FileCheckBuilder;
-
-interface ParsedTerminalAddon {
-    prompt: string;
-    welcome?: string;
-    run: string[];
-}
-
-interface TerminalSessionState {
-    history: string[];
-    prompt: string;
-    welcomeShown: boolean;
-    restoreFocus: boolean;
-    startupRan: boolean;
-}
-
-interface ConsoleHistoryEntry {
-    method: ConsoleMethod;
-    args: any[];
-    text: string;
-    timestamp: number;
-}
-
-const DEFAULT_CHECKLIST_REFRESH_MS = 2000;
-const DEFAULT_TERMINAL_PROMPT = '$';
-const terminalSessions = new Map<string, TerminalSessionState>();
 const REACT_LANGUAGE_IDS = new Set(['react', 'jsx', 'javascriptreact']);
 const NODE_LANGUAGE_IDS = new Set(['node']);
 const JAVASCRIPT_LANGUAGE_IDS = new Set(['javascript', 'js']);
-const SMARTYPANTS_ATTR = '2';
-const HTML_CONSOLE_EVENT_TYPES = [
-    'change',
-    'click',
-    'dblclick',
-    'focus',
-    'input',
-    'keydown',
-    'keypress',
-    'keyup',
-    'mousedown',
-    'mouseup',
-    'pointerdown',
-    'pointerup',
-    'submit'
-] as const;
-const WRAPPED_HTML_CONSOLE_HANDLERS = Symbol('webnbWrappedHtmlConsoleHandlers');
-
-let activeConsoleReporter: ((method: ConsoleMethod, args: any[]) => void) | undefined;
-let isWindowConsolePatched = false;
-let originalWindowConsole: Console | undefined;
-
-function consoleMethodToMessageType(method: ConsoleMethod): messageType {
-    return method === 'error' ? 'error' : 'info';
-}
-
-function installWindowConsoleProxy(): void {
-    if (isWindowConsolePatched) {
-        return;
-    }
-
-    const originalConsole = window.console;
-    originalWindowConsole = originalConsole;
-    const wrappedMethods = new Set<ConsoleMethod>(['debug', 'error', 'info', 'log', 'trace', 'warn']);
-    const proxy = new Proxy(originalConsole, {
-        get(target, prop, receiver) {
-            const value = Reflect.get(target, prop, receiver);
-            if (typeof prop === 'string' && wrappedMethods.has(prop as ConsoleMethod) && typeof value === 'function') {
-                return (...args: any[]) => {
-                    activeConsoleReporter?.(prop as ConsoleMethod, args);
-                    return value.apply(target, args);
-                };
-            }
-
-            return typeof value === 'function' ? value.bind(target) : value;
-        }
-    });
-
-    window.console = proxy as Console;
-    isWindowConsolePatched = true;
-}
-
-function wrapHtmlConsoleHandlers(
-    root: HTMLElement,
-    reportHtmlConsole: (method: ConsoleMethod, args: any[]) => void
-): () => void {
-    type HtmlConsoleTarget = HTMLElement & {
-        [WRAPPED_HTML_CONSOLE_HANDLERS]?: Map<string, (...args: any[]) => any>;
-        [key: string]: unknown;
-    };
-
-    const wrappedTargets = new Set<HtmlConsoleTarget>();
-
-    const wrapElement = (element: HTMLElement) => {
-        const target = element as HtmlConsoleTarget;
-        const wrappedHandlers = target[WRAPPED_HTML_CONSOLE_HANDLERS] ?? new Map<string, (...args: any[]) => any>();
-        target[WRAPPED_HTML_CONSOLE_HANDLERS] = wrappedHandlers;
-
-        for (const eventType of HTML_CONSOLE_EVENT_TYPES) {
-            const property = `on${eventType}`;
-            if (wrappedHandlers.has(property)) {
-                continue;
-            }
-
-            const original = target[property];
-            if (typeof original !== 'function') {
-                continue;
-            }
-            const originalHandler = original as (...args: any[]) => any;
-
-            target[property] = function wrappedHtmlConsoleHandler(this: unknown, ...args: any[]) {
-                const previousReporter = activeConsoleReporter;
-                activeConsoleReporter = reportHtmlConsole;
-                try {
-                    return originalHandler.apply(this, args);
-                } finally {
-                    activeConsoleReporter = previousReporter;
-                }
-            };
-            wrappedHandlers.set(property, originalHandler);
-            wrappedTargets.add(target);
-        }
-    };
-
-    const visitNode = (node: Node) => {
-        if (!(node instanceof HTMLElement)) {
-            return;
-        }
-
-        wrapElement(node);
-        node.querySelectorAll('*').forEach(element => {
-            if (element instanceof HTMLElement) {
-                wrapElement(element);
-            }
-        });
-    };
-
-    visitNode(root);
-
-    const observer = new MutationObserver(mutations => {
-        for (const mutation of mutations) {
-            mutation.addedNodes.forEach(node => visitNode(node));
-        }
-    });
-    observer.observe(root, { childList: true, subtree: true });
-
-    return () => {
-        observer.disconnect();
-        for (const target of wrappedTargets) {
-            const wrappedHandlers = target[WRAPPED_HTML_CONSOLE_HANDLERS];
-            if (!wrappedHandlers) {
-                continue;
-            }
-
-            for (const [property, original] of wrappedHandlers) {
-                target[property] = original;
-            }
-            delete target[WRAPPED_HTML_CONSOLE_HANDLERS];
-        }
-    };
-}
-
 type RuntimeLanguageKind = 'javascript' | 'node' | 'react';
-
-function isExternalCheckLanguage(language: string): boolean {
-    return language === 'external' || language === 'checklist';
-}
-
-// Teach marked the `![alt](url =WIDTHxHEIGHT)` image-size syntax.
-installMarkedImageSize();
-
-// Syntax-highlight fenced code blocks in the markdown this renderer owns —
-// walkthrough commentary and notes, MCQ questions, checklist labels — with the
-// same palette walkthrough snippets use.
-marked.use({ renderer: { code: renderCodeBlockHtml } });
-
-function renderMarkdownInline(text: string): string {
-    const html = marked.parseInline(text) as string;
-    return smartypants(html, SMARTYPANTS_ATTR);
-}
-
-function renderMarkdownBlock(text: string): string {
-    const html = marked.parse(text) as string;
-    return smartypants(html, SMARTYPANTS_ATTR);
-}
-
-function renderSmartText(text: string): string {
-    const escaped = text
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#39;');
-    // Turn markdown-style `code` spans into <code>, which smartypants skips.
-    // Without this, literals a learner is meant to type get typographic
-    // substitutions applied to them: "<!--" would render as "<!-" with an en
-    // dash, and `map(...)` would render with an ellipsis character. Escaping
-    // already ran, so backticks here can only have come from the message.
-    const withCode = escaped.replace(/(`+)([\s\S]+?)\1/g, (_match, _ticks, code) => `<code>${code}</code>`);
-    return smartypants(withCode, SMARTYPANTS_ATTR);
-}
 
 function getRuntimeLanguageKind(language: string): RuntimeLanguageKind | undefined {
     if (REACT_LANGUAGE_IDS.has(language)) {
@@ -330,876 +86,6 @@ function getRuntimeLanguageKind(language: string): RuntimeLanguageKind | undefin
     return undefined;
 }
 
-function normalizeAddonType(type: string | undefined): string {
-    return (type || '').trim().toLowerCase().replace(/^\+/, '');
-}
-
-function isSolutionAddon(type: string | undefined): boolean {
-    return normalizeAddonType(type) === 'solution';
-}
-
-function isScriptAddon(type: string | undefined): boolean {
-    const normalizedType = normalizeAddonType(type);
-    return normalizedType === 'test' || normalizedType === 'javascript' || normalizedType === 'js';
-}
-
-function isHtmlAddon(type: string | undefined): boolean {
-    return normalizeAddonType(type) === 'html';
-}
-
-function isCssAddon(type: string | undefined): boolean {
-    return normalizeAddonType(type) === 'css';
-}
-
-function isTerminalAddon(type: string | undefined): boolean {
-    const normalizedType = normalizeAddonType(type);
-    return normalizedType === 'terminal' || normalizedType === 'xterm';
-}
-
-function parseMcqSource(source: string): ParsedMcq {
-    const lines = source.split(/\r?\n/);
-    const options: McqOption[] = [];
-    const questionLines: string[] = [];
-    let correctFeedback: string | undefined;
-    let wrongFeedback: string | undefined;
-    let shuffle = true;
-    let deterministic = false;
-    let sawOption = false;
-    let currentOption: McqOption | undefined;
-
-    for (const line of lines) {
-        const optionMatch = line.match(/^\s*(?:-\s*)?\[([ xX])\]\s*(.*)$/);
-        if (optionMatch) {
-            sawOption = true;
-            currentOption = {
-                text: optionMatch[2].trim(),
-                correct: optionMatch[1].toLowerCase() === 'x'
-            };
-            options.push(currentOption);
-            continue;
-        }
-
-        if (currentOption) {
-            const optionCorrectMatch = line.match(/^[ \t]+correct\s*:\s*(.*)$/i);
-            if (optionCorrectMatch) {
-                currentOption.correctFeedback = optionCorrectMatch[1].trim();
-                continue;
-            }
-
-            const optionWrongMatch = line.match(/^[ \t]+(?:wrong|incorrect)\s*:\s*(.*)$/i);
-            if (optionWrongMatch) {
-                currentOption.wrongFeedback = optionWrongMatch[1].trim();
-                continue;
-            }
-        }
-
-        if (!sawOption) {
-            const shuffleMatch = line.match(/^\s*shuffle\s*:\s*(.*)$/i);
-            if (shuffleMatch) {
-                const shuffleValue = shuffleMatch[1].trim().toLowerCase();
-                if (shuffleValue === 'deterministic' || shuffleValue === 'stable') {
-                    shuffle = true;
-                    deterministic = true;
-                } else if (shuffleValue === 'random') {
-                    shuffle = true;
-                    deterministic = false;
-                } else {
-                    shuffle = parseMcqBooleanFlag(shuffleMatch[1], true);
-                }
-                continue;
-            }
-
-            const deterministicMatch = line.match(/^\s*deterministic\s*:\s*(.*)$/i);
-            if (deterministicMatch) {
-                deterministic = parseMcqBooleanFlag(deterministicMatch[1], true);
-                continue;
-            }
-
-            const correctMatch = line.match(/^\s*correct\s*:\s*(.*)$/i);
-            if (correctMatch) {
-                correctFeedback = correctMatch[1].trim();
-                continue;
-            }
-
-            const wrongMatch = line.match(/^\s*(?:wrong|incorrect)\s*:\s*(.*)$/i);
-            if (wrongMatch) {
-                wrongFeedback = wrongMatch[1].trim();
-                continue;
-            }
-        }
-
-        questionLines.push(line);
-    }
-
-    return {
-        question: questionLines.join('\n').trim(),
-        options,
-        correctFeedback,
-        wrongFeedback,
-        shuffle,
-        deterministic
-    };
-}
-
-function parseMcqBooleanFlag(value: string, defaultValue: boolean): boolean {
-    const normalized = value.trim().toLowerCase();
-    if (!normalized) {
-        return defaultValue;
-    }
-    if (['1', 'true', 'yes', 'on'].includes(normalized)) {
-        return true;
-    }
-    if (['0', 'false', 'no', 'off'].includes(normalized)) {
-        return false;
-    }
-
-    return defaultValue;
-}
-
-function hashMcqShuffleSeed(value: string): number {
-    let hash = 2166136261;
-    for (let index = 0; index < value.length; index++) {
-        hash ^= value.charCodeAt(index);
-        hash = Math.imul(hash, 16777619);
-    }
-
-    return hash >>> 0;
-}
-
-function createSeededMcqRandom(seed: number): () => number {
-    let state = seed || 0x9e3779b9;
-    return () => {
-        state += 0x6d2b79f5;
-        let result = state;
-        result = Math.imul(result ^ (result >>> 15), result | 1);
-        result ^= result + Math.imul(result ^ (result >>> 7), result | 61);
-        return ((result ^ (result >>> 14)) >>> 0) / 4294967296;
-    };
-}
-
-function getMcqDisplayOptions(options: McqOption[], shuffle: boolean, deterministic: boolean, seedSource: string): DisplayMcqOption[] {
-    const displayOptions = options.map((option, originalIndex) => ({
-        ...option,
-        originalIndex
-    }));
-    if (!shuffle || displayOptions.length < 2) {
-        return displayOptions;
-    }
-
-    const random = deterministic ? createSeededMcqRandom(hashMcqShuffleSeed(seedSource)) : Math.random;
-    for (let index = displayOptions.length - 1; index > 0; index--) {
-        const swapIndex = Math.floor(random() * (index + 1));
-        [displayOptions[index], displayOptions[swapIndex]] = [displayOptions[swapIndex], displayOptions[index]];
-    }
-
-    return displayOptions;
-}
-
-function getAddonContent(addons: Addon[], type: string): string | undefined {
-    const match = addons.find(addon => normalizeAddonType(addon.type) === normalizeAddonType(type));
-    return match?.content;
-}
-
-function parseMcqSelectionAddonContent(content: string, optionCount: number): number[] {
-    let rawValues: unknown[] = [];
-
-    const trimmed = content.trim();
-    if (!trimmed) {
-        return [];
-    }
-
-    try {
-        const parsed: unknown = JSON.parse(trimmed);
-        if (Array.isArray(parsed)) {
-            rawValues = parsed;
-        } else if (parsed && typeof parsed === 'object' && Array.isArray((parsed as { selected?: unknown[] }).selected)) {
-            rawValues = (parsed as { selected: unknown[] }).selected;
-        }
-    } catch {
-        rawValues = trimmed.split(/[\s,]+/g).filter(Boolean);
-    }
-
-    const seen = new Set<number>();
-    const selections: number[] = [];
-
-    for (const value of rawValues) {
-        const numeric = typeof value === 'number' ? value : Number(value);
-        if (!Number.isInteger(numeric) || numeric < 0 || numeric >= optionCount || seen.has(numeric)) {
-            continue;
-        }
-        seen.add(numeric);
-        selections.push(numeric);
-    }
-
-    return selections;
-}
-
-function serializeMcqSelectionAddonContent(indices: number[]): string {
-    return JSON.stringify({ selected: indices });
-}
-
-function stripChecklistLinePrefix(line: string): string {
-    return line.trim()
-        .replace(/^[-*]\s+/, '')
-        .replace(/^\[[ xX]\]\s+/, '')
-        .trim();
-}
-
-function splitChecklistFields(value: string): string[] {
-    const fields: string[] = [];
-    let current = '';
-
-    for (let index = 0; index < value.length; index++) {
-        const char = value[index];
-        if (char === '\\') {
-            const nextChar = value[index + 1];
-            if (nextChar === '|' || nextChar === '\\') {
-                current += nextChar;
-                index++;
-            } else {
-                current += char;
-            }
-            continue;
-        }
-
-        if (char === '|') {
-            fields.push(current.trim());
-            current = '';
-            continue;
-        }
-
-        current += char;
-    }
-
-    fields.push(current.trim());
-    return fields;
-}
-
-function normalizeChecklistCheckKind(kind: string): FileChecklistCheckKind | undefined {
-    const normalized = kind.toLowerCase().replace(/[\s_-]+/g, '');
-    if (normalized === 'directory' || normalized === 'dir') {
-        return 'directory';
-    }
-    if (normalized === 'file') {
-        return 'file';
-    }
-    if (normalized === 'path' || normalized === 'exists') {
-        return 'path';
-    }
-    if (normalized === 'contains' || normalized === 'include' || normalized === 'includes') {
-        return 'contains';
-    }
-    if (normalized === 'notcontains' || normalized === 'notinclude' || normalized === 'notincludes' || normalized === 'doesnotcontain') {
-        return 'notContains';
-    }
-    if (normalized === 'matches' || normalized === 'match' || normalized === 'regex') {
-        return 'matches';
-    }
-    if (normalized === 'equals' || normalized === 'equal') {
-        return 'equals';
-    }
-    if (normalized === 'hasentry' || normalized === 'entry' || normalized === 'containsentry') {
-        return 'hasEntry';
-    }
-    if (normalized === 'command' || normalized === 'cmd' || normalized === 'ran') {
-        return 'command';
-    }
-    return undefined;
-}
-
-function parseChecklistInterval(value: string): number | undefined {
-    const raw = value.trim().toLowerCase();
-    if (raw === 'off' || raw === 'false' || raw === 'none' || raw === 'manual') {
-        return 0;
-    }
-
-    const match = raw.match(/^(\d+(?:\.\d+)?)(?:\s*(ms|s|sec|secs|second|seconds|m|min|mins|minute|minutes))?$/);
-    if (!match) {
-        return undefined;
-    }
-
-    const amount = Number(match[1]);
-    const unit = match[2] || 'ms';
-    if (unit === 's' || unit === 'sec' || unit === 'secs' || unit === 'second' || unit === 'seconds') {
-        return amount * 1000;
-    }
-    if (unit === 'm' || unit === 'min' || unit === 'mins' || unit === 'minute' || unit === 'minutes') {
-        return amount * 60 * 1000;
-    }
-    return amount;
-}
-
-function formatChecklistInterval(ms: number): string {
-    if (ms >= 60000 && ms % 60000 === 0) {
-        const minutes = ms / 60000;
-        return `${minutes} minute${minutes === 1 ? '' : 's'}`;
-    }
-    if (ms >= 1000 && ms % 1000 === 0) {
-        const seconds = ms / 1000;
-        return `${seconds} second${seconds === 1 ? '' : 's'}`;
-    }
-    return `${ms} ms`;
-}
-
-function parseFileChecklistSource(source: string): ParsedFileChecklist {
-    const checks: FileChecklistCheck[] = [];
-    const errors: string[] = [];
-    let title: string | undefined;
-    let intervalMs = DEFAULT_CHECKLIST_REFRESH_MS;
-    let sawCheck = false;
-
-    source.split(/\r?\n/g).forEach((rawLine, index) => {
-        const line = stripChecklistLinePrefix(rawLine);
-        if (!line || line.startsWith('#')) {
-            return;
-        }
-
-        const colonIndex = line.indexOf(':');
-        if (colonIndex < 0) {
-            if (!sawCheck && !title) {
-                title = line;
-            } else {
-                errors.push(`Line ${index + 1} is not a valid checklist item: \`${rawLine.trim()}\``);
-            }
-            return;
-        }
-
-        const key = line.slice(0, colonIndex).trim();
-        const value = line.slice(colonIndex + 1).trim();
-        const normalizedKey = key.toLowerCase().replace(/[\s_-]+/g, '');
-
-        if (normalizedKey === 'title') {
-            title = value;
-            return;
-        }
-
-        if (normalizedKey === 'interval' || normalizedKey === 'refresh' || normalizedKey === 'checkevery' || normalizedKey === 'poll') {
-            const parsedInterval = parseChecklistInterval(value);
-            if (parsedInterval === undefined) {
-                errors.push(`Line ${index + 1} has an invalid interval: \`${value}\``);
-            } else {
-                intervalMs = parsedInterval;
-            }
-            return;
-        }
-
-        const kind = normalizeChecklistCheckKind(key);
-        if (!kind) {
-            errors.push(`Line ${index + 1} has an unknown check type: \`${key}\``);
-            return;
-        }
-
-        const fields = splitChecklistFields(value);
-        const path = fields[0];
-        if (!path) {
-            errors.push(`Line ${index + 1} is missing a path.`);
-            return;
-        }
-
-        if (['contains', 'notContains', 'matches', 'equals', 'hasEntry'].includes(kind) && !fields[1]) {
-            errors.push(`Line ${index + 1} is missing the value to check.`);
-            return;
-        }
-
-        checks.push({
-            kind,
-            path,
-            value: fields[1],
-            label: kind === 'directory' || kind === 'file' || kind === 'path' || kind === 'command' ? fields[1] : fields[2],
-            rawLine: rawLine.trim()
-        });
-        sawCheck = true;
-    });
-
-    return { title, intervalMs, checks, errors };
-}
-
-function parseRegexLike(value: string): RegExp | string {
-    const regexMatch = value.match(/^\/((?:\\.|[^/])+)\/([dgimsuvy]*)$/);
-    if (!regexMatch) {
-        return value;
-    }
-
-    const flags = regexMatch[2].includes('s') ? regexMatch[2] : `${regexMatch[2]}s`;
-    return new RegExp(regexMatch[1], flags);
-}
-
-function parseTerminalAddon(content: string): ParsedTerminalAddon {
-    const parsed: ParsedTerminalAddon = {
-        prompt: DEFAULT_TERMINAL_PROMPT,
-        run: []
-    };
-
-    for (const rawLine of content.split(/\r?\n/g)) {
-        const line = rawLine.trim();
-        if (!line || line.startsWith('#')) {
-            continue;
-        }
-
-        const runMatch = line.match(/^run\s*:\s*(.+)$/i);
-        if (runMatch) {
-            parsed.run.push(runMatch[1].trim());
-            continue;
-        }
-
-        const promptMatch = line.match(/^prompt\s*:\s*(.+)$/i);
-        if (promptMatch) {
-            parsed.prompt = promptMatch[1].trim() || DEFAULT_TERMINAL_PROMPT;
-            continue;
-        }
-
-        const welcomeMatch = line.match(/^welcome\s*:\s*(.+)$/i);
-        if (welcomeMatch) {
-            parsed.welcome = welcomeMatch[1].trim();
-            continue;
-        }
-
-        const listRunMatch = line.match(/^[-*]\s+(.+)$/);
-        if (listRunMatch) {
-            parsed.run.push(listRunMatch[1].trim());
-        }
-    }
-
-    return parsed;
-}
-
-function createWalkthroughMessage(markdown: string, kind: 'info' | 'warning' | 'error'): HTMLElement {
-    const message = document.createElement('div');
-    message.classList.add('walkthrough-message', kind);
-    message.innerHTML = renderMarkdownInline(markdown);
-    return message;
-}
-
-/**
- * What a walkthrough can do beyond rendering, when the renderer can reach the
- * extension host. Both are absent in the preview harness and in plain webviews.
- */
-interface WalkthroughInteractions {
-    openFile?: (path: string, line?: number) => void;
-    /** Mirrors what the reader is hovering into an editor that has the file open. */
-    hover?: WalkthroughHoverBridge;
-}
-
-/**
- * What the reader is pointing at: the step's shown ranges, plus the one line
- * under the pointer when they are over the code itself.
- */
-interface WalkthroughHoverFocus {
-    path: string;
-    ranges: WalkthroughRange[];
-    line?: number;
-}
-
-interface WalkthroughHoverBridge {
-    /** Reports what the pointer is on now; the last report wins. */
-    enter(focus: WalkthroughHoverFocus): void;
-    leave(): void;
-    dispose(): void;
-}
-
-/** How long the pointer rests before the editor follows it. */
-const WALKTHROUGH_HOVER_DELAY_MS = 120;
-
-/**
- * Debounces hover reports to the extension host. Sweeping the pointer down a
- * walkthrough should not send one message — and one editor scroll — per line or
- * per step it crosses on the way.
- */
-function createWalkthroughHoverBridge(
-    send: (focus?: WalkthroughHoverFocus) => void
-): WalkthroughHoverBridge {
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    let focus: WalkthroughHoverFocus | undefined;
-    let sent: string | undefined;
-
-    const describe = (candidate?: WalkthroughHoverFocus): string => candidate
-        ? `${candidate.path}|${candidate.ranges.map(range => `${range.start}-${range.end}`).join(',')}|${candidate.line ?? ''}`
-        : '';
-
-    const schedule = (next?: WalkthroughHoverFocus) => {
-        focus = next;
-        if (timer !== undefined) {
-            clearTimeout(timer);
-        }
-        timer = setTimeout(() => {
-            timer = undefined;
-            const key = describe(focus);
-            if (key === sent) {
-                return;
-            }
-            sent = key;
-            send(focus);
-        }, WALKTHROUGH_HOVER_DELAY_MS);
-    };
-
-    return {
-        enter(next) {
-            schedule(next);
-        },
-        leave() {
-            schedule();
-        },
-        dispose() {
-            if (timer !== undefined) {
-                clearTimeout(timer);
-                timer = undefined;
-            }
-            if (sent) {
-                sent = undefined;
-                send();
-            }
-        }
-    };
-}
-
-/** "Open in editor" glyph: an arrow leaving a box, drawn to match codicons. */
-const OPEN_FILE_ICON = '<svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true" focusable="false">'
-    + '<path d="M9.75 2.75h3.5v3.5M13.25 2.75 8.25 7.75" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>'
-    + '<path d="M11.75 9.5v2.75a1 1 0 0 1-1 1h-7a1 1 0 0 1-1-1v-7a1 1 0 0 1 1-1H6.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>'
-    + '</svg>';
-
-/**
- * The file name shown above a snippet: a link that opens the real file when the
- * renderer can talk to the extension host, plain text otherwise.
- */
-function createWalkthroughFileLink(
-    path: string,
-    line: number | undefined,
-    openFile?: (path: string, line?: number) => void
-): HTMLElement {
-    const separator = path.lastIndexOf('/');
-    const label = document.createElement('span');
-    label.classList.add('walkthrough-file-label');
-    if (separator >= 0) {
-        const directory = document.createElement('span');
-        directory.classList.add('walkthrough-file-directory');
-        directory.textContent = path.slice(0, separator + 1);
-        label.appendChild(directory);
-    }
-    const basename = document.createElement('span');
-    basename.classList.add('walkthrough-file-basename');
-    basename.textContent = path.slice(separator + 1);
-    label.appendChild(basename);
-
-    if (!openFile) {
-        const plain = document.createElement('span');
-        plain.classList.add('walkthrough-file-name');
-        plain.appendChild(label);
-        return plain;
-    }
-
-    const link = document.createElement('button');
-    link.type = 'button';
-    link.classList.add('walkthrough-file-name');
-    const description = line === undefined
-        ? `Open ${path} in the editor`
-        : `Open ${path} in the editor, at line ${line}`;
-    link.title = description;
-    link.setAttribute('aria-label', description);
-    link.appendChild(label);
-
-    const icon = document.createElement('span');
-    icon.classList.add('walkthrough-file-open-icon');
-    icon.innerHTML = OPEN_FILE_ICON;
-    link.appendChild(icon);
-
-    link.addEventListener('click', () => openFile(path, line));
-    return link;
-}
-
-/** The line number beside a snippet line; clickable when the file can be opened. */
-function createWalkthroughLineNumber(
-    lineNumber: number,
-    path: string,
-    openFile?: (path: string, line?: number) => void
-): HTMLElement {
-    if (!openFile) {
-        const gutter = document.createElement('span');
-        gutter.classList.add('walkthrough-line-number');
-        gutter.textContent = `${lineNumber}`;
-        return gutter;
-    }
-
-    const gutter = document.createElement('button');
-    gutter.type = 'button';
-    gutter.classList.add('walkthrough-line-number');
-    const description = `Open ${path} in the editor, at line ${lineNumber}`;
-    gutter.title = description;
-    gutter.setAttribute('aria-label', description);
-    gutter.textContent = `${lineNumber}`;
-    // The header link already reaches this file from the keyboard, so the
-    // gutter stays out of the tab order instead of making every shown line a
-    // tab stop.
-    gutter.tabIndex = -1;
-    gutter.addEventListener('click', () => openFile(path, lineNumber));
-    return gutter;
-}
-
-/** Highlighted HTML per line (indexed by `lineNumber - 1`) for a step's file. */
-function highlightWalkthroughFile(
-    path: string,
-    language: string | undefined,
-    content: string,
-    cache: Map<string, string[] | undefined>
-): string[] | undefined {
-    if (!language) {
-        return undefined;
-    }
-
-    // Steps of one walkthrough often revisit the same file, and highlighting it
-    // is by far the most expensive thing this renderer does per step.
-    const key = `${language} ${toWalkthroughSnapshotKey(path)}`;
-    if (!cache.has(key)) {
-        cache.set(key, highlightToLines(content, language));
-    }
-    return cache.get(key);
-}
-
-function renderWalkthroughStep(
-    step: WalkthroughStep,
-    index: number,
-    showStepNumbers: boolean,
-    files: Record<string, WorkspaceFileSnapshotEntry>,
-    highlightCache: Map<string, string[] | undefined>,
-    interactions: WalkthroughInteractions
-): HTMLElement {
-    const { openFile, hover } = interactions;
-    const stepEl = document.createElement('section');
-    stepEl.classList.add('walkthrough-step');
-
-    if (step.title || showStepNumbers) {
-        const header = document.createElement('div');
-        header.classList.add('walkthrough-step-header');
-        if (showStepNumbers) {
-            const badge = document.createElement('span');
-            badge.classList.add('walkthrough-step-number');
-            badge.textContent = `${index + 1}`;
-            header.appendChild(badge);
-        }
-        if (step.title) {
-            const title = document.createElement('span');
-            title.classList.add('walkthrough-step-title');
-            title.innerHTML = renderMarkdownInline(step.title);
-            header.appendChild(title);
-        }
-        stepEl.appendChild(header);
-    }
-
-    if (step.commentary) {
-        const commentary = document.createElement('div');
-        commentary.classList.add('walkthrough-commentary');
-        commentary.innerHTML = renderMarkdownBlock(step.commentary);
-        stepEl.appendChild(commentary);
-    }
-
-    if (!step.file) {
-        stepEl.appendChild(createWalkthroughMessage('This step needs a `file:` line pointing at a workspace file.', 'error'));
-        return stepEl;
-    }
-
-    const snapshot = files[toWalkthroughSnapshotKey(step.file)];
-    if (!snapshot) {
-        stepEl.appendChild(createWalkthroughMessage(`Could not load \`${step.file}\` — run the cell again to snapshot it.`, 'error'));
-        return stepEl;
-    }
-    if (!snapshot.exists) {
-        stepEl.appendChild(createWalkthroughMessage(`\`${step.file}\` was not found. Paths are relative to the notebook file; use a \`workspace:\` prefix to resolve from the workspace root.`, 'error'));
-        return stepEl;
-    }
-    if (snapshot.type === 'directory') {
-        stepEl.appendChild(createWalkthroughMessage(`\`${step.file}\` is a directory. Point the step at a file instead.`, 'error'));
-        return stepEl;
-    }
-    if (typeof snapshot.content !== 'string') {
-        stepEl.appendChild(createWalkthroughMessage(snapshot.error || `Could not read the contents of \`${step.file}\`.`, 'error'));
-        return stepEl;
-    }
-
-    const resolved = resolveWalkthroughStep(step, snapshot.content);
-    for (const warning of resolved.warnings) {
-        stepEl.appendChild(createWalkthroughMessage(warning, 'warning'));
-    }
-    if (resolved.error) {
-        stepEl.appendChild(createWalkthroughMessage(resolved.error, 'error'));
-        return stepEl;
-    }
-
-    const language = step.language
-        ? resolveHighlightLanguage(step.language)
-        : detectHighlightLanguage(step.file);
-    if (step.language && !language && !isPlainLanguageName(step.language)) {
-        stepEl.appendChild(createWalkthroughMessage(
-            `\`language: ${step.language}\` is not a language this notebook can highlight; showing the snippet as plain text.`,
-            'warning'
-        ));
-    }
-
-    const decorated = decorateWalkthroughStep(step, resolved.segments);
-    const highlightedLines = highlightWalkthroughFile(step.file, language, snapshot.content, highlightCache);
-    const firstShownLine = resolved.segments.find(segment => segment.lines.length > 0)?.lines[0]?.number;
-
-    const panel = document.createElement('figure');
-    panel.classList.add('walkthrough-code');
-
-    const codeHeader = document.createElement('figcaption');
-    codeHeader.classList.add('walkthrough-code-header');
-    codeHeader.appendChild(createWalkthroughFileLink(step.file, firstShownLine, openFile));
-
-    const rangeParts: string[] = [];
-    if (step.region) {
-        rangeParts.push(`\`${step.region}\``);
-    }
-    const segmentSummary = describeWalkthroughSegments(resolved.segments);
-    if (segmentSummary) {
-        rangeParts.push(segmentSummary);
-    }
-    if (rangeParts.length > 0) {
-        const rangeEl = document.createElement('span');
-        rangeEl.classList.add('walkthrough-code-range');
-        rangeEl.innerHTML = renderMarkdownInline(rangeParts.join(' · '));
-        codeHeader.appendChild(rangeEl);
-    }
-    panel.appendChild(codeHeader);
-
-    const hasLines = resolved.segments.some(segment => segment.lines.length > 0);
-    if (!hasLines) {
-        panel.appendChild(createWalkthroughMessage('There are no lines to show for this step.', 'warning'));
-        stepEl.appendChild(panel);
-        return stepEl;
-    }
-
-    const maxLineNumber = Math.max(...resolved.segments.flatMap(segment => segment.lines.map(line => line.number)));
-    const codeBody = document.createElement('div');
-    codeBody.classList.add('walkthrough-code-lines');
-    codeBody.style.setProperty('--walkthrough-gutter-width', `${String(maxLineNumber).length}ch`);
-    // The rows live in their own box so it can size to the longest line: row
-    // backgrounds then span the whole scrollable width, not just their own text.
-    const codeRows = document.createElement('div');
-    codeRows.classList.add('walkthrough-code-rows');
-
-    resolved.segments.forEach((segment, segmentIndex) => {
-        if (segment.lines.length === 0) {
-            return;
-        }
-        if (segmentIndex > 0) {
-            const ellipsis = document.createElement('div');
-            ellipsis.classList.add('walkthrough-ellipsis');
-            ellipsis.textContent = '⋯';
-            codeRows.appendChild(ellipsis);
-        }
-
-        for (const line of segment.lines) {
-            const decoration = decorated.byLine.get(line.number);
-            const row = document.createElement('div');
-            row.classList.add('walkthrough-line');
-            if (decoration?.highlight) {
-                row.classList.add('highlighted');
-            }
-
-            row.dataset.line = `${line.number}`;
-
-            const gutter = createWalkthroughLineNumber(line.number, step.file!, openFile);
-
-            const text = document.createElement('span');
-            text.classList.add('walkthrough-line-text');
-            const highlighted = highlightedLines?.[line.number - 1];
-            if (highlighted === undefined) {
-                text.textContent = line.text;
-            } else {
-                text.innerHTML = highlighted;
-            }
-
-            row.append(gutter, text);
-            codeRows.appendChild(row);
-
-            for (const note of decoration?.notes ?? []) {
-                const noteEl = document.createElement('div');
-                noteEl.classList.add('walkthrough-note');
-                noteEl.innerHTML = renderMarkdownBlock(note);
-                codeRows.appendChild(noteEl);
-            }
-        }
-    });
-
-    if (hover) {
-        // Pointing anywhere in the step marks everything it shows; pointing at a
-        // line narrows that to the line.
-        const focus: WalkthroughHoverFocus = {
-            path: step.file,
-            ranges: resolved.segments
-                .filter(segment => segment.lines.length > 0)
-                .map(segment => ({
-                    start: segment.lines[0].number,
-                    end: segment.lines[segment.lines.length - 1].number
-                }))
-        };
-        stepEl.addEventListener('mouseenter', () => hover.enter(focus));
-        stepEl.addEventListener('mouseleave', () => hover.leave());
-        codeRows.addEventListener('mouseover', event => {
-            const row = (event.target as HTMLElement | null)?.closest?.('.walkthrough-line');
-            const line = row instanceof HTMLElement ? Number(row.dataset.line) : NaN;
-            if (Number.isFinite(line)) {
-                hover.enter({ ...focus, line });
-            }
-        });
-        // Off the code but still in the step: back to the whole region.
-        codeRows.addEventListener('mouseleave', () => hover.enter(focus));
-    }
-
-    codeBody.appendChild(codeRows);
-    panel.appendChild(codeBody);
-    stepEl.appendChild(panel);
-
-    for (const orphan of decorated.orphanNotes) {
-        const noteEl = document.createElement('div');
-        noteEl.classList.add('walkthrough-note', 'walkthrough-note-orphan');
-        noteEl.innerHTML = renderMarkdownBlock(`${orphan.label} (not shown): ${orphan.text}`);
-        stepEl.appendChild(noteEl);
-    }
-
-    return stepEl;
-}
-
-function renderParsedWalkthrough(
-    container: HTMLElement,
-    parsed: ParsedWalkthrough,
-    files: Record<string, WorkspaceFileSnapshotEntry>,
-    interactions: WalkthroughInteractions
-): void {
-    const wrapper = document.createElement('div');
-    wrapper.classList.add('walkthrough');
-
-    if (parsed.title) {
-        const title = document.createElement('div');
-        title.classList.add('walkthrough-title');
-        title.innerHTML = renderMarkdownInline(parsed.title);
-        wrapper.appendChild(title);
-    }
-
-    if (parsed.intro) {
-        const intro = document.createElement('div');
-        intro.classList.add('walkthrough-commentary', 'walkthrough-intro');
-        intro.innerHTML = renderMarkdownBlock(parsed.intro);
-        wrapper.appendChild(intro);
-    }
-
-    for (const error of parsed.errors) {
-        wrapper.appendChild(createWalkthroughMessage(error, 'error'));
-    }
-
-    if (parsed.steps.length === 0) {
-        wrapper.appendChild(createWalkthroughMessage('Add a `file:` line (plus optional `region:` or `lines:`) to show code from the workspace.', 'info'));
-    }
-
-    const showStepNumbers = parsed.steps.length > 1;
-    const highlightCache = new Map<string, string[] | undefined>();
-    parsed.steps.forEach((step, index) => {
-        wrapper.appendChild(renderWalkthroughStep(step, index, showStepNumbers, files, highlightCache, interactions));
-    });
-
-    container.appendChild(wrapper);
-}
-
 // This function is called to render your contents.
 export function render({ container, feedback, mime, value, style, addStyle, console: consoleElement, widgetHost, context }: IRenderInfo): void | (() => void) {
     const { language, source, addons } = value;
@@ -1209,6 +95,11 @@ export function render({ container, feedback, mime, value, style, addStyle, cons
     feedback.classList.add('feedback', `feedback-${language}`);
     const files: Record<string, WorkspaceFileSnapshotEntry> =
         value.files && typeof value.files === 'object' ? value.files : {};
+    // Typed against the protocol union, so a message-shape change is a compile
+    // error here and in the extension's isRendererMessage guard alike.
+    const postToHost = (message: WebNbRendererMessage): void => {
+        context.postMessage?.(message);
+    };
     // Solution addons are authoring helpers and should never be rendered or executed.
     const activeAddons: Addon[] = Array.isArray(addons)
         ? addons.filter((addon: Addon) => !isSolutionAddon(addon.type))
@@ -1222,399 +113,58 @@ export function render({ container, feedback, mime, value, style, addStyle, cons
     container.classList.toggle('webnb-output-empty', !shouldShowOutputContainer);
     const defaultSource = getAddonContent(activeAddons, 'default') ?? '';
     const deferChecklistRendering = isExternalCheckLanguage(language);
-    const deferredChecklistResults: FileCheckResult[] = [];
-    let deferredChecklistTitle: string | undefined;
     const terminalAddon = activeAddons.find(addon => isTerminalAddon(addon.type));
     const terminalConfig = terminalAddon ? parseTerminalAddon(terminalAddon.content) : undefined;
     const terminalCellKey = typeof value.cellUri === 'string' ? value.cellUri : `webnb:${language}`;
-    const terminalState = terminalSessions.get(terminalCellKey) || {
-        history: [],
-        prompt: terminalConfig?.prompt || DEFAULT_TERMINAL_PROMPT,
-        welcomeShown: false,
-        restoreFocus: false,
-        startupRan: false
-    };
-    terminalState.prompt = terminalConfig?.prompt || terminalState.prompt || DEFAULT_TERMINAL_PROMPT;
-    terminalSessions.set(terminalCellKey, terminalState);
-    let terminalInstance: Terminal | undefined;
+    const terminalController = createTerminalController({
+        widgetHost,
+        cellKey: terminalCellKey,
+        config: terminalConfig,
+        onCommandRan: command => {
+            if (!command.trim()) {
+                return;
+            }
+            if (!terminalConfig || !isExternalCheckLanguage(language) || !value.cellUri || typeof context.postMessage !== 'function') {
+                return;
+            }
+
+            terminalController.state.restoreFocus = true;
+            window.setTimeout(() => {
+                postToHost({
+                    type: 'webnb.refreshCell',
+                    cellUri: value.cellUri
+                });
+            }, 0);
+        }
+    });
+    const terminal = terminalController.api;
     let reactRoot: Root | undefined;
-    let terminalInputBuffer = '';
     let refreshCleanup: void | (() => void);
     let htmlConsoleCleanup: void | (() => void);
     let walkthroughHoverBridge: WalkthroughHoverBridge | undefined;
-    const consoleHistory: ConsoleHistoryEntry[] = [];
 
-    function getTerminalCommandOutput(command: string, historySnapshot: string[]): string {
-        const normalized = command.trim();
-        if (!normalized || normalized === 'clear') {
-            return '';
-        }
-        if (normalized === 'history') {
-            return historySnapshot.map((cmd, index) => `${index + 1}  ${cmd}`).join('\n');
-        }
-        if (normalized.startsWith('echo ')) {
-            return normalized.slice(5);
-        }
-        if (normalized === 'pwd') {
-            return '/workspace';
-        }
-        return `simulated command: ${normalized}`;
-    }
-
-    function requestChecklistRefreshAfterCommand(command: string): void {
-        if (!command.trim()) {
-            return;
-        }
-        if (!terminalConfig || !isExternalCheckLanguage(language) || !value.cellUri || typeof context.postMessage !== 'function') {
-            return;
-        }
-
-        terminalState.restoreFocus = true;
-        window.setTimeout(() => {
-            context.postMessage?.({
-                type: 'webnb.refreshCell',
-                cellUri: value.cellUri
-            });
-        }, 0);
-    }
-
-    function runTerminalCommand(command: string, term?: Terminal): string {
-        const normalized = command.trim();
-        if (!normalized) {
-            return '';
-        }
-
-        terminalState.history.push(normalized);
-
-        if (normalized === 'clear') {
-            term?.clear();
-            return '';
-        }
-        return getTerminalCommandOutput(normalized, terminalState.history);
-    }
-
-    function mountTerminal(): void {
-        if (!terminalConfig) {
-            return;
-        }
-
-        const terminalWrapper = document.createElement('div');
-        terminalWrapper.classList.add('webnb-terminal-wrapper');
-        const terminalLabel = document.createElement('div');
-        terminalLabel.classList.add('webnb-terminal-label');
-        terminalLabel.textContent = 'Terminal (simulation)';
-        const terminalHost = document.createElement('div');
-        terminalHost.classList.add('webnb-terminal');
-        terminalWrapper.append(terminalLabel, terminalHost);
-
-        widgetHost.prepend(terminalWrapper);
-
-        terminalInstance = new Terminal({
-            cols: 80,
-            rows: 14,
-            convertEol: true,
-            disableStdin: false,
-            theme: {
-                background: 'var(--vscode-editor-background)',
-                foreground: 'var(--vscode-editor-foreground)'
-            }
-        });
-        terminalInstance.open(terminalHost);
-
-        if (!terminalState.welcomeShown) {
-            terminalInstance.writeln(terminalConfig.welcome || 'Type commands here. This terminal is simulated for exercises.');
-            terminalState.welcomeShown = true;
-        }
-
-        const writePrompt = () => terminalInstance?.write(`${terminalState.prompt} `);
-
-        if (!terminalState.startupRan) {
-            for (const command of terminalConfig.run) {
-                runTerminalCommand(command);
-            }
-            terminalState.startupRan = true;
-        }
-
-        for (let index = 0; index < terminalState.history.length; index++) {
-            const command = terminalState.history[index];
-            if (command === 'clear') {
-                terminalInstance.clear();
-                continue;
-            }
-
-            terminalInstance.writeln(`${terminalState.prompt} ${command}`);
-            const output = getTerminalCommandOutput(command, terminalState.history.slice(0, index + 1));
-            if (output) {
-                for (const line of output.split(/\r?\n/g)) {
-                    terminalInstance.writeln(line);
-                }
-            }
-        }
-        writePrompt();
-
-        terminalInstance.onData((data: string) => {
-            if (!terminalInstance) {
-                return;
-            }
-
-            if (data === '\r') {
-                const command = terminalInputBuffer;
-                terminalInputBuffer = '';
-                terminalInstance.write('\r\n');
-                const output = runTerminalCommand(command, terminalInstance);
-                if (output) {
-                    terminalInstance.writeln(output);
-                }
-                writePrompt();
-                requestChecklistRefreshAfterCommand(command);
-                return;
-            }
-
-            if (data === '\u007f') {
-                if (terminalInputBuffer.length > 0) {
-                    terminalInputBuffer = terminalInputBuffer.slice(0, -1);
-                    terminalInstance.write('\b \b');
-                }
-                return;
-            }
-
-            if (data >= ' ' && data <= '~') {
-                terminalInputBuffer += data;
-                terminalInstance.write(data);
-            }
-        });
-
-        if (terminalState.restoreFocus) {
-            window.requestAnimationFrame(() => {
-                terminalInstance?.focus();
-                terminalState.restoreFocus = false;
-            });
-        }
-    }
-
-    const terminal = {
-        run(command: string): string {
-            const result = runTerminalCommand(command, terminalInstance);
-            if (terminalInstance) {
-                if (command.trim() === 'clear') {
-                    terminalInstance.clear();
-                } else {
-                    terminalInstance.writeln(`${terminalState.prompt} ${command}`);
-                }
-                if (result) {
-                    terminalInstance.writeln(result);
-                }
-                terminalInstance.write(`${terminalState.prompt} `);
-            }
-            requestChecklistRefreshAfterCommand(command);
-            return result;
-        },
-        history(): string[] {
-            return terminalState.history.slice();
-        },
-        clear(): void {
-            terminalState.history.length = 0;
-        },
-        last(): string | undefined {
-            return terminalState.history[terminalState.history.length - 1];
-        },
-        didRun(command: string): boolean {
-            return terminalState.history.some(item => item.trim() === command.trim());
-        }
-    };
-
-    function appendFeedback(message: string, category: messageType = 'info', isHtml: boolean = false) {
-        const el = document.createElement('div');
-        el.classList.add(category);
-        if (isHtml) {
-            el.innerHTML = message;
-        } else {
-            el.innerHTML = renderSmartText(message);
-        }
-        feedback.append(el);
-    }
-
-    function addFeedback(message: string, category: messageType = 'info', isHtml: boolean = false) {
-        feedback.innerHTML = '';
-        appendFeedback(message, category, isHtml);
-    }
-    function addChecklistFeedback(results: FileCheckResult[], title?: string, options: { checkedAt?: number; intervalMs?: number; autoRefresh?: boolean } = {}): boolean {
-        feedback.innerHTML = '';
-
-        const allPassed = results.length > 0 && results.every(result => result.passed);
-        const refreshIntervalMs = options.intervalMs ?? 0;
-        const wrapper = document.createElement('div');
-        const isChecking = !allPassed && !!options.autoRefresh && refreshIntervalMs > 0;
-        wrapper.classList.add('checklist-feedback', allPassed ? 'success' : 'error');
-        if (isChecking) {
-            wrapper.classList.add('running');
-        }
-
-        const heading = document.createElement('div');
-        heading.classList.add('checklist-title');
-        heading.innerHTML = renderMarkdownInline(title || (allPassed ? 'Checklist complete' : 'Checklist needs work'));
-        wrapper.appendChild(heading);
-
-        if (options.checkedAt || options.autoRefresh) {
-            const meta = document.createElement('div');
-            meta.classList.add('checklist-meta');
-            const parts: string[] = [];
-            if (options.checkedAt) {
-                parts.push(`Last checked ${new Date(options.checkedAt).toLocaleTimeString()}`);
-            }
-            if (isChecking) {
-                parts.push(`checking again every ${formatChecklistInterval(refreshIntervalMs)}`);
-            }
-            if (allPassed) {
-                parts.push('all items complete');
-            }
-            meta.textContent = parts.join(' · ');
-            wrapper.appendChild(meta);
-        }
-
-        if (results.length === 0) {
-            const empty = document.createElement('div');
-            empty.classList.add('checklist-empty');
-            empty.textContent = 'No checklist items were provided.';
-            wrapper.appendChild(empty);
-            feedback.append(wrapper);
-            return false;
-        }
-
-        const list = document.createElement('ul');
-        list.classList.add('checklist-items');
-
-        for (const result of results) {
-            const item = document.createElement('li');
-            item.classList.add('checklist-item', result.passed ? 'passed' : 'failed');
-
-            const status = document.createElement('span');
-            status.classList.add('checklist-status');
-            status.textContent = result.passed ? 'Pass' : 'Fix';
-
-            const body = document.createElement('span');
-            body.classList.add('checklist-body');
-
-            const label = document.createElement('span');
-            label.classList.add('checklist-label');
-            label.innerHTML = renderMarkdownInline(result.label);
-            body.appendChild(label);
-
-            if (!result.passed && result.detail) {
-                const detail = document.createElement('span');
-                detail.classList.add('checklist-detail');
-                detail.innerHTML = renderMarkdownInline(result.detail);
-                body.appendChild(detail);
-            }
-
-            item.append(status, body);
-            list.appendChild(item);
-        }
-
-        wrapper.appendChild(list);
-        feedback.append(wrapper);
-        return allPassed;
-    }
-    function addConsoleMessage(objects: ConsoleObjectView[], category: messageType = 'info') {
-        const el = document.createElement('div');
-        el.classList.add(category, 'console-message');
-        for (const obj of objects) {
-            const view = obj.getElement();
-            el.append(view);
-        }
-        consoleElement.append(el);
-    }
-
-    function formatConsoleValue(value: any): string {
-        if (typeof value === 'string') {
-            return value;
-        }
-        if (value instanceof Error) {
-            return value.message;
-        }
-        if (value === undefined) {
-            return 'undefined';
-        }
-        if (typeof value === 'symbol') {
-            return value.toString();
-        }
-        if (typeof value === 'object' && value !== null) {
-            try {
-                return JSON.stringify(value);
-            } catch {
-                return String(value);
-            }
-        }
-
-        return String(value);
-    }
-
-    function consoleEntryMatches(entry: ConsoleHistoryEntry, expected: string | RegExp): boolean {
-        if (typeof expected === 'string') {
-            return entry.text.includes(expected);
-        }
-
-        expected.lastIndex = 0;
-        return expected.test(entry.text);
-    }
-
-    function recordConsoleMessage(method: ConsoleMethod, args: any[]): void {
-        const entry: ConsoleHistoryEntry = {
-            method,
-            args: args.slice(),
-            text: args.map(formatConsoleValue).join(' '),
-            timestamp: Date.now()
-        };
-        consoleHistory.push(entry);
-        addConsoleMessage(args.map(arg => new ConsoleObjectView(arg)), consoleMethodToMessageType(method));
-    }
-
-    const consoleMirror = originalWindowConsole ?? window.console;
-    const console = {
-        debug: (...args: any[]) => {
-            recordConsoleMessage('debug', args);
-            (consoleMirror.debug ?? consoleMirror.log).apply(consoleMirror, args);
-        },
-        error: (...args: any[]) => {
-            recordConsoleMessage('error', args);
-            (consoleMirror.error ?? consoleMirror.log).apply(consoleMirror, args);
-        },
-        info: (...args: any[]) => {
-            recordConsoleMessage('info', args);
-            (consoleMirror.info ?? consoleMirror.log).apply(consoleMirror, args);
-        },
-        log: (...args: any[]) => {
-            recordConsoleMessage('log', args);
-            consoleMirror.log(...args);
-        },
-        trace: (...args: any[]) => {
-            recordConsoleMessage('trace', args);
-            (consoleMirror.trace ?? consoleMirror.log).apply(consoleMirror, args);
-        },
-        warn: (...args: any[]) => {
-            recordConsoleMessage('warn', args);
-            (consoleMirror.warn ?? consoleMirror.log).apply(consoleMirror, args);
-        },
-        history: (): ConsoleHistoryEntry[] => consoleHistory.map(entry => ({
-            ...entry,
-            args: entry.args.slice()
-        })),
-        didLog: (expected: string | RegExp): boolean => consoleHistory.some(entry => consoleEntryMatches(entry, expected)),
-        clear: (): void => {
-            consoleHistory.length = 0;
-            consoleElement.innerHTML = '';
-        }
-    };
+    const { appendFeedback, addFeedback } = createFeedback(feedback);
+    const { console, recordConsoleMessage } = createCellConsole(consoleElement);
+    const addChecklistFeedback = createChecklistFeedback(feedback);
+    const checkApi = createCheckApi({
+        files,
+        terminal,
+        didLog: expected => console.didLog(expected),
+        addFeedback,
+        deferChecklistRendering,
+        addChecklistFeedback
+    });
+    const check = checkApi.check;
+    const file = checkApi.file;
+    const checklist = checkApi.checklist;
+    const createFileResult = checkApi.createFileResult;
 
     const sy = cy;
-    function assert(selector: string, passMessage: string, failMessage: string) {
-        const onResult = (passed: boolean, message: string, _trace: string[]) => {
-            if (passed) {
-                appendFeedback(`${message}`, 'success');
-            } else {
-                appendFeedback(`${message}`, 'error');
-            }
-        };
+    const reportAssertion = (passed: boolean, message: string, _trace: string[]) => {
+        appendFeedback(`${message}`, passed ? 'success' : 'error');
+    };
+    function assert(selector: string) {
+        const onResult = reportAssertion;
         // Browsers strip <html> and <body> when setting innerHTML on a div, so
         // these structural elements won't be found in the container. Parse the
         // source with DOMParser instead so document-structure assertions work.
@@ -1635,293 +185,10 @@ export function render({ container, feedback, mime, value, style, addStyle, cons
     }
 
     function assertRule(selector: string) {
-        return cy.getRule(selector, (passed: boolean, message: string, _trace: string[]) => {
-            if (passed) {
-                appendFeedback(`${message}`, 'success');
-            } else {
-                appendFeedback(`${message}`, 'error');
-            }
-        });
+        return cy.getRule(selector, reportAssertion);
     }
-    function wrap(object: any, passMessage: string, failMessage: string) {
-        return cy.wrap(object, (passed: boolean, message: string, _trace: string[]) => {
-            if (passed) {
-                appendFeedback(`${message}`, 'success');
-            } else {
-                appendFeedback(`${message}`, 'error');
-            }
-        });
-    }
-
-    function normalizeWorkspacePath(path: string): string {
-        return path.trim().replace(/\\/g, '/').split('/').filter(part => part && part !== '.').join('/');
-    }
-
-    function getFileSnapshot(path: string): WorkspaceFileSnapshotEntry {
-        const normalizedPath = normalizeWorkspacePath(path);
-        return files[normalizedPath] || files[path] || {
-            path: normalizedPath || path,
-            exists: false,
-            error: `Add \`${path}\` to a \`+files\` block before checking it.`
-        };
-    }
-
-    function createFileResult(label: string, passed: boolean, detail?: string, path?: string): FileCheckResult {
-        return {
-            label,
-            passed,
-            detail,
-            path,
-            run(failMessage?: string, successMessage?: string) {
-                if (passed) {
-                    addFeedback(successMessage || label, 'success');
-                } else {
-                    addFeedback(failMessage || detail || label, 'error');
-                }
-            }
-        };
-    }
-
-    function describeFileEntry(entry: WorkspaceFileSnapshotEntry): string {
-        if (entry.error) {
-            return entry.error;
-        }
-        if (!entry.exists) {
-            return `\`${entry.path}\` does not exist.`;
-        }
-        if (entry.type) {
-            return `\`${entry.path}\` exists, but it is a ${entry.type}.`;
-        }
-        return `\`${entry.path}\` exists, but its type could not be determined.`;
-    }
-
-    function createFileCheck(path: string, expectedType?: 'file' | 'directory', label?: string): FileCheckBuilder {
-        const normalizedPath = normalizeWorkspacePath(path);
-        const defaultLabel = label || (
-            expectedType === 'directory'
-                ? `Create a directory named \`${normalizedPath}\``
-                : expectedType === 'file'
-                    ? `Create a file named \`${normalizedPath}\``
-                    : `Create \`${normalizedPath}\``
-        );
-
-        function typeResult(type: 'file' | 'directory' | undefined, resultLabel: string): FileCheckResult {
-            const entry = getFileSnapshot(path);
-            const passed = entry.exists && (!type || entry.type === type);
-            const detail = passed
-                ? undefined
-                : entry.exists && type
-                    ? `Expected \`${entry.path}\` to be a ${type}, but found ${entry.type || 'unknown'}.`
-                    : describeFileEntry(entry);
-            return createFileResult(resultLabel, passed, detail, normalizedPath);
-        }
-
-        function contentResult(resultLabel: string, predicate: (content: string) => boolean, failDetail: string): FileCheckResult {
-            const entry = getFileSnapshot(path);
-            if (!entry.exists || entry.type !== 'file') {
-                return createFileResult(resultLabel, false, describeFileEntry(entry), normalizedPath);
-            }
-            if (entry.content === undefined) {
-                return createFileResult(resultLabel, false, entry.error || `Contents for \`${entry.path}\` were not loaded.`, normalizedPath);
-            }
-            const passed = predicate(entry.content);
-            return createFileResult(resultLabel, passed, passed ? undefined : failDetail, normalizedPath);
-        }
-
-        const builder: FileCheckBuilder = {
-            toResult() {
-                return typeResult(expectedType, defaultLabel);
-            },
-            run(failMessage?: string, successMessage?: string) {
-                this.toResult().run(failMessage, successMessage);
-            },
-            exists(resultLabel?: string) {
-                return typeResult(undefined, resultLabel || `Create \`${normalizedPath}\``);
-            },
-            isFile(resultLabel?: string) {
-                return typeResult('file', resultLabel || `Create a file named \`${normalizedPath}\``);
-            },
-            isDirectory(resultLabel?: string) {
-                return typeResult('directory', resultLabel || `Create a directory named \`${normalizedPath}\``);
-            },
-            contains(text: string, resultLabel?: string) {
-                return contentResult(
-                    resultLabel || `In \`${normalizedPath}\`, include \`${text}\``,
-                    content => content.includes(text),
-                    `Expected \`${normalizedPath}\` to include \`${text}\`.`
-                );
-            },
-            notContains(text: string, resultLabel?: string) {
-                return contentResult(
-                    resultLabel || `In \`${normalizedPath}\`, do not include \`${text}\``,
-                    content => !content.includes(text),
-                    `Expected \`${normalizedPath}\` not to include \`${text}\`.`
-                );
-            },
-            matches(pattern: RegExp | string, resultLabel?: string) {
-                let regex: RegExp;
-                try {
-                    regex = typeof pattern === 'string' ? new RegExp(pattern) : pattern;
-                } catch (error) {
-                    return createFileResult(resultLabel || `In \`${normalizedPath}\`, match \`${pattern}\``, false, `Invalid regular expression: ${error}`, normalizedPath);
-                }
-
-                return contentResult(
-                    resultLabel || `In \`${normalizedPath}\`, match \`${regex}\``,
-                    content => {
-                        regex.lastIndex = 0;
-                        return regex.test(content);
-                    },
-                    `Expected \`${normalizedPath}\` to match \`${regex}\`.`
-                );
-            },
-            equals(text: string, resultLabel?: string) {
-                return contentResult(
-                    resultLabel || `Make \`${normalizedPath}\` exactly match the expected contents`,
-                    content => content === text,
-                    `Expected \`${normalizedPath}\` to exactly match the expected contents.`
-                );
-            },
-            hasEntry(name: string, resultLabel?: string) {
-                const entry = getFileSnapshot(path);
-                const label = resultLabel || `Inside \`${normalizedPath}\`, create \`${name}\``;
-                if (!entry.exists || entry.type !== 'directory') {
-                    return createFileResult(label, false, describeFileEntry(entry), normalizedPath);
-                }
-
-                const passed = !!entry.entries?.some(child => child.name === name);
-                return createFileResult(
-                    label,
-                    passed,
-                    passed ? undefined : `Expected \`${normalizedPath}\` to contain \`${name}\`.`,
-                    normalizedPath
-                );
-            }
-        };
-
-        return builder;
-    }
-
-    function createChecklistSourceResult(parsedCheck: FileChecklistCheck): FileCheckResult {
-        if (parsedCheck.kind === 'command') {
-            const command = (parsedCheck.path || '').trim();
-            const passed = terminal.didRun(command);
-            return createFileResult(
-                parsedCheck.label || `Run command \`${command}\``,
-                passed,
-                passed ? undefined : `Expected command history to include \`${command}\`.`,
-                command
-            );
-        }
-
-        const builder = createFileCheck(parsedCheck.path);
-
-        if (parsedCheck.kind === 'directory') {
-            return builder.isDirectory(parsedCheck.label);
-        }
-        if (parsedCheck.kind === 'file') {
-            return builder.isFile(parsedCheck.label);
-        }
-        if (parsedCheck.kind === 'path') {
-            return builder.exists(parsedCheck.label);
-        }
-        if (parsedCheck.kind === 'contains') {
-            return builder.contains(parsedCheck.value || '', parsedCheck.label);
-        }
-        if (parsedCheck.kind === 'notContains') {
-            return builder.notContains(parsedCheck.value || '', parsedCheck.label);
-        }
-        if (parsedCheck.kind === 'matches') {
-            return builder.matches(parseRegexLike(parsedCheck.value || ''), parsedCheck.label);
-        }
-        if (parsedCheck.kind === 'equals') {
-            return builder.equals(parsedCheck.value || '', parsedCheck.label);
-        }
-        return builder.hasEntry(parsedCheck.value || '', parsedCheck.label);
-    }
-
-    function createCommandCheck(command: string, label?: string): FileCheckResult {
-        const normalized = command.trim();
-        const passed = terminal.didRun(normalized);
-        return createFileResult(
-            label || `Run command \`${normalized}\``,
-            passed,
-            passed ? undefined : `Expected command history to include \`${normalized}\`.`,
-            normalized
-        );
-    }
-
-    function createCommandSequenceCheck(commands: string[], label?: string): FileCheckResult {
-        const expected = commands.map(command => command.trim()).filter(Boolean);
-        const actual = terminal.history();
-        let position = -1;
-        let missing: string | undefined;
-
-        for (const command of expected) {
-            const nextIndex = actual.findIndex((value, index) => index > position && value.trim() === command);
-            if (nextIndex < 0) {
-                missing = command;
-                break;
-            }
-            position = nextIndex;
-        }
-
-        const passed = !missing;
-        return createFileResult(
-            label || `Run commands in order: ${expected.map(command => `\`${command}\``).join(', ')}`,
-            passed,
-            passed ? undefined : `Expected to find \`${missing}\` in order within command history.`,
-            expected.join(' -> ')
-        );
-    }
-
-    function createConsoleLogCheck(expected: string | RegExp, label?: string): FileCheckResult {
-        const passed = console.didLog(expected);
-        const expectedLabel = typeof expected === 'string' ? `\`${expected}\`` : `\`${expected.toString()}\``;
-        return createFileResult(
-            label || `Log ${expectedLabel} to the console`,
-            passed,
-            passed ? undefined : `Expected console history to include ${expectedLabel}.`
-        );
-    }
-
-    const check = {
-        path: (path: string, label?: string) => createFileCheck(path, undefined, label),
-        file: (path: string, label?: string) => createFileCheck(path, 'file', label),
-        directory: (path: string, label?: string) => createFileCheck(path, 'directory', label),
-        exists: (path: string, label?: string) => createFileCheck(path, undefined, label).exists(label),
-        command: (command: string, label?: string) => createCommandCheck(command, label),
-        commands: (commands: string[], label?: string) => createCommandSequenceCheck(commands, label),
-        consoleLogged: (expected: string | RegExp, label?: string) => createConsoleLogCheck(expected, label)
-    };
-
-    function file(path: string): FileCheckBuilder {
-        return check.file(path);
-    }
-
-    function isFileCheckBuilder(item: ChecklistInput): item is FileCheckBuilder {
-        return typeof (item as FileCheckBuilder).toResult === 'function';
-    }
-
-    function checklist(titleOrItems: string | ChecklistInput[], maybeItems?: ChecklistInput[]): boolean {
-        const title = typeof titleOrItems === 'string' ? titleOrItems : undefined;
-        const items = Array.isArray(titleOrItems) ? titleOrItems : (maybeItems || []);
-        const results: FileCheckResult[] = items.map((item): FileCheckResult => {
-            if (isFileCheckBuilder(item)) {
-                return item.toResult();
-            }
-            return item;
-        });
-
-        if (deferChecklistRendering) {
-            if (title) {
-                deferredChecklistTitle = title;
-            }
-            deferredChecklistResults.push(...results);
-            return results.length > 0 && results.every(result => result.passed);
-        }
-
-        return addChecklistFeedback(results, title);
+    function wrap(object: any) {
+        return cy.wrap(object, reportAssertion);
     }
 
     function scheduleChecklistRefresh(allPassed: boolean, intervalMs: number): void | (() => void) {
@@ -1930,7 +197,7 @@ export function render({ container, feedback, mime, value, style, addStyle, cons
         }
 
         const timer = window.setTimeout(() => {
-            context.postMessage?.({
+            postToHost({
                 type: 'webnb.refreshCell',
                 cellUri: value.cellUri
             });
@@ -1939,37 +206,21 @@ export function render({ container, feedback, mime, value, style, addStyle, cons
         return () => window.clearTimeout(timer);
     }
 
-    mountTerminal();
+    // Every exit path returns this same cleanup — a missed early return here
+    // used to leak the xterm instance when compilation failed.
+    const cleanup = () => {
+        htmlConsoleCleanup?.();
+        refreshCleanup?.();
+        walkthroughHoverBridge?.dispose();
+        reactRoot?.unmount();
+        terminalController.dispose();
+    };
+
+    terminalController.mount();
 
     if (language === 'html') {
         container.innerHTML = source;
-        installWindowConsoleProxy();
-
-        const reportHtmlConsole = (method: ConsoleMethod, args: any[]) => {
-            recordConsoleMessage(method, args);
-        };
-        const activateHtmlConsoleReporter = () => {
-            activeConsoleReporter = reportHtmlConsole;
-            queueMicrotask(() => {
-                if (activeConsoleReporter === reportHtmlConsole) {
-                    activeConsoleReporter = undefined;
-                }
-            });
-        };
-        const restoreWrappedHtmlHandlers = wrapHtmlConsoleHandlers(container, reportHtmlConsole);
-
-        for (const eventType of HTML_CONSOLE_EVENT_TYPES) {
-            container.addEventListener(eventType, activateHtmlConsoleReporter, true);
-        }
-        htmlConsoleCleanup = () => {
-            restoreWrappedHtmlHandlers();
-            if (activeConsoleReporter === reportHtmlConsole) {
-                activeConsoleReporter = undefined;
-            }
-            for (const eventType of HTML_CONSOLE_EVENT_TYPES) {
-                container.removeEventListener(eventType, activateHtmlConsoleReporter, true);
-            }
-        };
+        htmlConsoleCleanup = attachHtmlConsoleCapture(container, recordConsoleMessage);
 
         for (const { type, content } of activeAddons) {
             if (isScriptAddon(type)) {
@@ -1978,33 +229,8 @@ export function render({ container, feedback, mime, value, style, addStyle, cons
             } else if (isCssAddon(type)) {
                 addStyle(content);
             }
-
         }
 
-        // addFeedback(`Rendered HTML with ${source.length} characters.`);
-        // try {
-        //     cy(container).get('h1').should('exist');
-        //     addFeedback('Cypress assertion: h1 exists', 'success');
-        // } catch (error) {
-        //     addFeedback(`Error in Cypress assertion: ${error}`, 'error');
-        // }
-        //         `<h1>Output!:</h1>
-        // <div id="outp"></div>
-        // ${source}
-        // <script>
-        // function addToOutput(message) {
-        // console.log(message);
-        // const h1 = document.querySelector('h1');
-        // h1.textContent = 'Output from the web notebook renderer:';
-        //     const outputDiv = document.querySelector('#outp');
-        //     if (outputDiv) {
-        //         const pre = document.createElement('pre');
-        //         pre.append(message);
-        //         outputDiv.appendChild(pre);
-        //     }
-        // }
-        // addToOutput('This is a message from the web notebook renderer.');
-        // </script>`;
     } else if (language === 'css') {
         addStyle(source);
         for (const { type, content } of activeAddons) {
@@ -2016,27 +242,9 @@ export function render({ container, feedback, mime, value, style, addStyle, cons
                 eval(content);
             }
         }
-        /*
-        const ast = css.parse(source);
-        
-        let numSelectors: number = 0;
-        let numRules: number = 0;
-        if(ast.stylesheet) {
-            numSelectors = ast.stylesheet.rules.length;
-            for (const rule of ast.stylesheet.rules) {
-                if (rule.type === 'rule') {
-                    if(rule.selectors) {
-                        numRules += rule.selectors.length;
-                    }
-                }
-            }
-        }
-
-        container.innerText = `CSS with ${numRules} rules`;
-        */
     } else if (isExternalCheckLanguage(language)) {
         const parsedChecklist = parseFileChecklistSource(source);
-        const results = parsedChecklist.checks.map(check => createChecklistSourceResult(check));
+        const results = parsedChecklist.checks.map(parsedCheck => checkApi.createChecklistSourceResult(parsedCheck));
         for (const error of parsedChecklist.errors) {
             results.push(createFileResult(error, false, error));
         }
@@ -2049,10 +257,11 @@ export function render({ container, feedback, mime, value, style, addStyle, cons
                 }
             }
         }
-        results.push(...deferredChecklistResults);
+        const deferred = checkApi.getDeferred();
+        results.push(...deferred.results);
 
         const shouldRefresh = results.length > 0 && !terminalConfig;
-        const allPassed = addChecklistFeedback(results, parsedChecklist.title || deferredChecklistTitle, {
+        const allPassed = addChecklistFeedback(results, parsedChecklist.title || deferred.title, {
             checkedAt: value.checkedAt,
             intervalMs: parsedChecklist.intervalMs,
             autoRefresh: shouldRefresh
@@ -2064,7 +273,7 @@ export function render({ container, feedback, mime, value, style, addStyle, cons
         const canOpenFiles = typeof value.cellUri === 'string' && typeof context.postMessage === 'function';
         const openFile = canOpenFiles
             ? (path: string, line?: number) => {
-                context.postMessage?.({
+                postToHost({
                     type: 'webnb.openWorkspaceFile',
                     cellUri: value.cellUri,
                     path,
@@ -2076,7 +285,7 @@ export function render({ container, feedback, mime, value, style, addStyle, cons
         // has the file open, narrowing to one line over the code; no path clears it.
         walkthroughHoverBridge = canOpenFiles
             ? createWalkthroughHoverBridge(focus => {
-                context.postMessage?.({
+                postToHost({
                     type: 'webnb.highlightWorkspaceLines',
                     cellUri: value.cellUri,
                     path: focus?.path,
@@ -2095,151 +304,29 @@ export function render({ container, feedback, mime, value, style, addStyle, cons
             refreshCleanup = scheduleChecklistRefresh(false, parsedWalkthrough.watchIntervalMs);
         }
     } else if (language === 'mcq') {
-        const { question, options, correctFeedback, wrongFeedback, shuffle, deterministic } = parseMcqSource(source);
-        if (!question || options.length === 0) {
-            addFeedback('MCQ cells need a question plus at least one option.', 'error');
-            return () => {
-                refreshCleanup?.();
-                walkthroughHoverBridge?.dispose();
-                reactRoot?.unmount();
-                terminalInstance?.dispose();
-            };
-        }
-
-        const persistedSelections = parseMcqSelectionAddonContent(
-            getAddonContent(activeAddons, 'selection') || getAddonContent(activeAddons, 'mcq-selection') || '',
-            options.length
-        );
-        const persistedSelectionSet = new Set<number>(persistedSelections);
-
-        const numCorrect = options.filter(o => o.correct).length;
-        const inputType = numCorrect > 1 ? 'checkbox' : 'radio';
-        const displayOptions = getMcqDisplayOptions(options, shuffle, deterministic, `${value.cellUri || ''}\n${source}`);
-
-        const form = document.createElement('form');
-        form.classList.add('mcq-form');
-
-        const questionEl = document.createElement('div');
-        questionEl.classList.add('mcq-question');
-        questionEl.innerHTML = renderMarkdownBlock(question);
-        form.appendChild(questionEl);
-
-        const optionFeedbackEls = new Map<number, HTMLDivElement>();
-
-        displayOptions.forEach(opt => {
-            const optionRow = document.createElement('div');
-            optionRow.classList.add('mcq-option-row');
-
-            const label = document.createElement('label');
-            label.classList.add('mcq-option');
-
-            const input = document.createElement('input');
-            input.type = inputType;
-            input.name = 'mcq-option';
-            input.value = opt.originalIndex.toString();
-            input.checked = persistedSelectionSet.has(opt.originalIndex);
-
-            label.appendChild(input);
-            const span = document.createElement('span');
-            span.innerHTML = renderMarkdownInline(opt.text);
-            label.appendChild(span);
-
-            const optionFeedbackEl = document.createElement('div');
-            optionFeedbackEl.classList.add('mcq-option-feedback');
-            optionFeedbackEl.hidden = true;
-
-            optionFeedbackEls.set(opt.originalIndex, optionFeedbackEl);
-            optionRow.append(label, optionFeedbackEl);
-            form.appendChild(optionRow);
-        });
-
-        const checkBtn = document.createElement('button');
-        checkBtn.textContent = 'Check Answer';
-        checkBtn.type = 'button';
-        checkBtn.classList.add('mcq-check-button');
-
-        const persistSelectionState = () => {
-            if (!value.cellUri || typeof context.postMessage !== 'function') {
-                return;
-            }
-
-            const selectedIndexes = Array.from(form.querySelectorAll<HTMLInputElement>('input'))
-                .map(input => (input.checked ? Number(input.value) : -1))
-                .filter(index => Number.isInteger(index) && index >= 0 && index < options.length)
-                .sort((left, right) => left - right);
-
-            context.postMessage?.({
-                type: 'webnb.upsertCellAddon',
-                cellUri: value.cellUri,
-                addonType: 'selection',
-                content: serializeMcqSelectionAddonContent(selectedIndexes)
-            });
-        };
-
-        form.querySelectorAll<HTMLInputElement>('input').forEach(input => {
-            input.addEventListener('change', () => {
-                persistSelectionState();
-            });
-        });
-
-        checkBtn.addEventListener('click', () => {
-            persistSelectionState();
-            const inputs = form.querySelectorAll<HTMLInputElement>('input');
-            const checkedInputs = Array.from(inputs).filter(input => input.checked);
-
-            optionFeedbackEls.forEach(el => {
-                el.hidden = true;
-                el.className = 'mcq-option-feedback';
-                el.textContent = '';
-            });
-
-            if (checkedInputs.length === 0) {
-                addFeedback('Select at least one answer before checking.', 'error');
-                return;
-            }
-
-            let allCorrect = true;
-            const checkedIndexes = new Set(
-                checkedInputs
-                    .map(input => Number(input.value))
-                    .filter(index => Number.isInteger(index) && index >= 0 && index < options.length)
-            );
-
-            displayOptions.forEach(opt => {
-                const itemIsCorrect = checkedIndexes.has(opt.originalIndex) === opt.correct;
-                if (!itemIsCorrect) {
-                    allCorrect = false;
+        renderMcqCell({
+            container,
+            source,
+            addons: activeAddons,
+            shuffleSeedSource: `${value.cellUri || ''}\n${source}`,
+            addFeedback,
+            persistSelection: value.cellUri && typeof context.postMessage === 'function'
+                ? content => {
+                    postToHost({
+                        type: 'webnb.upsertCellAddon',
+                        cellUri: value.cellUri,
+                        addonType: 'selection',
+                        content
+                    });
                 }
-
-                const itemFeedback = itemIsCorrect ? opt.correctFeedback : opt.wrongFeedback;
-                if (itemFeedback) {
-                    const optionFeedbackEl = optionFeedbackEls.get(opt.originalIndex);
-                    if (optionFeedbackEl) {
-                        optionFeedbackEl.hidden = false;
-                        optionFeedbackEl.classList.add(itemIsCorrect ? 'success' : 'error');
-                        optionFeedbackEl.innerHTML = renderMarkdownInline(itemFeedback);
-                    }
-                }
-            });
-
-            if (allCorrect) {
-                addFeedback(renderMarkdownInline(correctFeedback || 'Correct!'), 'success', true);
-            } else {
-                addFeedback(renderMarkdownInline(wrongFeedback || 'Incorrect. Try again.'), 'error', true);
-            }
+                : undefined
         });
-
-        form.appendChild(checkBtn);
-        container.appendChild(form);
-
     } else if (getRuntimeLanguageKind(language)) {
         for (const { type, content } of activeAddons) {
             if (isHtmlAddon(type)) {
                 container.innerHTML = content;
             } else if (isCssAddon(type)) {
                 addStyle(content);
-                // } else if(type === 'test' || type === 'javascript' || type === 'js') {
-                //     eval(content);
             }
         }
 
@@ -2253,42 +340,11 @@ export function render({ container, feedback, mime, value, style, addStyle, cons
         (document as any).body = container;
 
         const ReactDOM = { createRoot };
-        const pathModule = {
-            join: (...parts: string[]) => parts.filter(Boolean).join('/').replace(/\/+/g, '/'),
-            basename: (value: string) => value.split('/').filter(Boolean).pop() || '',
-            dirname: (value: string) => {
-                const parts = value.split('/').filter(Boolean);
-                return parts.length <= 1 ? '.' : parts.slice(0, -1).join('/');
-            },
-            extname: (value: string) => {
-                const base = value.split('/').filter(Boolean).pop() || '';
-                const dotIndex = base.lastIndexOf('.');
-                return dotIndex <= 0 ? '' : base.slice(dotIndex);
-            }
-        };
-        const runtimeRequire = (moduleName: string) => {
-            if (moduleName === 'react') {
-                return React;
-            }
-            if (moduleName === 'react-dom/client') {
-                return ReactDOM;
-            }
-            if (moduleName === 'marked') {
-                return { marked };
-            }
-            if (moduleName === 'path') {
-                return pathModule;
-            }
-
-            throw new Error(`Module '${moduleName}' is not available in this web notebook runtime.`);
-        };
-        const nodeProcess = {
-            env: {},
-            argv: [],
-            versions: { node: 'webnb-simulated' },
-            platform: 'webnb',
-            cwd: () => '/workspace'
-        };
+        const runtimeRequire = createRuntimeRequire(ReactDOM);
+        const nodeProcess = createNodeProcess();
+        // Rebound as a local because webpack rewrites import bindings — the
+        // bare name must survive in scope for eval'd cell code that uses it.
+        const pathModule = importedPathModule;
         const renderReact = (element: React.ReactNode, selector = '#root') => {
             const host = container.querySelector(selector);
             if (!host) {
@@ -2301,36 +357,11 @@ export function render({ container, feedback, mime, value, style, addStyle, cons
 
         const runCompiledCode = (compiledCode: string) => {
             const nodeModule: { exports: unknown } = { exports: {} };
-            const nodeExports = nodeModule.exports;
 
-            const execute = new Function(
-                'console',
-                'document',
-                'window',
-                'assert',
-                'assertRule',
-                'wrap',
-                'check',
-                'checklist',
-                'file',
-                'files',
-                'source',
-                'cy',
-                'defaultSource',
-                'terminal',
-                'renderReact',
-                'React',
-                'ReactDOM',
-                'require',
-                'process',
-                'module',
-                'exports',
-                '__dirname',
-                '__filename',
-                compiledCode
-            );
-
-            execute(
+            // One record defines the sandbox: new Function takes its keys as the
+            // parameter names and its values positionally, so the two lists
+            // cannot drift out of sync.
+            const sandboxScope: Record<string, unknown> = {
                 console,
                 document,
                 window,
@@ -2342,19 +373,21 @@ export function render({ container, feedback, mime, value, style, addStyle, cons
                 file,
                 files,
                 source,
-                sy,
+                cy: sy,
                 defaultSource,
                 terminal,
                 renderReact,
                 React,
                 ReactDOM,
-                runtimeRequire,
-                nodeProcess,
-                nodeModule,
-                nodeExports,
-                '.',
-                'cell.js'
-            );
+                require: runtimeRequire,
+                process: nodeProcess,
+                module: nodeModule,
+                exports: nodeModule.exports,
+                __dirname: '.',
+                __filename: 'cell.js'
+            };
+            const execute = new Function(...Object.keys(sandboxScope), compiledCode);
+            execute(...Object.values(sandboxScope));
 
             return nodeModule.exports;
         };
@@ -2371,8 +404,6 @@ export function render({ container, feedback, mime, value, style, addStyle, cons
             if (hasTestAddon) {
                 feedback.innerHTML = '';
             }
-            window.console.log(toEval);
-
             const hasModuleSyntax = /(^|\n)\s*(import|export)[\s{]/m.test(toEval);
             const shouldCompileWithBabel = isReactLanguage || hasModuleSyntax;
 
@@ -2397,7 +428,7 @@ export function render({ container, feedback, mime, value, style, addStyle, cons
                 if (!transformed) {
                     const compileTarget = isReactLanguage ? 'React' : 'module';
                     addFeedback(`${compileTarget} code could not be compiled.`, 'error');
-                    return;
+                    return cleanup;
                 }
 
                 runCompiledCode(transformed);
@@ -2412,25 +443,11 @@ export function render({ container, feedback, mime, value, style, addStyle, cons
         }
     } else {
         const pre = document.createElement('pre');
-        // pre.classList.add(style.json);
         const code = document.createElement('code');
         code.textContent = `mime type: ${mime}\n\n${JSON.stringify(value, null, 2)}`;
         pre.appendChild(code);
         container.appendChild(pre);
     }
 
-    return () => {
-        htmlConsoleCleanup?.();
-        refreshCleanup?.();
-        walkthroughHoverBridge?.dispose();
-        reactRoot?.unmount();
-        terminalInstance?.dispose();
-    };
-}
-
-if (module.hot) {
-    module.hot.addDisposeHandler(() => {
-        // In development, this will be called before the renderer is reloaded. You
-        // can use this to clean up or stash any state.
-    });
+    return cleanup;
 }

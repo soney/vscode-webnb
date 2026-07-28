@@ -20,8 +20,17 @@ import * as fs from 'node:fs';
 import * as fsp from 'node:fs/promises';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import {
+    fileTooLargeError,
+    MAX_FILE_SNAPSHOT_BYTES,
+    normalizeWorkspacePath,
+    RELATIVE_PATHS_ERROR,
+    resolveWorkspaceRelativePath
+} from '../../src/shared/filePaths';
+import type { RequestedPathReference as SnapshotRequest, WorkspaceFileSnapshotEntry } from '../../src/shared/protocol';
 
-const MAX_FILE_SNAPSHOT_BYTES = 1024 * 1024;
+export type { WorkspaceFileSnapshotEntry };
+
 const WEBNB_EXTENSION = '.webnb';
 const IGNORED_DIR_NAMES = new Set(['node_modules', '.git', '.vscode-test', '.vscode-test-web', 'out', 'dist']);
 const ASSET_CONTENT_TYPES: Record<string, string> = {
@@ -45,24 +54,6 @@ const ASSET_CONTENT_TYPES: Record<string, string> = {
     '.js': 'text/javascript; charset=utf-8',
     '.html': 'text/html; charset=utf-8'
 };
-
-export interface WorkspaceFileSnapshotEntry {
-    path: string;
-    /** Workspace-relative path the request resolved to (used by the browser overlay). */
-    resolvedPath?: string;
-    exists: boolean;
-    type?: 'file' | 'directory' | 'symlink' | 'unknown';
-    content?: string;
-    entries?: { name: string; type: string }[];
-    size?: number;
-    error?: string;
-}
-
-interface SnapshotRequest {
-    requestPath: string;
-    path: string;
-    base: 'notebook' | 'workspace';
-}
 
 /**
  * Resolve the workspace root in priority order:
@@ -107,19 +98,6 @@ function safeResolve(workspaceRoot: string, relativePath: string): string | null
         return abs;
     }
     return null;
-}
-
-/** Mirror of webnbProvider.normalizeWorkspacePath. */
-function normalizeWorkspacePath(p: string): string | undefined {
-    const normalizedSlashes = p.trim().replace(/\\/g, '/');
-    if (!normalizedSlashes || normalizedSlashes.startsWith('/') || /^[A-Za-z]:\//.test(normalizedSlashes)) {
-        return undefined;
-    }
-    const parts = normalizedSlashes.split('/').filter(part => part && part !== '.');
-    if (parts.length === 0 || parts.some(part => part === '..')) {
-        return undefined;
-    }
-    return parts.join('/');
 }
 
 function notebookRelativeDir(notebookRelPath: string): string {
@@ -171,14 +149,12 @@ async function snapshotOne(
         return {
             path: request.requestPath,
             exists: false,
-            error: 'File checks must use relative paths without ".." segments.'
+            error: RELATIVE_PATHS_ERROR
         };
     }
 
     const relDir = notebookRelativeDir(notebookRelPath);
-    const workspaceResolvedPath = request.base === 'workspace' || !relDir
-        ? normalizedPath
-        : `${relDir}/${normalizedPath}`;
+    const workspaceResolvedPath = resolveWorkspaceRelativePath(request, normalizedPath, relDir);
 
     const abs = safeResolve(workspaceRoot, workspaceResolvedPath);
     if (!abs) {
@@ -206,7 +182,7 @@ async function snapshotOne(
             if (stat.size <= MAX_FILE_SNAPSHOT_BYTES) {
                 snapshot.content = await fsp.readFile(abs, 'utf-8');
             } else {
-                snapshot.error = `File is larger than ${MAX_FILE_SNAPSHOT_BYTES} bytes, so its contents were not loaded.`;
+                snapshot.error = fileTooLargeError();
             }
         } else if (type === 'directory') {
             const entries = await fsp.readdir(abs, { withFileTypes: true });

@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { errorExecution, warnExecution } from './log';
 
 const NOTEBOOK_TYPE = 'web-notebook';
 const CONFIG_SECTION = 'webnb';
@@ -73,7 +74,7 @@ export class CellStructureLock implements vscode.Disposable {
         try {
             edits = buildRevertEdits(event.contentChanges);
         } catch (error) {
-            console.error('[webnb] Could not read cells removed from %s, leaving the change in place:', key, error);
+            errorExecution('Could not read cells removed from %s, leaving the change in place: %s', key, String(error));
             return;
         }
 
@@ -91,13 +92,13 @@ export class CellStructureLock implements vscode.Disposable {
                 const edit = new vscode.WorkspaceEdit();
                 edit.set(notebook.uri, [notebookEdit]);
                 if (!await vscode.workspace.applyEdit(edit)) {
-                    console.warn('[webnb] Rejected edit while restoring locked cell structure for %s', key);
+                    warnExecution('Rejected edit while restoring locked cell structure for %s', key);
                     return;
                 }
             }
             this._showNotice(key);
         } catch (error) {
-            console.error('[webnb] Failed to restore locked cell structure for %s:', key, error);
+            errorExecution('Failed to restore locked cell structure for %s: %s', key, String(error));
         } finally {
             // The change event for our own edit crosses the same RPC channel as the reply to
             // applyEdit, so it has already been delivered by the time we get here. Clearing a
@@ -121,7 +122,7 @@ export class CellStructureLock implements vscode.Disposable {
 
         burst.count++;
         if (burst.count > MAX_REVERTS_PER_WINDOW) {
-            console.error('[webnb] Too many cell structure reverts for %s, leaving it unlocked briefly', key);
+            warnExecution('Too many cell structure reverts for %s, leaving it unlocked briefly', key);
             return true;
         }
 

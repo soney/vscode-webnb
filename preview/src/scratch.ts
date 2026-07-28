@@ -21,7 +21,6 @@ function emptyScratch(): NotebookScratch {
 export class ScratchStore {
     private readonly storageKey: string;
     private data: NotebookScratch;
-    private listeners = new Set<() => void>();
 
     constructor(workspaceId: string, notebookPath: string) {
         this.storageKey = `${STORAGE_PREFIX}${workspaceId}:${notebookPath}`;
@@ -45,12 +44,6 @@ export class ScratchStore {
         } catch {
             // ignore quota/unavailable
         }
-        for (const listener of this.listeners) { listener(); }
-    }
-
-    onChange(listener: () => void): () => void {
-        this.listeners.add(listener);
-        return () => this.listeners.delete(listener);
     }
 
     // ---- code overrides ----------------------------------------------------

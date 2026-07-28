@@ -287,11 +287,4 @@ export class VirtualFs {
         return node?.kind === 'file' ? node.content : undefined;
     }
 
-    isEmpty(): boolean {
-        return this.nodes.size === 0;
-    }
-
-    fileName(p: string): string {
-        return baseName(p);
-    }
 }
