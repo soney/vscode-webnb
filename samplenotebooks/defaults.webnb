@@ -1,0 +1,31 @@
+# Starter Defaults
+
+Cells with no starter code yet. Editing any of them should record the text it
+had *before* the edit, so "Reset code" returns here. Each cell reports the
+starter it is currently carrying.
+
+A cell with an empty `+default` block (the auto-capture pattern):
+
+```{javascript}
+console.log("EMPTYDEFAULT original");
+console.log("STARTER<EMPTYDEFAULT>|" + JSON.stringify(defaultSource));
+```
+```+default
+```
+
+A cell with no `+default` block at all:
+
+```{javascript}
+console.log("NODEFAULT original");
+console.log("STARTER<NODEFAULT>|" + JSON.stringify(defaultSource));
+```
+
+An autorun cell with an empty `+default`: every edit re-runs it, so the
+execute-time capture races the edit-time one.
+
+```{javascript autorun}
+console.log("AUTORUN original");
+console.log("STARTER<AUTORUN>|" + JSON.stringify(defaultSource));
+```
+```+default
+```

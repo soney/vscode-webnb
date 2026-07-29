@@ -1,10 +1,51 @@
 {
+  "defaults.webnb": [
+    {
+      "containerClass": "webnb-output webnb-output-javascript webnb-output-empty",
+      "output": "",
+      "feedback": "",
+      "feedbackClass": "feedback feedback-javascript",
+      "feedbackKinds": [],
+      "console": "\"EMPTYDEFAULT original\" \"STARTER<EMPTYDEFAULT>|\"console.log(\\\"EMPTYDEFAULT original\\\");\\nconsole.log(\\\"STARTER<EMPTYDEFAULT>|\\\" + JSON.stringify(defaultSource));\"\"",
+      "mcqOptions": [],
+      "checklistItems": [],
+      "walkthroughSteps": 0,
+      "terminalPresent": false
+    },
+    {
+      "containerClass": "webnb-output webnb-output-javascript webnb-output-empty",
+      "output": "",
+      "feedback": "",
+      "feedbackClass": "feedback feedback-javascript",
+      "feedbackKinds": [],
+      "console": "\"NODEFAULT original\" \"STARTER<NODEFAULT>|\"console.log(\\\"NODEFAULT original\\\");\\nconsole.log(\\\"STARTER<NODEFAULT>|\\\" + JSON.stringify(defaultSource));\"\"",
+      "mcqOptions": [],
+      "checklistItems": [],
+      "walkthroughSteps": 0,
+      "terminalPresent": false
+    },
+    {
+      "containerClass": "webnb-output webnb-output-javascript webnb-output-empty",
+      "output": "",
+      "feedback": "",
+      "feedbackClass": "feedback feedback-javascript",
+      "feedbackKinds": [],
+      "console": "\"AUTORUN original\" \"STARTER<AUTORUN>|\"console.log(\\\"AUTORUN original\\\");\\nconsole.log(\\\"STARTER<AUTORUN>|\\\" + JSON.stringify(defaultSource));\"\"",
+      "mcqOptions": [],
+      "checklistItems": [],
+      "walkthroughSteps": 0,
+      "terminalPresent": false
+    }
+  ],
   "sample.webnb": [
     {
       "containerClass": "webnb-output webnb-output-js",
       "output": "Click me Hello",
       "feedback": "Clicked button Set output",
       "feedbackClass": "feedback feedback-js",
+      "feedbackKinds": [
+        "success"
+      ],
       "console": "",
       "mcqOptions": [],
       "checklistItems": [],
@@ -16,6 +57,9 @@
       "output": "Hello Click me",
       "feedback": "Found blue h1 rule",
       "feedbackClass": "feedback feedback-html",
+      "feedbackKinds": [
+        "success"
+      ],
       "console": "",
       "mcqOptions": [],
       "checklistItems": [],
@@ -27,6 +71,9 @@
       "output": "Click me!",
       "feedback": "Button logged to the fake console",
       "feedbackClass": "feedback feedback-html",
+      "feedbackKinds": [
+        "success"
+      ],
       "console": "\"Hello!\"",
       "mcqOptions": [],
       "checklistItems": [],
@@ -38,6 +85,7 @@
       "output": "",
       "feedback": "",
       "feedbackClass": "feedback feedback-html",
+      "feedbackKinds": [],
       "console": "",
       "mcqOptions": [],
       "checklistItems": [],
@@ -49,6 +97,9 @@
       "output": "Hello",
       "feedback": "x is 1",
       "feedbackClass": "feedback feedback-javascript",
+      "feedbackKinds": [
+        "success"
+      ],
       "console": "1 {hello: \"world\"}\"This is a test\"{x: 1, y: 2}[1, 2, 3] \"OK\" \"x is\"1",
       "mcqOptions": [],
       "checklistItems": [],
@@ -60,6 +111,9 @@
       "output": "",
       "feedback": "Node process API available Node computation succeeded",
       "feedbackClass": "feedback feedback-node",
+      "feedbackKinds": [
+        "success"
+      ],
       "console": "\"node-like cwd:\"\"/workspace\"",
       "mcqOptions": [],
       "checklistItems": [],
@@ -71,6 +125,9 @@
       "output": "",
       "feedback": "double(4) should be 8",
       "feedbackClass": "feedback feedback-javascript",
+      "feedbackKinds": [
+        "error"
+      ],
       "console": "",
       "mcqOptions": [],
       "checklistItems": [],
@@ -82,6 +139,9 @@
       "output": "",
       "feedback": "Module import/export worked",
       "feedbackClass": "feedback feedback-node",
+      "feedbackKinds": [
+        "success"
+      ],
       "console": "\"lesson file:\"\"lesson.txt\"",
       "mcqOptions": [],
       "checklistItems": [],
@@ -93,6 +153,9 @@
       "output": "Goodbye",
       "feedback": "Found red h1 rule",
       "feedbackClass": "feedback feedback-css",
+      "feedbackKinds": [
+        "success"
+      ],
       "console": "",
       "mcqOptions": [],
       "checklistItems": [],
@@ -104,6 +167,9 @@
       "output": "React Cell Hello from JSX",
       "feedback": "React output was not rendered",
       "feedbackClass": "feedback feedback-javascriptreact",
+      "feedbackKinds": [
+        "error"
+      ],
       "console": "",
       "mcqOptions": [],
       "checklistItems": [],
@@ -115,6 +181,9 @@
       "output": "Notebook Pro $49",
       "feedback": "Failed to render JSX title Failed to render JSX price",
       "feedbackClass": "feedback feedback-javascriptreact",
+      "feedbackKinds": [
+        "error"
+      ],
       "console": "",
       "mcqOptions": [],
       "checklistItems": [],
@@ -126,6 +195,7 @@
       "output": "",
       "feedback": "",
       "feedbackClass": "feedback feedback-javascript",
+      "feedbackKinds": [],
       "console": "\"Welcome to the notebook! This cell ran automatically.\"",
       "mcqOptions": [],
       "checklistItems": [],
@@ -137,6 +207,7 @@
       "output": "Welcome to the notebook! This cell ran automatically.",
       "feedback": "",
       "feedbackClass": "feedback feedback-html",
+      "feedbackKinds": [],
       "console": "",
       "mcqOptions": [],
       "checklistItems": [],
@@ -148,6 +219,7 @@
       "output": "This content appeared once on first open.",
       "feedback": "",
       "feedbackClass": "feedback feedback-html",
+      "feedbackKinds": [],
       "console": "",
       "mcqOptions": [],
       "checklistItems": [],
@@ -159,6 +231,7 @@
       "output": "Hello! Style me with CSS.",
       "feedback": "",
       "feedbackClass": "feedback feedback-css",
+      "feedbackKinds": [],
       "console": "",
       "mcqOptions": [],
       "checklistItems": [],
@@ -170,6 +243,9 @@
       "output": "",
       "feedback": "External project checklist Last checked <TIME>· checking again every 2 seconds Fix Create a directory named external-example external-example does not exist. Fix Inside external-example, create index.html external-example/index.html does not exist. Fix In index.html, add an h1 heading external-example/index.html does not exist. Fix In index.html, add a non-empty title element external-example/index.html does not exist. Fix Inside external-example, create styles.css external-example/styles.css does not exist. Fix In styles.css, set a font-family external-example/styles.css does not exist.",
       "feedbackClass": "feedback feedback-external",
+      "feedbackKinds": [
+        "checklist-feedback error running"
+      ],
       "console": "",
       "mcqOptions": [],
       "checklistItems": [
@@ -188,6 +264,9 @@
       "output": "",
       "feedback": "Terminal setup practice Last checked <TIME> Fix Create the exercise folder from the terminal Expected command history to include mkdir terminal-example. Fix Move into the exercise folder Expected command history to include cd terminal-example. Fix Initialize a package.json file Expected command history to include npm init -y. Fix Run the setup commands in order Expected to find mkdir terminal-example in order within command history.",
       "feedbackClass": "feedback feedback-external",
+      "feedbackKinds": [
+        "checklist-feedback error"
+      ],
       "console": "",
       "mcqOptions": [],
       "checklistItems": [
@@ -204,6 +283,9 @@
       "output": "",
       "feedback": "Verify git setup commands Last checked <TIME> Fix Initialize a git repository Expected command history to include git init. Fix Run status to inspect the repository Expected command history to include git status. Fix Run git init Expected command history to include git init. Fix Run git status Expected command history to include git status. Fix Run init before status Expected to find git init in order within command history. Fix Use the terminal helper to verify git status ran Expected terminal history to include git status.",
       "feedbackClass": "feedback feedback-external",
+      "feedbackKinds": [
+        "checklist-feedback error"
+      ],
       "console": "",
       "mcqOptions": [],
       "checklistItems": [
@@ -219,9 +301,10 @@
     },
     {
       "containerClass": "webnb-output webnb-output-mcq",
-      "output": "What is the capital of France? Berlin Paris London Check Answer",
+      "output": "What is the capital of France? Berlin Paris London Check AnswerShow Answer",
       "feedback": "",
       "feedbackClass": "feedback feedback-mcq",
+      "feedbackKinds": [],
       "console": "",
       "mcqOptions": [
         "Berlin",
@@ -234,9 +317,10 @@
     },
     {
       "containerClass": "webnb-output webnb-output-mcq",
-      "output": "Which of the following are fruits? (Select all that apply) Apple Carrot Celery Banana Check Answer",
+      "output": "Which of the following are fruits? (Select all that apply) Apple Carrot Celery Banana Check AnswerShow Answer",
       "feedback": "",
       "feedbackClass": "feedback feedback-mcq",
+      "feedbackKinds": [],
       "console": "",
       "mcqOptions": [
         "Apple",
@@ -250,9 +334,10 @@
     },
     {
       "containerClass": "webnb-output webnb-output-mcq",
-      "output": "Which language runs in the browser in this notebook example? Go Rust JavaScript Check Answer",
+      "output": "Which language runs in the browser in this notebook example? Go JavaScript Rust Check AnswerShow Answer",
       "feedback": "",
       "feedbackClass": "feedback feedback-mcq",
+      "feedbackKinds": [],
       "console": "",
       "mcqOptions": [
         "Go",
@@ -265,9 +350,10 @@
     },
     {
       "containerClass": "webnb-output webnb-output-mcq",
-      "output": "Which of the following creates a bold text element in HTML? <br> <strong>text</strong> <em>text</em> Check Answer",
+      "output": "Which of the following creates a bold text element in HTML? <br> <em>text</em> <strong>text</strong> Check AnswerShow Answer",
       "feedback": "",
       "feedbackClass": "feedback feedback-mcq",
+      "feedbackKinds": [],
       "console": "",
       "mcqOptions": [
         "<br>",
@@ -283,6 +369,7 @@
       "output": "",
       "feedback": "",
       "feedbackClass": "feedback feedback-javascript",
+      "feedbackKinds": [],
       "console": "\"hello\"",
       "mcqOptions": [],
       "checklistItems": [],
@@ -294,8 +381,69 @@
       "output": "",
       "feedback": "",
       "feedbackClass": "feedback feedback-javascript",
+      "feedbackKinds": [],
       "console": "\"bye\"",
       "mcqOptions": [],
+      "checklistItems": [],
+      "walkthroughSteps": 0,
+      "terminalPresent": false
+    }
+  ],
+  "solutions.webnb": [
+    {
+      "containerClass": "webnb-output webnb-output-javascript webnb-output-empty",
+      "output": "",
+      "feedback": "double(4) should be 8",
+      "feedbackClass": "feedback feedback-javascript",
+      "feedbackKinds": [
+        "error"
+      ],
+      "console": "",
+      "mcqOptions": [],
+      "checklistItems": [],
+      "walkthroughSteps": 0,
+      "terminalPresent": false
+    },
+    {
+      "containerClass": "webnb-output webnb-output-html",
+      "output": "Make this a heading",
+      "feedback": "",
+      "feedbackClass": "feedback feedback-html",
+      "feedbackKinds": [],
+      "console": "",
+      "mcqOptions": [],
+      "checklistItems": [],
+      "walkthroughSteps": 0,
+      "terminalPresent": false
+    },
+    {
+      "containerClass": "webnb-output webnb-output-mcq",
+      "output": "Which method adds an element to the end of an array? push pop shift Check AnswerShow Answer",
+      "feedback": "",
+      "feedbackClass": "feedback feedback-mcq",
+      "feedbackKinds": [],
+      "console": "",
+      "mcqOptions": [
+        "pop",
+        "push",
+        "shift"
+      ],
+      "checklistItems": [],
+      "walkthroughSteps": 0,
+      "terminalPresent": false
+    },
+    {
+      "containerClass": "webnb-output webnb-output-mcq",
+      "output": "Which keyword declares a constant? const let var Check AnswerShow Answer",
+      "feedback": "",
+      "feedbackClass": "feedback feedback-mcq",
+      "feedbackKinds": [],
+      "console": "",
+      "mcqOptions": [
+        "const",
+        "let",
+        "var"
+      ],
       "checklistItems": [],
       "walkthroughSteps": 0,
       "terminalPresent": false
@@ -307,6 +455,7 @@
       "output": "How the demo notes server works The next few steps read through demo-src/server.js, a tiny HTTP API that stores notes in memory, and then peek at its helpers. 1 Setup The file starts by pulling in Node's http module and two helpers, then sets up the server's state. This snippet is anchored by the #region setup marker in the file, so it keeps working even when the file grows. demo-src/server.js setup · lines 5–10 5 const http = require('http'); 6 const { readBody, sendJson } = require('./utils'); 7 8 const PORT = process.env.PORT || 3000; 9 const notes = new Map(); All the notes live in this Map, keyed by id — restart the server and they are gone. 10 let nextId = 1; Ids are handed out from a simple counter. 2 Routing All routing happens in one function: check the method and URL, handle the match, and fall through to a 404. demo-src/server.js routes · lines 14–27 14 async function handleRequest(request, response) { 15 if (request.method === 'GET' && request.url === '/notes') { Listing notes is just serializing the map's values. 16 return sendJson(response, 200, Array.from(notes.values())); 17 } 18 19 if (request.method === 'POST' && request.url === '/notes') { 20 const body = await readBody(request); The request body is parsed before the note is created. Everything after this line can assume body is a plain object. 21 const note = { id: nextId++, text: body.text }; 22 notes.set(note.id, note); 23 return sendJson(response, 201, note); 24 } 25 26 sendJson(response, 404, { error: 'Not found' }); 27 } 3 Starting up Finally the server is created and started. demo-src/server.js startup · lines 31–39 31 const server = http.createServer((request, response) => { 32 handleRequest(request, response).catch(error => { Any error thrown by a route handler is turned into a JSON 500 response here, so one bad request cannot crash the server. 33 sendJson(response, 500, { error: error.message }); 34 }); 35 }); 36 37 server.listen(PORT, () => { 38 console.log(`Notes API listening on port ${PORT}`); 39 }); 4 The helpers This step uses explicit lines: ranges instead of region markers, so the two helpers show with a gap between them. demo-src/utils.js lines 3–18, 20–23 3 function readBody(request) { 4 return new Promise((resolve, reject) => { 5 let raw = ''; 6 request.on('data', chunk => { 7 raw += chunk; 8 }); 9 request.on('end', () => { 10 try { 11 resolve(raw ? JSON.parse(raw) : {}); 12 } catch (error) { 13 reject(new Error('Body must be valid JSON')); If the body is not valid JSON, the promise rejects and the routing layer turns it into an error response. 14 } 15 }); 16 request.on('error', reject); 17 }); 18 } ⋯ 20 function sendJson(response, status, payload) { 21 response.writeHead(status, { 'Content-Type': 'application/json' }); 22 response.end(JSON.stringify(payload)); 23 } sendJson is the only place that writes to the response, which keeps the content-type header consistent everywhere. 5 One line A step can be as small as a single line. Both helpers leave through this one export. demo-src/utils.js line 25 25 module.exports = { readBody, sendJson };",
       "feedback": "",
       "feedbackClass": "feedback feedback-walkthrough",
+      "feedbackKinds": [],
       "console": "",
       "mcqOptions": [],
       "checklistItems": [],

@@ -1,0 +1,59 @@
+# Solutions and Starter Code
+
+This notebook exercises the reveal buttons (`webnb.allowRevealingSolutions`) and the `+default` reset button.
+
+A JavaScript exercise with a solution and explicit starter code:
+
+```{javascript}
+// Task: implement double(n) so the test passes.
+function double(n) {
+  // TODO
+}
+```
+```+test
+wrap(double(4)).should('equal', 8).run('double(4) should be 8', 'double works');
+```
+```+solution
+function double(n) {
+  return n * 2;
+}
+```
+```+default
+// Task: implement double(n) so the test passes.
+function double(n) {
+  // TODO
+}
+```
+
+An HTML exercise with a solution but no authored starter — editing it captures the
+original text as the default automatically:
+
+```{html}
+<p>Make this a heading</p>
+```
+```+solution
+<h1>Make this a heading</h1>
+```
+
+A multiple choice question with an explanation for when answers are revealed:
+
+```{mcq}
+Which method adds an element to the end of an array?
+shuffle: false
+[x] push
+[ ] pop
+[ ] shift
+```
+```+solution
+`push` appends to the end. `pop` removes from the end, and `shift` removes from the front.
+```
+
+A multiple choice question without an explanation:
+
+```{mcq}
+Which keyword declares a constant?
+shuffle: false
+[x] const
+[ ] let
+[ ] var
+```

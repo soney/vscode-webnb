@@ -13,6 +13,8 @@ import type { NotebookSummary } from './types';
 export interface NotebookViewDeps {
     workspaceId: string;
     vfs: VirtualFs;
+    /** Mirrors VS Code's `webnb.allowRevealingSolutions` setting. */
+    showSolutions: () => boolean;
 }
 
 /** Where the viewport was anchored before a reload, so we can restore it after. */
@@ -100,6 +102,7 @@ export class NotebookView {
                 notebookDir: this.summary.dir,
                 vfs: this.deps.vfs,
                 scratch: this.scratch,
+                showSolutions: this.deps.showSolutions,
                 onEditedChange: () => this.onEditedChange()
             });
             fragment.append(view.element);
@@ -133,6 +136,14 @@ export class NotebookView {
             if (cell.dependsOnFiles()) {
                 void cell.run();
             }
+        }
+    }
+
+    /** Re-render outputs after the solutions toggle changes (mirrors VS Code
+     * refreshing rendered cells when `webnb.allowRevealingSolutions` flips). */
+    onSolutionsChange(): void {
+        for (const cell of this.cells) {
+            cell.rerunIfRan();
         }
     }
 

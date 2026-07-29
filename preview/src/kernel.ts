@@ -36,6 +36,8 @@ export interface BuildOutputParams {
     languageId: string;
     addons: Addon[];
     vfs: VirtualFs;
+    /** The cell's `reveal` attribute (metadata), mirrored into the payload. */
+    reveal?: boolean;
 }
 
 export async function buildOutputValue(params: BuildOutputParams): Promise<WebnbOutputValue> {
@@ -57,6 +59,7 @@ export async function buildOutputValue(params: BuildOutputParams): Promise<Webnb
         addons: getDefaultCaptureAddons(addons, source).addons,
         files,
         cellUri,
-        checkedAt: Date.now()
+        checkedAt: Date.now(),
+        reveal: params.reveal === true
     };
 }

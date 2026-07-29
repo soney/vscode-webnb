@@ -23,6 +23,7 @@ import {
     type WalkthroughHoverBridge
 } from './walkthroughRender';
 import { renderMarkdownBlock, renderMarkdownInline } from './markdown';
+import { renderCellActions } from './cellActions';
 import { createFeedback, type messageType } from './feedback';
 import { attachHtmlConsoleCapture, createCellConsole } from './consoleCapture';
 import { renderMcqCell } from './mcq';
@@ -100,7 +101,12 @@ export function render({ container, feedback, mime, value, style, addStyle, cons
     const postToHost = (message: WebNbRendererMessage): void => {
         context.postMessage?.(message);
     };
-    // Solution addons are authoring helpers and should never be rendered or executed.
+    // Solution addons never execute and stay hidden unless the cell's `reveal`
+    // attribute opts into the reader-facing "View solution" control.
+    const solutionAddon = Array.isArray(addons)
+        ? addons.find((addon: Addon) => isSolutionAddon(addon.type))
+        : undefined;
+    const reveal = value.reveal === true;
     const activeAddons: Addon[] = Array.isArray(addons)
         ? addons.filter((addon: Addon) => !isSolutionAddon(addon.type))
         : [];
@@ -218,6 +224,27 @@ export function render({ container, feedback, mime, value, style, addStyle, cons
 
     terminalController.mount();
 
+    // Code cells get their action strip (View solution / Reset code) before the
+    // dispatch below, so a cell whose code throws still shows its actions.
+    if (language === 'html' || language === 'css' || runtimeLanguageKind) {
+        renderCellActions({
+            host: widgetHost,
+            language,
+            source,
+            defaultSource,
+            solution: solutionAddon?.content,
+            reveal,
+            onReset: value.cellUri && typeof context.postMessage === 'function'
+                ? () => {
+                    postToHost({
+                        type: 'webnb.resetCellSource',
+                        cellUri: value.cellUri
+                    });
+                }
+                : undefined
+        });
+    }
+
     if (language === 'html') {
         container.innerHTML = source;
         htmlConsoleCleanup = attachHtmlConsoleCapture(container, recordConsoleMessage);
@@ -309,6 +336,8 @@ export function render({ container, feedback, mime, value, style, addStyle, cons
             source,
             addons: activeAddons,
             shuffleSeedSource: `${value.cellUri || ''}\n${source}`,
+            reveal,
+            solutionContent: solutionAddon?.content,
             addFeedback,
             persistSelection: value.cellUri && typeof context.postMessage === 'function'
                 ? content => {
@@ -405,7 +434,17 @@ export function render({ container, feedback, mime, value, style, addStyle, cons
                 feedback.innerHTML = '';
             }
             const hasModuleSyntax = /(^|\n)\s*(import|export)[\s{]/m.test(toEval);
-            const shouldCompileWithBabel = isReactLanguage || hasModuleSyntax;
+            // `import('x')` is a call expression rather than a statement, so it
+            // can sit anywhere in a line (`await import(...)`) and the test
+            // above misses it. Left uncompiled it reaches the browser's own
+            // module resolver, which knows nothing of the notebook's `require`
+            // shim and rejects every bare specifier with "Failed to resolve
+            // module specifier". Compiling it routes the load through the shim
+            // instead, so the modules this runtime provides resolve and an
+            // unavailable one reports the runtime's own explanation.
+            const hasDynamicImport = /\bimport\s*\(/.test(toEval);
+            const needsModuleTransform = hasModuleSyntax || hasDynamicImport;
+            const shouldCompileWithBabel = isReactLanguage || needsModuleTransform;
 
             if (shouldCompileWithBabel) {
                 const babelOptions: Record<string, unknown> = {};
@@ -420,8 +459,15 @@ export function render({ container, feedback, mime, value, style, addStyle, cons
                     // import statement outside a module").
                     babelOptions.presets = [['react', { runtime: 'classic' }]];
                 }
-                if (hasModuleSyntax) {
-                    babelOptions.plugins = ['transform-modules-commonjs'];
+                if (needsModuleTransform) {
+                    // transform-dynamic-import turns `import(x)` into
+                    // `Promise.resolve().then(() => require(x))`, keeping the
+                    // promise semantics the lessons teach. It only runs
+                    // alongside a modules transform, which is why both are
+                    // listed together.
+                    babelOptions.plugins = hasDynamicImport
+                        ? ['transform-modules-commonjs', 'transform-dynamic-import']
+                        : ['transform-modules-commonjs'];
                 }
 
                 const transformed = Babel.transform(toEval, babelOptions as any).code;

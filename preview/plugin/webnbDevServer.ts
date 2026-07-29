@@ -123,8 +123,9 @@ async function walkNotebooks(root: string): Promise<string[]> {
             return;
         }
         for (const entry of entries) {
-            if (entry.name.startsWith('.') && entry.name !== '.') {
-                if (IGNORED_DIR_NAMES.has(entry.name)) { continue; }
+            // Dot entries are never notebook content (.git, .state, .vscode, …).
+            if (entry.name.startsWith('.')) {
+                continue;
             }
             const full = path.join(dir, entry.name);
             if (entry.isDirectory()) {
