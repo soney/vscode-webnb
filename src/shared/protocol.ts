@@ -46,6 +46,11 @@ export interface WebnbOutputValue {
     files: Record<string, WorkspaceFileSnapshotEntry>;
     cellUri: string;
     checkedAt: number;
+    /** Whether the reader gets the option to reveal solutions (the host's
+     * `webnb.allowRevealingSolutions` setting, on by default): a "View
+     * solution" button for `+solution` addons and "Show Answer" on MCQ cells.
+     * The content stays hidden until the reader clicks. */
+    reveal?: boolean;
 }
 
 export interface WebNbRefreshCellMessage {
@@ -58,6 +63,16 @@ export interface WebNbUpsertCellAddonMessage {
     cellUri: string;
     addonType: string;
     content: string;
+}
+
+/**
+ * Asks the kernel to restore the cell's text to its `+default` addon (the
+ * starter code). Carries no content on purpose: the kernel resolves the text
+ * from the cell's own metadata, so the renderer can never write arbitrary code.
+ */
+export interface WebNbResetCellSourceMessage {
+    type: 'webnb.resetCellSource';
+    cellUri: string;
 }
 
 export interface WebNbOpenWorkspaceFileMessage {
@@ -81,6 +96,7 @@ export interface WebNbHighlightWorkspaceLinesMessage {
 
 export type WebNbRendererMessage = WebNbRefreshCellMessage
     | WebNbUpsertCellAddonMessage
+    | WebNbResetCellSourceMessage
     | WebNbOpenWorkspaceFileMessage
     | WebNbHighlightWorkspaceLinesMessage;
 
@@ -90,7 +106,7 @@ export function isRendererMessage(message: unknown): message is WebNbRendererMes
     }
 
     const candidate = message as Partial<WebNbRendererMessage>;
-    if (candidate.type === 'webnb.refreshCell') {
+    if (candidate.type === 'webnb.refreshCell' || candidate.type === 'webnb.resetCellSource') {
         return typeof candidate.cellUri === 'string';
     }
 

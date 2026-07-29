@@ -2,7 +2,7 @@
     "name": "web-notebook",
     "displayName": "Web Notebook",
     "description": "A notebook renderer for basic web code (HTML/CSS/JavaScript)",
-    "version": "1.0.2",
+    "version": "1.0.3",
     "publisher": "oney",
     "repository": {
         "type": "git",
@@ -78,8 +78,23 @@
             {
                 "command": "webnb.focusSingleFile",
                 "title": "Focus on a single file"
+            },
+            {
+                "command": "webnb.restoreNotebook",
+                "category": "Web Notebook",
+                "title": "Restore Notebook to Starter State",
+                "icon": "$(discard)"
             }
         ],
+        "menus": {
+            "notebook/toolbar": [
+                {
+                    "command": "webnb.restoreNotebook",
+                    "group": "navigation",
+                    "when": "notebookType == 'web-notebook'"
+                }
+            ]
+        },
         "configuration": {
             "title": "Web-Notebook",
             "properties": {
@@ -88,6 +103,18 @@
                     "default": true,
                     "scope": "resource",
                     "description": "Prevent cells from being added, removed, or reordered in Web Notebooks. Cell contents stay editable, so learners can still edit code examples and answer multiple choice questions. Turn this off to author a notebook."
+                },
+                "webnb.allowRevealingSolutions": {
+                    "type": "boolean",
+                    "default": true,
+                    "scope": "resource",
+                    "markdownDescription": "Give readers the option to reveal solutions: code cells with a `+solution` addon get a \"View solution\" button, and multiple choice cells get a \"Show Answer\" button. The solution appears only when the reader clicks. Turn this off to remove those buttons entirely (for example, during an assessment). Cells that are already rendered refresh automatically when this changes."
+                },
+                "webnb.lockMarkdown": {
+                    "type": "boolean",
+                    "default": false,
+                    "scope": "resource",
+                    "markdownDescription": "Prevent the markdown (text) cells of Web Notebooks from being edited, so a notebook's instructions stay intact. Code cells stay editable and runnable. This sits between `#webnb.lockCellStructure#`, which only locks the cell layout, and `#webnb.readOnly#`, which makes the whole file untouchable."
                 },
                 "webnb.readOnly": {
                     "type": "boolean",
@@ -112,13 +139,14 @@
         "in-browser:remote": "node scripts/vscode-test-web.js samplenotebooks/sample.webnb --watch --remote",
         "dev:web": "npm run watch",
         "test": "vscode-test",
-        "gen-vsix": "npm run compile && vsce package -o web-notebook.vsix",
+        "gen-vsix": "npm run compile && vsce package --no-dependencies -o web-notebook.vsix",
         "coursera:import": "node scripts/coursera-docker-dev.js import",
         "coursera:start": "node scripts/coursera-docker-dev.js start",
         "coursera:stop": "node scripts/coursera-docker-dev.js stop",
         "preview": "vite --config preview/vite.config.ts",
         "test:unit": "tsc -p src/test && mocha \"out/test/test/unit/**/*.test.js\"",
         "test:harness": "node tests/harness/run.js",
+        "verify:notebooks": "node scripts/verify-notebooks.js",
         "test:harness:update": "node tests/harness/run.js --update",
         "test:browser": "node tests/browser/run.js",
         "test:all": "npm run test:unit && npm run test:harness && npm run test:browser"

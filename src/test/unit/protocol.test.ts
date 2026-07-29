@@ -7,6 +7,7 @@ suite('shared/protocol', () => {
         suite('accepts each message shape', () => {
             const valid: [label: string, message: unknown][] = [
                 ['refreshCell', { type: 'webnb.refreshCell', cellUri: 'cell:0' }],
+                ['resetCellSource', { type: 'webnb.resetCellSource', cellUri: 'cell:0' }],
                 ['upsertCellAddon', { type: 'webnb.upsertCellAddon', cellUri: 'cell:0', addonType: 'selection', content: '{}' }],
                 ['upsertCellAddon with empty content', { type: 'webnb.upsertCellAddon', cellUri: 'cell:0', addonType: 't', content: '' }],
                 ['openWorkspaceFile without line', { type: 'webnb.openWorkspaceFile', cellUri: 'cell:0', path: 'src/a.ts' }],
@@ -55,6 +56,8 @@ suite('shared/protocol', () => {
             const invalid: [label: string, message: unknown][] = [
                 ['refreshCell without cellUri', { type: 'webnb.refreshCell' }],
                 ['refreshCell with numeric cellUri', { type: 'webnb.refreshCell', cellUri: 5 }],
+                ['resetCellSource without cellUri', { type: 'webnb.resetCellSource' }],
+                ['resetCellSource with numeric cellUri', { type: 'webnb.resetCellSource', cellUri: 5 }],
                 ['upsertCellAddon without content', { type: 'webnb.upsertCellAddon', cellUri: 'c', addonType: 't' }],
                 ['upsertCellAddon without addonType', { type: 'webnb.upsertCellAddon', cellUri: 'c', content: 'x' }],
                 ['upsertCellAddon with non-string content', { type: 'webnb.upsertCellAddon', cellUri: 'c', addonType: 't', content: 7 }],

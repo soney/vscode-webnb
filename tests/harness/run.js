@@ -9,8 +9,8 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { startPreview } = require('../lib/previewServer');
-const { captureAll } = require('./capture');
-const { compareCaptures } = require('./compare');
+const { captureAll } = require('../lib/capture');
+const { compareCaptures } = require('../lib/compare');
 
 const PORT = Number(process.env.WEBNB_TEST_PORT || 5271);
 const GOLDEN_PATH = path.join(__dirname, 'goldens', 'sample-notebooks.json');

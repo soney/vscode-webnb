@@ -25,6 +25,19 @@ function emptyNode(name: string): TreeNode {
     return { name, children: new Map(), notebooks: [] };
 }
 
+const SOLUTIONS_STORAGE_KEY = 'webnb-preview-solutions';
+
+/** Reveal buttons are on unless explicitly toggled off (mirrors the
+ * extension's `webnb.allowRevealingSolutions` default). localStorage throws
+ * in some privacy modes; the default applies then. */
+function readStoredSolutions(): boolean {
+    try {
+        return localStorage.getItem(SOLUTIONS_STORAGE_KEY) !== '0';
+    } catch {
+        return true;
+    }
+}
+
 class App {
     private readonly root: HTMLElement;
     private vfs!: VirtualFs;
@@ -33,6 +46,8 @@ class App {
     private notebooks: NotebookSummary[] = [];
     private currentView?: NotebookView;
     private currentPath?: string;
+    /** Mirrors VS Code's `webnb.allowRevealingSolutions` setting; on by default. */
+    private showSolutions = readStoredSolutions();
 
     private treeEl!: HTMLElement;
     private crumbsEl!: HTMLElement;
@@ -104,6 +119,7 @@ class App {
                                 <button type="button" data-choice="light" title="Always light" aria-label="Light theme">☀</button>
                                 <button type="button" data-choice="dark" title="Always dark" aria-label="Dark theme">☾</button>
                             </div>
+                            <button type="button" class="btn-solutions" title="Toggle the reader-facing reveal buttons (the webnb.allowRevealingSolutions setting in VS Code)">Solutions: shown</button>
                             <button type="button" class="btn-vfiles">Virtual Files</button>
                             <button type="button" class="btn-reset-cells" hidden>Reset cell edits</button>
                         </div>
@@ -144,6 +160,23 @@ class App {
         for (const button of themeButtons) {
             button.addEventListener('click', () => setChoice(button.dataset.choice as ThemeChoice));
         }
+
+        const solutionsButton = this.root.querySelector('.btn-solutions') as HTMLButtonElement;
+        const paintSolutionsButton = () => {
+            solutionsButton.textContent = `Solutions: ${this.showSolutions ? 'shown' : 'hidden'}`;
+            solutionsButton.setAttribute('aria-pressed', String(this.showSolutions));
+        };
+        paintSolutionsButton();
+        solutionsButton.addEventListener('click', () => {
+            this.showSolutions = !this.showSolutions;
+            try {
+                localStorage.setItem(SOLUTIONS_STORAGE_KEY, this.showSolutions ? '1' : '0');
+            } catch {
+                // Ignore: the choice still applies for this session.
+            }
+            paintSolutionsButton();
+            this.currentView?.onSolutionsChange();
+        });
 
         (this.root.querySelector('.btn-vfiles') as HTMLButtonElement).addEventListener('click', () => {
             this.vfilesPanel?.toggle();
@@ -248,7 +281,11 @@ class App {
         this.resetCellsButton.hidden = false;
         this.vfilesPanel.setNotebookContext(summary.dir);
 
-        const view = new NotebookView(summary, { workspaceId: this.workspaceId, vfs: this.vfs });
+        const view = new NotebookView(summary, {
+            workspaceId: this.workspaceId,
+            vfs: this.vfs,
+            showSolutions: () => this.showSolutions
+        });
         this.currentView = view;
         this.paneEl.innerHTML = '';
         this.paneEl.append(view.element);

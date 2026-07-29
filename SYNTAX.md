@@ -2,7 +2,7 @@
 
 A Web Notebook (`.webnb`) file is a Markdown document with executable tutorial cells. Prose between cells is ordinary Markdown; a fenced code block whose language is wrapped in braces — ` ```{html} ` — becomes a learner-editable cell, and fenced blocks starting with `+` attach addons (fixtures, styles, tests, references) to the cell above them.
 
-This file is the complete authoring reference. Working examples live in `samplenotebooks/`. For building, running, and developing the extension itself, see [README.md](README.md).
+This file is the complete, self-contained authoring reference for the `.webnb` format.
 
 ## Contents
 
@@ -45,8 +45,8 @@ Addon fences, attached to the cell directly above:
 | ` ```+html ` | Fixture markup for a CSS or JavaScript cell |
 | ` ```+css ` | Styles for an HTML cell |
 | ` ```+test ` | Assertions that run after the cell (also `+javascript` / `+js`) |
-| ` ```+default ` | Starter source, auto-captured on first run when left empty |
-| ` ```+solution ` | Author-only reference answer; never runs or renders |
+| ` ```+default ` | Starter source behind the "Reset code" button; captured automatically when absent |
+| ` ```+solution ` | Reference answer; never runs, shown only when the reader clicks "View solution" |
 | ` ```+id=name ` | Copies another cell's source in as a fixture |
 | ` ```+files ` | Extra workspace paths to snapshot for checks |
 | ` ```+terminal ` | Simulated terminal (also `+xterm`) |
@@ -189,15 +189,33 @@ Addon blocks start with `+` and attach to the code cell immediately above them. 
 
 ### Optional Solutions
 
-Use `+solution` to attach an author-only reference answer to a cell.
+Use `+solution` to attach a reference answer to a cell.
 
-`+solution` is optional and does not run, render, or affect test execution. It is useful for storing the expected answer next to the exercise while keeping the learner-facing behavior unchanged.
+`+solution` never runs and never affects test execution. Every cell with a `+solution` gives readers a **"View solution"** button beneath its output; the solution (syntax-highlighted) appears only when the reader chooses to click it. A deployment can remove those buttons entirely — for example during an assessment — with the host's reveal setting (in VS Code, **`webnb.allowRevealingSolutions`**, on by default); cells that are already rendered refresh on their own when it changes.
+
+````
+```{javascript}
+// Learner task: implement triple(n).
+function triple(n) {
+  // TODO
+}
+```
+```+solution
+function triple(n) {
+  return n * 3;
+}
+```
+````
 
 ### Starter Defaults
 
 Use `+default` to preserve starter code separately from the learner-edited cell source.
 
-If you leave `+default` empty, the first cell run captures the current cell source into `+default` automatically.
+Cells without a `+default` take care of themselves: the first time someone edits such a cell, the text it had when the notebook was opened is captured as its `+default` automatically (and persists into the file on save). Leaving an empty `+default` block also works — it fills in the same way. Write an explicit non-empty `+default` only when the starter should differ from the text the cell ships with.
+
+Whenever a cell's code differs from its starter, learners get a **"Reset code"** button under the cell's output. Clicking it restores the starter source and re-runs the cell. The reset button does not depend on the show-solutions setting — restoring starter code never leaks an answer.
+
+A whole notebook can be restored in one step with the **"Restore Notebook to Starter State"** command (in VS Code: the notebook toolbar or the command palette). It resets every cell that has a starter and clears saved multiple choice answers — useful after accidentally working through a notebook in a source checkout.
 
 `````
 ```{html}
@@ -535,6 +553,7 @@ Notes:
 
 Use `autorun` for regular code cells, and rely on built-in auto-run behavior for widget cells.
 
+
 ## Multiple Choice Questions
 
 Multiple choice cells use `[x]` for correct options and `[ ]` for incorrect options:
@@ -581,6 +600,24 @@ shuffle: false
 [x] Third
 ```
 ````
+
+### Revealing the Answer
+
+Every multiple choice cell gets a **"Show Answer"** button next to "Check Answer", so readers can choose to reveal the answer. It marks the correct option(s) without changing what the reader has selected, and toggles back off. If the cell also has a `+solution` addon, its content renders (as markdown) beneath the options as the explanation:
+
+````
+```{mcq}
+Which method adds an element to the end of an array?
+[x] push
+[ ] pop
+[ ] shift
+```
+```+solution
+`push` appends to the end; `pop` removes from the end, and `shift` removes from the front.
+```
+````
+
+A deployment that should not offer answer-revealing (an assessment, say) can turn the buttons off with the host's reveal setting (`webnb.allowRevealingSolutions` in VS Code).
 
 ### Question-Level Feedback
 
@@ -895,5 +932,3 @@ Hovering a line of a snippet tints it, the way VS Code highlights the row under 
 If the file is already open in another editor tab, the walkthrough mirrors your reading position there. Hovering anywhere in a step marks every line that step shows; pointing at one line of the snippet marks that line more strongly within the region. The editor scrolls to whatever you point at when it sits outside the viewport. Only editors that already show the file react — hovering never opens one — and the marks clear when the pointer leaves the step.
 
 Every rendered snippet also links back to the source. The file name above the code opens the real file beside the notebook, scrolled to the first shown line, and each line number in the gutter opens the file at that exact line — hovering a line brightens its number to point that out.
-
-See `samplenotebooks/walkthrough.webnb` for a complete example that walks through `samplenotebooks/demo-src/`.

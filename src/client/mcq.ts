@@ -209,13 +209,17 @@ export interface McqCellOptions {
     addons: Addon[];
     /** Seed for deterministic option shuffling; stable per cell + source. */
     shuffleSeedSource: string;
+    /** The cell's `reveal` attribute: adds a "Show Answer" control. */
+    reveal?: boolean;
+    /** The cell's `+solution` addon, shown as the explanation when revealing. */
+    solutionContent?: string;
     addFeedback: FeedbackWriters['addFeedback'];
     /** Persists the learner's selection back to the cell's `selection` addon;
      * absent when the renderer cannot reach the extension host. */
     persistSelection?: (content: string) => void;
 }
 
-export function renderMcqCell({ container, source, addons, shuffleSeedSource, addFeedback, persistSelection }: McqCellOptions): void {
+export function renderMcqCell({ container, source, addons, shuffleSeedSource, reveal, solutionContent, addFeedback, persistSelection }: McqCellOptions): void {
     const { question, options, correctFeedback, wrongFeedback, shuffle, deterministic } = parseMcqSource(source);
     if (!question || options.length === 0) {
         addFeedback('MCQ cells need a question plus at least one option.', 'error');
@@ -341,5 +345,41 @@ export function renderMcqCell({ container, source, addons, shuffleSeedSource, ad
     });
 
     form.appendChild(checkBtn);
+
+    if (reveal) {
+        const revealBtn = document.createElement('button');
+        revealBtn.textContent = 'Show Answer';
+        revealBtn.type = 'button';
+        revealBtn.classList.add('mcq-reveal-button');
+
+        const solutionEl = document.createElement('div');
+        solutionEl.classList.add('mcq-solution');
+        solutionEl.hidden = true;
+
+        let revealed = false;
+        revealBtn.addEventListener('click', () => {
+            revealed = !revealed;
+            revealBtn.textContent = revealed ? 'Hide Answer' : 'Show Answer';
+
+            // Marks the correct options without touching the learner's own
+            // selection; checking still grades what they actually chose.
+            displayOptions.forEach(opt => {
+                const optionFeedbackEl = optionFeedbackEls.get(opt.originalIndex);
+                const label = optionFeedbackEl?.parentElement?.querySelector('.mcq-option');
+                label?.classList.toggle('mcq-revealed-correct', revealed && opt.correct);
+            });
+
+            if (solutionContent && solutionContent.trim()) {
+                solutionEl.hidden = !revealed;
+                if (revealed && !solutionEl.innerHTML) {
+                    solutionEl.innerHTML = renderMarkdownBlock(solutionContent);
+                }
+            }
+        });
+
+        form.appendChild(revealBtn);
+        form.appendChild(solutionEl);
+    }
+
     container.appendChild(form);
 }

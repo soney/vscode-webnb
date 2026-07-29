@@ -14,9 +14,11 @@ import {
     type Addon
 } from '../shared/protocol';
 import {
+    getAddonContent,
     getDefaultCaptureAddons,
     isAutoWidgetLanguage,
     isExternalCheckLanguage,
+    isSolutionAddon,
     isWalkthroughLanguage,
     normalizeAddonType,
     upsertAddon
@@ -24,10 +26,14 @@ import {
 import { cellLabel, errorExecution, logChannel, logExecution, rangesLabel, uriLabel, visibleNotebookLabels, warnExecution } from './log';
 import { isRemoteNotebookAlias, notebookUrisMatch } from './notebookUris';
 import { AutorunScheduler } from './autorunScheduler';
+import { getCapturedStarter } from './defaultCapture';
+import { NotebookRestorer } from './restoreNotebook';
 import { WalkthroughHighlighter } from './walkthroughHighlighter';
 import { snapshotWorkspaceFiles } from './workspaceSnapshots';
 
 const SUPPORTED_LANGUAGES = ['javascript', 'node', 'html', 'css', 'js', 'javascriptreact', 'react', 'jsx', 'mcq', 'external', 'checklist', 'walkthrough'];
+const CONFIG_SECTION = 'webnb';
+const ALLOW_REVEAL_SETTING = 'allowRevealingSolutions';
 const RENDERER_ID = 'practical-javascript-reading-notebook';
 // VS Code's public API can mark this controller as preferred, but web notebooks
 // still need the internal command to select it before programmatic autorun.
@@ -66,6 +72,14 @@ export class WebNotebookKernel implements vscode.Disposable {
     private readonly _cellExecutionVersions = new Map<string, number>();
     private readonly _scheduler: AutorunScheduler;
     private readonly _highlighter = new WalkthroughHighlighter();
+    /** Notebooks owed a re-render because the reveal setting changed while
+     * they were not visible (the setting is usually flipped from the Settings
+     * editor, which hides the notebook until the reader switches back). */
+    private readonly _pendingSolutionRefresh = new Set<string>();
+    /** Serializes flushes: returning to a notebook fires the active-editor and
+     * visible-editors events back to back, and two concurrent flushes collide
+     * on createNotebookCellExecution for the same cells. */
+    private _solutionRefreshChain: Promise<void> = Promise.resolve();
 
     private _ensureControllerAssociation(notebook: vscode.NotebookDocument): void {
         if (notebook.notebookType !== this.notebookType || isRemoteNotebookAlias(notebook.uri)) {
@@ -93,6 +107,9 @@ export class WebNotebookKernel implements vscode.Disposable {
             isAutoWidgetCell,
             executeRanges: (notebook, ranges) => this._executeNotebookRanges(notebook, ranges)
         });
+        this._disposables.push(new NotebookRestorer({
+            executeRanges: (notebook, ranges) => this._executeNotebookRanges(notebook, ranges)
+        }));
         const rendererMessaging = vscode.notebooks.createRendererMessaging(RENDERER_ID);
 
         const initializeEditor = (editor: vscode.NotebookEditor) => {
@@ -127,6 +144,11 @@ export class WebNotebookKernel implements vscode.Disposable {
                     return;
                 }
 
+                if (message.type === 'webnb.resetCellSource') {
+                    void this._resetCellToDefault(cell);
+                    return;
+                }
+
                 if (message.type === 'webnb.openWorkspaceFile') {
                     void this._highlighter.open(cell, message.path, message.line);
                     return;
@@ -141,6 +163,7 @@ export class WebNotebookKernel implements vscode.Disposable {
             }),
             vscode.workspace.onDidCloseNotebookDocument(notebook => {
                 this._scheduler.forgetNotebook(notebook.uri);
+                this._pendingSolutionRefresh.delete(notebook.uri.toString());
                 for (const cell of notebook.getCells()) {
                     this._cellExecutionVersions.delete(cell.document.uri.toString());
                 }
@@ -173,10 +196,17 @@ export class WebNotebookKernel implements vscode.Disposable {
 
                 void this._selectControllerForEditor(editor);
                 initializeEditor(editor);
+                void this._flushSolutionRefresh();
             }),
             vscode.window.onDidChangeVisibleNotebookEditors(editors => {
                 for (const editor of editors) {
                     initializeEditor(editor);
+                }
+                void this._flushSolutionRefresh();
+            }),
+            vscode.workspace.onDidChangeConfiguration(event => {
+                if (event.affectsConfiguration(`${CONFIG_SECTION}.${ALLOW_REVEAL_SETTING}`)) {
+                    this._queueSolutionRefresh();
                 }
             })
         );
@@ -428,7 +458,9 @@ export class WebNotebookKernel implements vscode.Disposable {
             languageId,
             source.length,
             addons.map(addon => normalizeAddonType(addon.type)).join(',') || '<none>');
-        const defaultCapture = getDefaultCaptureAddons(addons, source);
+        // Record the cell's pre-edit text as its starter, never the live source:
+        // a run that lands right after an edit must not enshrine the edit.
+        const defaultCapture = getDefaultCaptureAddons(addons, getCapturedStarter(cell) ?? source);
         if (defaultCapture.changed) {
             logExecution('cell default capture addon updated index=%d', cell.index);
             addons = defaultCapture.addons;
@@ -447,6 +479,7 @@ export class WebNotebookKernel implements vscode.Disposable {
                 files,
                 cellUri: cell.document.uri.toString(),
                 checkedAt: Date.now(),
+                reveal: this._shouldShowSolutions(cell),
             }, WEBNB_OUTPUT_MIME)
         ]);
 
@@ -499,5 +532,106 @@ export class WebNotebookKernel implements vscode.Disposable {
         const currentAddons = getCellAddons(cell);
         const nextAddons = upsertAddon(currentAddons, addonType, content);
         await this._replaceCellAddons(cell, nextAddons);
+    }
+
+    /** Readers get the reveal buttons unless the deployment opted out. */
+    private _shouldShowSolutions(cell: vscode.NotebookCell): boolean {
+        return vscode.workspace
+            .getConfiguration(CONFIG_SECTION, cell.notebook.uri)
+            .get<boolean>(ALLOW_REVEAL_SETTING, true);
+    }
+
+    /**
+     * Marks every open webnb notebook as owing a re-render because
+     * `webnb.allowRevealingSolutions` changed, then flushes the ones that are
+     * visible right away. The rest are flushed when their editor next becomes
+     * visible, so a flip made from the Settings editor takes effect the moment
+     * the reader returns to the notebook.
+     */
+    private _queueSolutionRefresh(): void {
+        for (const notebook of vscode.workspace.notebookDocuments) {
+            if (notebook.notebookType === this.notebookType && !isRemoteNotebookAlias(notebook.uri)) {
+                this._pendingSolutionRefresh.add(notebook.uri.toString());
+            }
+        }
+        void this._flushSolutionRefresh();
+    }
+
+    private _flushSolutionRefresh(): Promise<void> {
+        this._solutionRefreshChain = this._solutionRefreshChain
+            .then(() => this._doFlushSolutionRefresh())
+            .catch(error => errorExecution('Solution refresh failed: %s', String(error)));
+        return this._solutionRefreshChain;
+    }
+
+    /**
+     * Re-executes the cells whose UI depends on the reveal setting in every
+     * pending, visible notebook. Only cells that already have output are
+     * touched: running a cell the reader never ran would surface output they
+     * didn't ask for.
+     */
+    private async _doFlushSolutionRefresh(): Promise<void> {
+        for (const notebookKey of [...this._pendingSolutionRefresh]) {
+            const notebook = vscode.workspace.notebookDocuments
+                .find(candidate => candidate.uri.toString() === notebookKey);
+            if (!notebook) {
+                this._pendingSolutionRefresh.delete(notebookKey);
+                continue;
+            }
+
+            const visible = vscode.window.visibleNotebookEditors
+                .some(editor => !isRemoteNotebookAlias(editor.notebook.uri) && notebookUrisMatch(editor.notebook.uri, notebook.uri));
+            if (!visible) {
+                continue;
+            }
+
+            this._pendingSolutionRefresh.delete(notebookKey);
+            const ranges = notebook.getCells()
+                .filter(cell => cell.outputs.length > 0
+                    && (isAutoWidgetCell(cell) || getCellAddons(cell).some(addon => isSolutionAddon(addon.type))))
+                .map(cell => new vscode.NotebookRange(cell.index, cell.index + 1));
+
+            // One range per call: the same visibility event that triggers this
+            // flush also triggers the autorun scheduler, and a collision on one
+            // cell must not starve the refresh of the cells after it.
+            for (const range of ranges) {
+                await this._executeNotebookRanges(notebook, [range]);
+            }
+        }
+    }
+
+    /**
+     * Restores a code cell's text to its `+default` addon (the starter code the
+     * author shipped, or the first-edit capture) and re-executes it so the output
+     * matches what the cell now says.
+     */
+    private async _resetCellToDefault(cell: vscode.NotebookCell): Promise<void> {
+        if (cell.kind !== vscode.NotebookCellKind.Code) {
+            return;
+        }
+
+        const defaultContent = getAddonContent(getCellAddons(cell), 'default');
+        if (defaultContent === undefined || defaultContent.trim().length === 0) {
+            warnExecution('Ignored reset for %s: it has no default source to restore', cellLabel(cell));
+            return;
+        }
+
+        if (cell.document.getText() !== defaultContent) {
+            const fullRange = cell.document.validateRange(
+                new vscode.Range(0, 0, cell.document.lineCount, 0)
+            );
+            const edit = new vscode.WorkspaceEdit();
+            edit.replace(cell.document.uri, fullRange, defaultContent);
+            if (!await vscode.workspace.applyEdit(edit)) {
+                warnExecution('Could not restore default source for %s', cellLabel(cell));
+                return;
+            }
+        }
+
+        // Re-run either way: the reader asked for the starter state, and stale
+        // output from the edited code would contradict the restored text.
+        await this._executeNotebookRanges(cell.notebook, [
+            new vscode.NotebookRange(cell.index, cell.index + 1)
+        ]);
     }
 }

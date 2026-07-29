@@ -10,7 +10,7 @@ import { CellOutputHost, type PreviewRendererContext } from './rendererHost';
 import { renderMarkdownBlock, resolveRelativeAssets } from './markdown';
 import { buildOutputValue, dependsOnFiles, shouldAutorun } from './kernel';
 import { cellKeyFor, type CellModel } from './notebookModel';
-import { normalizeAddonType } from '../../src/shared/addons';
+import { getAddonContent, normalizeAddonType, upsertAddon } from '../../src/shared/addons';
 import type { Addon, RendererMessage } from './types';
 import type { VirtualFs } from './vfs';
 import type { ScratchStore } from './scratch';
@@ -20,6 +20,8 @@ export interface CellContext {
     notebookDir: string;
     vfs: VirtualFs;
     scratch: ScratchStore;
+    /** Mirrors VS Code's `webnb.allowRevealingSolutions` setting. */
+    showSolutions: () => boolean;
     onEditedChange: () => void;
 }
 
@@ -180,6 +182,8 @@ export class CellView {
                     if (normalizeAddonType(message.addonType) === 'selection') {
                         this.ctx.scratch.setSelection(this.cellKey, message.content);
                     }
+                } else if (message.type === 'webnb.resetCellSource') {
+                    this.resetToDefault();
                 } else if (message.type === 'webnb.openWorkspaceFile') {
                     // In VS Code this opens the real file beside the notebook.
                     // The browser preview has no workspace editor, so ignore it.
@@ -213,6 +217,28 @@ export class CellView {
         if (this.hasRun) { void this.run(); }
     }
 
+    /** The renderer's "Reset code": restore the `+default` starter source.
+     * (VS Code edits the cell document; here the edit goes to scratch.)
+     * Cells without an authored starter fall back to their on-disk text,
+     * matching the extension's first-edit capture. */
+    private resetToDefault(): void {
+        const authored = getAddonContent(this.addons, 'default');
+        const defaultContent = authored && authored.trim() ? authored : this.model.value;
+        if (!defaultContent.trim()) {
+            return;
+        }
+
+        if (defaultContent === this.model.value) {
+            this.ctx.scratch.clearCode(this.cellKey);
+        } else {
+            this.ctx.scratch.setCode(this.cellKey, defaultContent);
+        }
+        this.editor?.setValue(defaultContent);
+        this.refreshEditedState();
+        this.ctx.onEditedChange();
+        void this.run();
+    }
+
     // ---- execution ---------------------------------------------------------
 
     dependsOnFiles(): boolean {
@@ -229,17 +255,33 @@ export class CellView {
         }
     }
 
+    /** Refresh an existing output (e.g. after the solutions toggle changes). */
+    rerunIfRan(): void {
+        if (this.isCode && this.hasRun) {
+            void this.run();
+        }
+    }
+
     async run(): Promise<void> {
         if (!this.isCode || !this.host) { return; }
         const token = ++this.runToken;
         this.element.classList.add('is-running');
 
-        const addons: Addon[] = [...this.addons];
+        let addons: Addon[] = [...this.addons];
         if (this.model.languageId === 'mcq') {
+            addons = [...addons];
             const selection = this.ctx.scratch.getSelection(this.cellKey);
             if (selection !== undefined) {
                 addons.push({ type: 'selection', content: selection });
             }
+        }
+        // Mirror the extension's first-edit capture: a cell with no authored
+        // starter takes its on-disk text as the `+default`. Upsert (not push)
+        // so an EMPTY `+default` block is filled rather than shadowed — and
+        // filling it here keeps the shared capture in buildOutputValue, which
+        // would otherwise record the edited source, from ever firing.
+        if (!(getAddonContent(addons, 'default') ?? '').trim()) {
+            addons = upsertAddon(addons, 'default', this.model.value);
         }
 
         try {
@@ -249,7 +291,8 @@ export class CellView {
                 source: this.currentSource(),
                 languageId: this.model.languageId,
                 addons,
-                vfs: this.ctx.vfs
+                vfs: this.ctx.vfs,
+                reveal: this.ctx.showSolutions()
             });
             if (token !== this.runToken) { return; } // superseded by a newer run
             this.host.render(value);

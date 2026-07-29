@@ -676,3 +676,93 @@ button.walkthrough-line-number:hover {
   font-family: var(--vscode-editor-font-family, monospace);
   font-size: var(--vscode-editor-font-size, 12px);
 }
+
+/* --- Cell action strip: View solution / Reset code ----------------------- */
+
+.webnb-cell-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+  font-family: var(--vscode-font-family);
+}
+
+/* Quiet notebook chrome, not a call-to-action: the same border every cell and
+ * checklist uses, editor colors, and the standard toolbar hover. */
+.webnb-cell-action {
+  padding: 4px 10px;
+  border: 1px solid var(--vscode-notebook-cellBorderColor, var(--vscode-panel-border, rgba(128, 128, 128, 0.35)));
+  border-radius: 6px;
+  background: var(--vscode-editor-background, transparent);
+  color: var(--vscode-editor-foreground, inherit);
+  font-family: var(--vscode-font-family);
+  font-size: var(--vscode-font-size);
+  cursor: pointer;
+}
+
+.webnb-cell-action:hover {
+  background: var(--vscode-toolbar-hoverBackground, var(--vscode-list-hoverBackground, rgba(128, 128, 128, 0.12)));
+}
+
+.webnb-cell-action:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: 2px;
+}
+
+.webnb-cell-action:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.webnb-solution-panel {
+  margin-top: 8px;
+  border: 1px solid var(--vscode-notebook-cellBorderColor, var(--vscode-panel-border, transparent));
+  border-radius: 8px;
+  padding: 4px 10px;
+  background: var(--vscode-editor-background);
+}
+
+/* --- MCQ answer reveal ---------------------------------------------------- */
+
+/* Deliberately quieter than the primary "Check Answer" button beside it. */
+.mcq-reveal-button {
+  margin-top: 12px;
+  margin-left: 8px;
+  padding: 6px 12px;
+  border: 1px solid var(--vscode-notebook-cellBorderColor, var(--vscode-panel-border, rgba(128, 128, 128, 0.35)));
+  border-radius: 6px;
+  background: var(--vscode-editor-background, transparent);
+  color: var(--vscode-editor-foreground, inherit);
+  font-family: var(--vscode-font-family);
+  font-size: var(--vscode-font-size);
+  cursor: pointer;
+}
+
+.mcq-reveal-button:hover {
+  background: var(--vscode-toolbar-hoverBackground, var(--vscode-list-hoverBackground, rgba(128, 128, 128, 0.12)));
+}
+
+.mcq-reveal-button:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: 2px;
+}
+
+.mcq-option.mcq-revealed-correct {
+  border-radius: 6px;
+  outline: 1px solid var(--vscode-testing-iconPassed, var(--vscode-charts-green, var(--vscode-focusBorder)));
+  outline-offset: 1px;
+}
+
+.mcq-option.mcq-revealed-correct::after {
+  content: "✓";
+  margin-left: 6px;
+  color: var(--vscode-testing-iconPassed, var(--vscode-charts-green, inherit));
+}
+
+.mcq-solution {
+  margin-top: 10px;
+  border: 1px solid var(--vscode-notebook-cellBorderColor, var(--vscode-panel-border, transparent));
+  border-left: 3px solid var(--vscode-testing-iconPassed, var(--vscode-charts-green, var(--vscode-focusBorder)));
+  border-radius: 6px;
+  padding: 8px 12px;
+  background: var(--vscode-editor-background);
+}

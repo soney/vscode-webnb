@@ -19,15 +19,17 @@ of truth for everything that must not drift between them:
 - **`src/extension/`** — extension host. `webnbProvider.ts` is the kernel
   (controller lifecycle, cell execution → JSON output); one concern per file
   around it: `autorunScheduler.ts`, `walkthroughHighlighter.ts`,
-  `workspaceSnapshots.ts`, `cellStructureLock.ts`, `readOnlyMode.ts`,
+  `workspaceSnapshots.ts`, `cellStructureLock.ts`, `defaultCapture.ts`,
+  `markdownLock.ts`, `readOnlyMode.ts`, `restoreNotebook.ts`,
   `serializer.ts`/`markdownParser.ts` (the .webnb ⇄ notebook round-trip),
   `notebookUris.ts`, `log.ts` (LogOutputChannel "Web Notebook"; execution
   traces log at Trace level).
 - **`src/client/`** — the notebook renderer (webview). `render.ts` dispatches
   per cell language to `mcq.ts`, `checks.ts`, `terminal.ts`,
   `walkthroughRender.ts`, the js/node/react runtime (`runtime.ts` shims), with
-  `consoleCapture.ts`, `feedback.ts`, `markdown.ts`, `lite-cy.ts` (the
-  assertion/grading engine) underneath. `mountRenderer.ts` is the DOM contract
+  `cellActions.ts` (View solution / Reset code strip), `consoleCapture.ts`,
+  `feedback.ts`, `markdown.ts`, `lite-cy.ts` (the assertion/grading engine)
+  underneath. `mountRenderer.ts` is the DOM contract
   both hosts mount through.
 - **`preview/`** — a vite dev harness that hosts the *same* `render()` and the
   same `src/shared` discovery logic, so anything cell-rendering related can be
@@ -61,6 +63,11 @@ When in doubt, run the harness (below) across every cell language.
   preview harness and diffs against `tests/harness/goldens/`. This is the
   renderer regression suite; after an intentional rendering change run
   `npm run test:harness:update` and review the golden diff.
+- `npm run verify:notebooks -- /path/to/course` (or
+  `node scripts/verify-notebooks.js` from inside a course repo) — structural
+  verification of an arbitrary workspace's notebooks through the same preview
+  harness: parses/loads, renders, no uncaught errors. `--baseline` gives a
+  course repo its own committed golden workflow.
 - `npm run test:browser` — lite-cy specs in real Chromium (needs
   `getComputedStyle`), imported through vite's transform pipeline.
 - Extension-host behavior (kernel selection, autorun, message routing) is NOT
@@ -82,3 +89,6 @@ When in doubt, run the harness (below) across every cell language.
 - Duration values: checklist `interval:` defaults bare numbers to
   milliseconds; walkthrough `watch:` defaults to seconds. Docs tell authors to
   always write units — do not "fix" one to match the other.
+- SYNTAX.md is standalone (other projects link to it): no repo-relative links
+  or references to `samplenotebooks/`, README.md, or other repo files. Repo
+  pointers (working examples, dev docs) belong in README.md.

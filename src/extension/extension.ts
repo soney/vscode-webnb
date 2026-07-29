@@ -3,12 +3,16 @@ import { logExecution } from './log';
 import { activate as activateSerializer, deactivate as deactivateSerializer } from './serializer';
 import { activate as activateKernel, deactivate as deactivateKernel } from './webnbProvider';
 import { activate as activateCellStructureLock, deactivate as deactivateCellStructureLock } from './cellStructureLock';
+import { activate as activateDefaultCapture, deactivate as deactivateDefaultCapture } from './defaultCapture';
+import { activate as activateMarkdownLock, deactivate as deactivateMarkdownLock } from './markdownLock';
 import { activate as activateReadOnlyMode, deactivate as deactivateReadOnlyMode } from './readOnlyMode';
 
 export function activate(context: vscode.ExtensionContext) {
     activateSerializer(context);
     activateKernel(context);
     activateCellStructureLock(context);
+    activateDefaultCapture(context);
+    activateMarkdownLock(context);
     activateReadOnlyMode(context);
     // Files opened programmatically (via a payload openFile command) don't
     // open as notebooks; watch for one and reopen it with the notebook editor.
@@ -19,6 +23,8 @@ export function deactivate() {
     deactivateSerializer();
     deactivateKernel();
     deactivateCellStructureLock();
+    deactivateDefaultCapture();
+    deactivateMarkdownLock();
     deactivateReadOnlyMode();
 }
 

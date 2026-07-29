@@ -2,7 +2,7 @@
 
 Web Notebook files are Markdown documents with executable tutorial cells. Use fenced code blocks for learner-editable cells, and attach addon blocks for fixtures, styles, tests, or references.
 
-Authoring reference: **[SYNTAX.md](SYNTAX.md)** documents every cell type, addon, test helper, and widget — cell format, tests, automatic running, multiple choice questions, external checks, and code walkthroughs. This file covers building and developing the extension itself.
+Authoring reference: **[SYNTAX.md](SYNTAX.md)** documents every cell type, addon, test helper, and widget — cell format, tests, automatic running, multiple choice questions, external checks, and code walkthroughs. SYNTAX.md is standalone so other projects can reference it directly. Working examples of every cell type live in [`samplenotebooks/`](samplenotebooks/); `samplenotebooks/walkthrough.webnb` is a complete walkthrough example over `samplenotebooks/demo-src/`. This file covers building and developing the extension itself.
 
 ## Coursera Docker Dev
 
@@ -104,3 +104,66 @@ On a non-localhost origin the workbench shell still loads, but the extension hos
 `--host 0.0.0.0` is still useful whenever the port is reached through a mapping that ends in a localhost URL: a Docker/devcontainer port map (`-p 3000:3000`), `kubectl port-forward`, or an SSH tunnel all qualify.
 
 `--remote` is shorthand for `--browser none` and works with any of the launcher's modes. Anyone who can reach the port gets a full VS Code Web session with the mounted workspace (edits stay in browser memory and are not written back to disk) — another reason to keep it behind a tunnel on shared networks.
+
+## Verifying course notebooks (yours or another repo's)
+
+`scripts/verify-notebooks.js` renders and runs every cell of every `.webnb`
+in a workspace through the extension's real `render()` (via the preview
+harness) and reports whether the content is structurally healthy: every
+notebook parses and loads, every cell renders, and nothing throws an uncaught
+page error. Exercise checks that intentionally start unsatisfied (checklists,
+tests a learner must make pass) are listed as warnings, not failures —
+`--strict-feedback` promotes them.
+
+From a course-content repo, with this repo checked out and `npm install`-ed
+next to it:
+
+```sh
+node ../vscode-webnb/scripts/verify-notebooks.js
+```
+
+From this repo, pointing anywhere:
+
+```sh
+npm run verify:notebooks -- /path/to/course
+```
+
+Useful options (see `--help` for all): `--notebook <substr>` verifies a single
+notebook, `--json out.json` dumps the raw per-cell capture, `--port <n>`
+changes the preview port.
+
+### Regression baselines for a course repo
+
+`--baseline` gives any course repo the same golden-diff workflow this repo's
+`npm run test:harness` uses for `samplenotebooks/`, with the baseline
+committed in the *course* repo:
+
+```sh
+# once, and after every intentional content change:
+node ../vscode-webnb/scripts/verify-notebooks.js --baseline .webnb-baseline.json --update-baseline
+
+# in CI or before publishing:
+node ../vscode-webnb/scripts/verify-notebooks.js --baseline .webnb-baseline.json
+```
+
+### CI for a course repo
+
+```yaml
+jobs:
+  verify-notebooks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with: { repository: soney/vscode-webnb, path: .webnb-harness }
+      - uses: actions/setup-node@v4
+        with: { node-version: 24 }
+      - run: npm ci
+        working-directory: .webnb-harness
+      - run: npx playwright install --with-deps chromium
+        working-directory: .webnb-harness
+      - run: node .webnb-harness/scripts/verify-notebooks.js $GITHUB_WORKSPACE
+```
+
+(The second checkout lands the harness inside the course checkout, so pass the
+course root explicitly rather than relying on the default working directory.)
