@@ -1,0 +1,58 @@
+# Notebook Links
+
+Every form of link between notebooks, for checking navigation in a real VS Code
+workbench. Open this file, click a link, and confirm where you land.
+
+## Linking to another notebook
+
+- [The whole notebook](links-target.webnb)
+- [A section of it](links-target.webnb#beta)
+- [A section, spelled out](<links-target.webnb#The Fetch API, really?>)
+- [From the workspace root](/links-target.webnb#beta)
+- [A notebook in a subfolder, with spaces in its name](<sub/links nested.webnb>)
+
+## Linking inside this notebook
+
+- [Down to the last section](#the-last-section)
+- [Back to the top](#notebook-links)
+
+## Linking from an output cell
+
+The click handler covers the whole notebook webview, so a link in a rendered
+output -- a multiple choice prompt, a walkthrough note -- navigates too.
+
+```{mcq}
+Which section of the target notebook does [this link](links-target.webnb#alpha) open?
+correct: Right. The link names `#alpha`, so it opens Alpha.
+wrong: Follow the link and see which heading lands at the top.
+[x] Alpha
+[ ] Beta
+```
+
+## Links that should not navigate
+
+- [A notebook that does not exist](missing.webnb) warns that there is no such notebook.
+- [A section that does not exist](links-target.webnb#no-such-section) opens the
+  notebook and warns about the section.
+- [An ordinary web link](https://code.visualstudio.com) opens in a browser, as always.
+- [A source file](sub/notes.txt) keeps VS Code's own behavior.
+
+## Filler
+
+Enough prose to push the last section out of view, so a link to it has somewhere
+to scroll. One paragraph is not enough on a tall screen, so here are several.
+
+Notebooks in this course run to a few screens each, and a section link is only
+worth having when the section it names starts off the screen.
+
+A reader following a link should land with the heading at the top of the editor,
+not merely somewhere in the same notebook.
+
+If the heading is already visible, revealing it should still be harmless: the
+list scrolls to put that cell at the top either way.
+
+Which is what the last section below is for.
+
+## The Last Section
+
+You arrived here from a link inside this same notebook.

@@ -1,0 +1,160 @@
+{
+    "name": "webnb-source-preview",
+    "displayName": "Web Notebook Source Preview",
+    "description": "Live side-by-side preview of a .webnb notebook while you edit its Markdown source.",
+    "version": "0.1.0",
+    "license": "MIT",
+    "publisher": "local",
+    "private": true,
+    "engines": {
+        "vscode": "^1.90.0"
+    },
+    "categories": [
+        "Notebooks",
+        "Visualization"
+    ],
+    "main": "./out/extension.js",
+    "browser": "./out/extension.js",
+    "activationEvents": [
+        "onLanguage:webnb"
+    ],
+    "contributes": {
+        "commands": [
+            {
+                "command": "webnbPreview.showPreview",
+                "title": "Open Live Preview to the Side",
+                "category": "Web Notebook Preview",
+                "icon": "$(open-preview)"
+            },
+            {
+                "command": "webnbPreview.openSource",
+                "title": "Open as Text (Source)",
+                "category": "Web Notebook Preview",
+                "icon": "$(go-to-file)"
+            },
+            {
+                "command": "webnbPreview.openNotebook",
+                "title": "Open as Notebook",
+                "category": "Web Notebook Preview",
+                "icon": "$(notebook)"
+            },
+            {
+                "command": "webnbPreview.refresh",
+                "title": "Refresh Preview",
+                "category": "Web Notebook Preview",
+                "icon": "$(refresh)"
+            }
+        ],
+        "keybindings": [
+            {
+                "command": "webnbPreview.showPreview",
+                "key": "ctrl+k v",
+                "mac": "cmd+k v",
+                "when": "editorTextFocus && resourceExtname == .webnb"
+            },
+            {
+                "command": "webnbPreview.openSource",
+                "key": "ctrl+k ctrl+e",
+                "mac": "cmd+k cmd+e",
+                "when": "notebookType == web-notebook"
+            }
+        ],
+        "menus": {
+            "commandPalette": [
+                {
+                    "command": "webnbPreview.showPreview",
+                    "when": "resourceExtname == .webnb"
+                },
+                {
+                    "command": "webnbPreview.openSource",
+                    "when": "resourceExtname == .webnb"
+                },
+                {
+                    "command": "webnbPreview.openNotebook",
+                    "when": "resourceExtname == .webnb"
+                },
+                {
+                    "command": "webnbPreview.refresh",
+                    "when": "activeWebviewPanelId == webnbPreview.preview"
+                }
+            ],
+            "editor/title": [
+                {
+                    "command": "webnbPreview.showPreview",
+                    "when": "resourceExtname == .webnb && activeEditor == workbench.editors.files.textFileEditor",
+                    "group": "navigation@1"
+                },
+                {
+                    "command": "webnbPreview.openNotebook",
+                    "when": "resourceExtname == .webnb && activeEditor == workbench.editors.files.textFileEditor",
+                    "group": "navigation@2"
+                }
+            ],
+            "notebook/toolbar": [
+                {
+                    "command": "webnbPreview.openSource",
+                    "when": "notebookType == web-notebook",
+                    "group": "navigation/execute@5"
+                }
+            ],
+            "explorer/context": [
+                {
+                    "command": "webnbPreview.showPreview",
+                    "when": "resourceExtname == .webnb",
+                    "group": "navigation"
+                }
+            ],
+            "webview/title": [
+                {
+                    "command": "webnbPreview.refresh",
+                    "when": "activeWebviewPanelId == webnbPreview.preview",
+                    "group": "navigation"
+                }
+            ]
+        },
+        "configuration": {
+            "title": "Web Notebook Source Preview",
+            "properties": {
+                "webnbPreview.scrollSync": {
+                    "type": "boolean",
+                    "default": true,
+                    "scope": "resource",
+                    "description": "Keep the preview and the source editor scrolled together."
+                },
+                "webnbPreview.autoRunAll": {
+                    "type": "boolean",
+                    "default": false,
+                    "scope": "resource",
+                    "markdownDescription": "Run every code cell as it renders, not just `autorun`/`runonstart` cells and the self-rendering widgets (`mcq`, `external`, `checklist`, `walkthrough`)."
+                },
+                "webnbPreview.followActiveEditor": {
+                    "type": "boolean",
+                    "default": true,
+                    "scope": "resource",
+                    "markdownDescription": "Move an open preview to whichever `.webnb` source you switch to, instead of leaving it on the file it was opened for. A notebook that already has its own preview keeps it."
+                },
+                "webnbPreview.openSourceOnPreview": {
+                    "type": "boolean",
+                    "default": true,
+                    "scope": "window",
+                    "markdownDescription": "When the preview is opened from a notebook editor, replace it with the Markdown source so the two sit side by side. Turn this off to keep the notebook editor and put the preview beside it."
+                }
+            }
+        }
+    },
+    "scripts": {
+        "compile": "node esbuild.mjs --production",
+        "compile-dev": "node esbuild.mjs",
+        "watch": "node esbuild.mjs --watch",
+        "check-types": "tsc --noEmit",
+        "test": "node --test test/*.test.mjs",
+        "check": "npm run check-types && npm test && npm run compile",
+        "gen-vsix": "npm run compile && vsce package --no-dependencies --allow-missing-repository -o webnb-source-preview.vsix"
+    },
+    "devDependencies": {
+        "@types/node": "^22.10.2",
+        "@types/vscode": "^1.90.0",
+        "esbuild": "^0.28.1",
+        "typescript": "^5.7.2"
+    }
+}

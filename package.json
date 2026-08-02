@@ -54,12 +54,13 @@
                 ]
             },
             {
-                "id": "webnb-markdown-image-size",
-                "displayName": "Web Notebook image sizing",
+                "id": "webnb-markdown-extensions",
+                "displayName": "Web Notebook markdown extensions",
                 "entrypoint": {
                     "extends": "vscode.markdown-it-renderer",
                     "path": "./out/markdownItPlugin/index.js"
-                }
+                },
+                "requiresMessaging": "optional"
             }
         ],
         "languages": [

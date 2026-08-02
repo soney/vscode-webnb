@@ -7,7 +7,9 @@ This file is the complete, self-contained authoring reference for the `.webnb` f
 ## Contents
 
 - [Basic Cell Format](#basic-cell-format)
+- [Output Pane Height](#output-pane-height)
 - [Markdown Images (Sizing)](#markdown-images-sizing)
+- [Links Between Notebooks](#links-between-notebooks)
 - [JavaScript Cells](#javascript-cells)
 - [Node Cells](#node-cells)
 - [Module Syntax (`import` / `export`)](#module-syntax-import--export)
@@ -36,7 +38,7 @@ Cell fences:
 | ` ```{walkthrough} ` | Annotated walkthrough of workspace files (runs on open) |
 | ` ```html id=name ` | Non-editable cell other cells can reference |
 
-Flags go in the fence header: `{javascript autorun}`, `{html runonstart}`, `{css id=layout}`.
+Flags go in the fence header: `{javascript autorun}`, `{html runonstart}`, `{css id=layout}`, `{html hidecode}`, `{html height=300}`.
 
 Addon fences, attached to the cell directly above:
 
@@ -82,6 +84,40 @@ Common cell languages include:
 - `external` for automatically checked workspace files and directories.
 - `walkthrough` for annotated code walkthroughs of workspace files.
 
+## Output Pane Height
+
+A cell's output pane is at least 120 pixels tall and grows with its content. Add
+`height=` to the fence to set the height yourself:
+
+````
+```{html height=300}
+<h1>Hello</h1>
+```
+````
+
+A bare number is pixels, as with image sizes; any CSS length unit works too:
+
+```
+{html height=300}     300 pixels
+{html height=300px}   the same
+{html height=20em}
+{html height=50vh}
+{html height=auto}    no fixed height: the pane fits its content
+```
+
+A pane held at a height keeps it whether or not the content fills it, and
+scrolls when the content is taller. That covers both a demo that needs room and
+output long enough to bury the rest of the notebook. `height=auto` is the
+opposite: it drops the 120-pixel floor so a one-line output takes one line.
+
+The attribute works on any cell that renders output (`html`, `css`, and the
+JavaScript, Node, and React cells) and combines with the other flags in any
+order: `{react hidecode height=400}`. On a JavaScript or Node cell it also shows
+the output pane, which is otherwise hidden unless the cell has an `+html`
+fixture, so a cell that writes into `document.body` itself has somewhere visible
+to put it. `height=auto` does not do this: it asks for less space, not for a
+pane.
+
 ## Markdown Images (Sizing)
 
 Prose between cells is regular Markdown, so images use the usual
@@ -101,6 +137,60 @@ Sizes are in pixels and become `width` / `height` attributes on the `<img>`.
 Images without a size suffix render exactly as before. Sizing works in the VS
 Code notebook, in the web preview, and in Markdown shown inside outputs (MCQ
 questions, checklists, and feedback).
+
+## Links Between Notebooks
+
+An ordinary Markdown link whose target is a `.webnb` file opens that notebook:
+
+```
+Recap: [how events work](events.webnb).
+```
+
+Add `#section` to land on a heading rather than at the top:
+
+```
+Recap: [how events work](events.webnb#listening-for-a-click).
+```
+
+A section anchor is a heading turned into a slug: lowercased, spaces replaced by
+hyphens, punctuation dropped. `## Listening For A Click` is `#listening-for-a-click`,
+and `## The \`fetch\` API, really?` is `#the-fetch-api-really` -- the markup comes
+off, because the slug is built from the words a reader sees. If it is easier, write
+the heading out and let the notebook slugify it: `[...](<events.webnb#Listening For A Click>)`
+finds the same section. Anchors match the heading `id`s VS Code renders, so the
+same `#section` also works in the outline and in a copied heading link.
+
+### Where the link can point
+
+| Written as | Resolves to |
+| --- | --- |
+| `[x](events.webnb)` | Next to the notebook the link is in |
+| `[x](../Module 2/events.webnb)` | Relative to the notebook the link is in |
+| `[x](/Course 1/Module 2/events.webnb)` | From the workspace root |
+| `[x](#a-section-here)` | A section of this same notebook |
+
+Filenames with spaces in them need angle brackets, because a Markdown link
+destination cannot contain a bare space:
+
+```
+[Callbacks](<Module 3 - Events/04 - Callbacks.webnb>)
+[Callbacks](<Module 3 - Events/04 - Callbacks.webnb#why-callbacks>)
+```
+
+Links work in prose between cells and in the Markdown shown inside outputs (MCQ
+questions, checklists, walkthrough notes). Links to anything that is not a
+notebook -- a web page, a source file in the workspace -- behave as they always
+have.
+
+### When a link cannot be followed
+
+Nothing is silently ignored. A link to a notebook that does not exist reports
+that no notebook is there; a link to a section that does not exist opens the
+notebook and reports the missing section. Both name the link as written, so the
+typo is visible without hunting for it.
+
+Renaming a heading changes its anchor, and renaming a file breaks every link
+pointing at it. Neither is checked when the notebook is saved.
 
 ## JavaScript Cells
 
@@ -547,11 +637,51 @@ Notes:
 - Closing and reopening the notebook resets the flag, so the cell runs again on the next open.
 - You can combine flags: `{html id=intro runonstart}` gives the cell an ID and runs it once on open.
 
+### `hidecode` for Output-Only Cells
+
+Add `hidecode` in the fenced code header to show only what the cell produces.
+The source opens collapsed and the cell **runs on its own**, like a widget cell
+-- you do not need to add `autorun`:
+
+````
+```{javascript hidecode}
+const box = document.querySelector('#thermometer');
+box.textContent = 'Drag the slider to convert.';
+```
+```+html
+<div id="thermometer"></div>
+```
+````
+
+The reader sees the widget and the markdown around it, not the code that built
+it.
+
+Notes:
+
+- It runs itself. A hidden cell with a Run button would ask the reader to
+  execute something they cannot see, so `hidecode` implies auto-running, the
+  same way `{mcq}` and `{external}` cells do.
+- Add `runonstart` alongside it if the cell must run exactly once per session
+  rather than whenever the notebook becomes active again.
+- Build the widget in a `{javascript}` cell with a `+html` addon for its markup,
+  as above. An `{html}` cell is set with `innerHTML`, so a `<script>` tag inside
+  one never runs -- put the script in the cell, not in the markup.
+- The output is unaffected: only the input is collapsed.
+- **It is not a secret.** A reader can still expand the cell, because collapsing
+  is as far as the notebook API goes. Use `hidecode` for code that is noise --
+  the plumbing behind a widget -- and `+solution` (with
+  `webnb.allowRevealingSolutions`) for anything a reader is not meant to see
+  yet.
+- It combines with the other flags: `{javascript id=chart hidecode}`.
+
 ### Auto-Run Widget Cells
 
 `{external}` / `{checklist}` and `{mcq}` cells are auto-run widget cells. They execute automatically on open without adding `autorun`.
 
 Use `autorun` for regular code cells, and rely on built-in auto-run behavior for widget cells.
+
+Widget cells also open with their source collapsed, as if they carried
+`hidecode`. You do not need to add the flag to them.
 
 
 ## Multiple Choice Questions
@@ -600,6 +730,38 @@ shuffle: false
 [x] Third
 ```
 ````
+
+### Code Samples in a Question
+
+A question is markdown, so it can show a code sample. Fence it with **tildes**,
+not backticks:
+
+````
+```{mcq}
+Which line declares a constant?
+
+~~~js
+const x = 1;
+let y = 2;
+~~~
+
+[x] The `const` line
+[ ] The `let` line
+```
+````
+
+Tildes are what make this work: the cell itself ends at the first line starting
+with ```` ``` ````, so a backtick fence inside a question would cut the cell in
+half. A `~~~` fence is invisible to that rule, and it takes a language, so the
+sample is syntax-highlighted like any other code block.
+
+Indenting a sample by four spaces also produces a code block, but Markdown's
+indented code carries no language, so it renders unhighlighted. Prefer `~~~`.
+
+Both work in a question nested inside a list item: a cell indented to sit in the
+list has that shared indentation stripped before rendering, so indentation you
+add on top of it still means what it means. For short fragments, inline
+backticks are fine -- `` `.note` `` -- and need no fence at all.
 
 ### Revealing the Answer
 

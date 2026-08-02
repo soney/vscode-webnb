@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { parseMarkdown, RawNotebookCell, writeCellsToMarkdown, type WebNbCellMetadata } from './markdownParser';
+import { isAutoWidgetLanguage } from '../shared/addons';
 
 const providerOptions: vscode.NotebookDocumentContentOptions = {};
 
@@ -32,16 +33,36 @@ class MarkdownProvider implements vscode.NotebookSerializer {
 	}
 }
 
+/**
+ * Cells that open with their source collapsed: the self-rendering widget
+ * languages, plus anything flagged `hidecode`. The widget set comes from
+ * shared/addons so this cannot drift from what the renderer treats as a widget
+ * -- which also fixes `{external}`/`{checklist}`, documented in SYNTAX.md as
+ * collapsing like `{mcq}` but previously left expanded.
+ */
+function collapsesInput(data: RawNotebookCell): boolean {
+	return data.hidecode === true || isAutoWidgetLanguage(data.language);
+}
+
 function rawToNotebookCellData(data: RawNotebookCell): vscode.NotebookCellData {
 	const metadata: WebNbCellMetadata = {
 		leadingWhitespace: data.leadingWhitespace,
 		trailingWhitespace: data.trailingWhitespace,
 		indentation: data.indentation,
 		addons: data.addons,
+		addonWhitespace: data.addonWhitespace,
 		id: data.id,
 		autorun: data.autorun,
 		runonstart: data.runonstart,
-		...(data.language === 'mcq' || data.language === 'walkthrough' ? { inputCollapsed: true } : {})
+		hidecode: data.hidecode,
+		height: data.height,
+		// Widget cells and `hidecode` cells open with their source collapsed:
+		// what matters about them is what they draw, not the code behind it.
+		// This is as far as the notebook API goes -- a reader can still expand
+		// the input -- so `hidecode` is for cells whose code is noise, not for
+		// keeping an answer secret. (`+solution` and `webnb.allowRevealingSolutions`
+		// are the feature for that.)
+		...(collapsesInput(data) ? { inputCollapsed: true } : {})
 	};
 	return <vscode.NotebookCellData>{
 		kind: data.kind,

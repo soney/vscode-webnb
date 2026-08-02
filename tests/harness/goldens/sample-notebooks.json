@@ -37,6 +37,24 @@
       "terminalPresent": false
     }
   ],
+  "links-target.webnb": [],
+  "links.webnb": [
+    {
+      "containerClass": "webnb-output webnb-output-mcq",
+      "output": "Which section of the target notebook does this link open? Beta Alpha Check AnswerShow Answer",
+      "feedback": "",
+      "feedbackClass": "feedback feedback-mcq",
+      "feedbackKinds": [],
+      "console": "",
+      "mcqOptions": [
+        "Alpha",
+        "Beta"
+      ],
+      "checklistItems": [],
+      "walkthroughSteps": 0,
+      "terminalPresent": false
+    }
+  ],
   "sample.webnb": [
     {
       "containerClass": "webnb-output webnb-output-js",
@@ -317,7 +335,7 @@
     },
     {
       "containerClass": "webnb-output webnb-output-mcq",
-      "output": "Which of the following are fruits? (Select all that apply) Apple Carrot Celery Banana Check AnswerShow Answer",
+      "output": "Which of the following are fruits? (Select all that apply) Celery Carrot Banana Apple Check AnswerShow Answer",
       "feedback": "",
       "feedbackClass": "feedback feedback-mcq",
       "feedbackKinds": [],
@@ -334,7 +352,7 @@
     },
     {
       "containerClass": "webnb-output webnb-output-mcq",
-      "output": "Which language runs in the browser in this notebook example? Go JavaScript Rust Check AnswerShow Answer",
+      "output": "Which language runs in the browser in this notebook example? JavaScript Go Rust Check AnswerShow Answer",
       "feedback": "",
       "feedbackClass": "feedback feedback-mcq",
       "feedbackKinds": [],
@@ -383,6 +401,30 @@
       "feedbackClass": "feedback feedback-javascript",
       "feedbackKinds": [],
       "console": "\"bye\"",
+      "mcqOptions": [],
+      "checklistItems": [],
+      "walkthroughSteps": 0,
+      "terminalPresent": false
+    },
+    {
+      "containerClass": "webnb-output webnb-output-html",
+      "output": "A pane exactly 140px tall Line one Line two Line three Line four Line five",
+      "feedback": "",
+      "feedbackClass": "feedback feedback-html",
+      "feedbackKinds": [],
+      "console": "",
+      "mcqOptions": [],
+      "checklistItems": [],
+      "walkthroughSteps": 0,
+      "terminalPresent": false
+    },
+    {
+      "containerClass": "webnb-output webnb-output-html",
+      "output": "Just this line.",
+      "feedback": "",
+      "feedbackClass": "feedback feedback-html",
+      "feedbackKinds": [],
+      "console": "",
       "mcqOptions": [],
       "checklistItems": [],
       "walkthroughSteps": 0,
@@ -449,6 +491,7 @@
       "terminalPresent": false
     }
   ],
+  "sub/links nested.webnb": [],
   "walkthrough.webnb": [
     {
       "containerClass": "webnb-output webnb-output-walkthrough",

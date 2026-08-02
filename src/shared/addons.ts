@@ -50,6 +50,32 @@ export function isAutoWidgetLanguage(languageId: string): boolean {
     return languageId === 'mcq' || isExternalCheckLanguage(languageId) || isWalkthroughLanguage(languageId);
 }
 
+/** The cell attributes that decide whether it runs by itself. */
+export interface RunOnOpenCell {
+    languageId: string;
+    autorun?: boolean;
+    runonstart?: boolean;
+    hidecode?: boolean;
+}
+
+/**
+ * Cells that run without the reader pressing anything.
+ *
+ * `hidecode` is in here because a cell whose source is hidden has nothing worth
+ * pressing Run on: the reader cannot see what they would be running. Hiding the
+ * code and running it are the same intent -- show me the output, not the
+ * machinery -- so the flag carries both.
+ *
+ * `runonstart` is the one that can be spent: it fires once per notebook
+ * session, so callers that track that pass `runOnStartAlreadyDone`.
+ */
+export function runsOnOpen(cell: RunOnOpenCell, options?: { runOnStartAlreadyDone?: boolean }): boolean {
+    if (cell.autorun || cell.hidecode || isAutoWidgetLanguage(cell.languageId)) {
+        return true;
+    }
+    return !!cell.runonstart && !options?.runOnStartAlreadyDone;
+}
+
 export function getAddonContent(addons: Addon[], type: string): string | undefined {
     const match = addons.find(addon => normalizeAddonType(addon.type) === normalizeAddonType(type));
     return match?.content;

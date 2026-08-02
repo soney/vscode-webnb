@@ -453,3 +453,24 @@ wrong: Nope! Try looking for a tag that implies *strong* importance.
   ```{javascript}
   console.log("bye");
   ```
+
+## Output Pane Height
+
+`height=140` holds the output pane at 140 pixels, so content taller than that
+scrolls inside it rather than stretching the cell:
+
+```{html height=140}
+<h3>A pane exactly 140px tall</h3>
+<p>Line one</p>
+<p>Line two</p>
+<p>Line three</p>
+<p>Line four</p>
+<p>Line five</p>
+```
+
+`height=auto` does the opposite -- it drops the pane's 120px floor, so a
+one-line output takes one line:
+
+```{html height=auto}
+<p>Just this line.</p>
+```

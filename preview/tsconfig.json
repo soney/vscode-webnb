@@ -12,5 +12,8 @@
         "resolveJsonModule": true,
         "isolatedModules": true
     },
-    "include": ["src", "plugin", "vite.config.ts"]
+    // The client's ambient declarations (smartypants) come with the modules this
+    // harness imports from ../src; without them `tsc -p` cannot check this
+    // project at all, and vite alone never type-checks.
+    "include": ["src", "plugin", "vite.config.ts", "../src/client/*.d.ts"]
 }

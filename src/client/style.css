@@ -611,32 +611,10 @@ button.walkthrough-line-number:hover {
   background: color-mix(in srgb, var(--vscode-editorWarning-foreground, orange) 8%, transparent);
 }
 
-/* The `hljs-*` token palette lives in syntaxHighlight.css, which the renderer
-   entrypoints concatenate alongside this file — the preview page also needs it
-   in its light DOM, where markup cells render their code fences. */
-
-/* Fenced code blocks inside this renderer's markdown (walkthrough commentary
-   and notes, MCQ questions, checklist labels). */
-.webnb-code-block {
-  margin: 8px 0;
-  padding: 8px 10px;
-  border: 1px solid var(--vscode-notebook-cellBorderColor, var(--vscode-panel-border, rgba(127, 127, 127, 0.3)));
-  border-radius: 6px;
-  background: var(--vscode-textCodeBlock-background, var(--vscode-editorWidget-background, rgba(127, 127, 127, 0.08)));
-  overflow-x: auto;
-}
-
-.webnb-code-block code {
-  display: block;
-  padding: 0;
-  background: none;
-  color: var(--vscode-editor-foreground);
-  font-family: var(--vscode-editor-font-family, monospace);
-  font-size: var(--vscode-editor-font-size, 13px);
-  line-height: 1.5;
-  white-space: pre;
-  tab-size: 4;
-}
+/* Fenced code blocks (`.webnb-code-block`) are styled in syntaxHighlight.css,
+   next to the token palette and the module that emits them. Both files reach
+   the renderer's shadow roots; only that one also reaches a preview page's
+   light DOM, which is where markup cells render their code fences. */
 
 .console {
   font-family: 'Courier New', Courier, monospace;

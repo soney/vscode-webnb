@@ -1,0 +1,266 @@
+/*
+ * Preview chrome. Everything here is the frame around the cells; a cell's
+ * OUTPUT is styled by the renderer's own stylesheet inside its shadow root, so
+ * nothing in this file can leak into it (or be overridden by it).
+ *
+ * Colors come from VS Code theme variables, so the preview follows the editor's
+ * theme the way the notebook editor does.
+ */
+
+html,
+body {
+    height: 100%;
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    background: var(--vscode-editor-background);
+    color: var(--vscode-editor-foreground);
+    font-family: var(--vscode-font-family);
+    font-size: var(--vscode-font-size, 13px);
+}
+
+.wnb-root {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+}
+
+/* ---- header ---- */
+
+.wnb-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 12px;
+    border-bottom: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.35));
+    background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
+    flex: 0 0 auto;
+}
+
+.wnb-title {
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.wnb-spacer {
+    flex: 1 1 auto;
+}
+
+.wnb-status {
+    opacity: 0.7;
+    font-size: 0.9em;
+}
+
+.wnb-header-button {
+    font-family: inherit;
+    font-size: 0.9em;
+    padding: 2px 10px;
+    border: none;
+    border-radius: 2px;
+    cursor: pointer;
+    color: var(--vscode-button-foreground);
+    background: var(--vscode-button-background);
+}
+
+.wnb-header-button:hover {
+    background: var(--vscode-button-hoverBackground);
+}
+
+/* A document that does not parse right now: the cells below are the last
+ * version that did. */
+.wnb-parse-error {
+    flex: 0 0 auto;
+    padding: 6px 12px;
+    font-family: var(--vscode-editor-font-family), monospace;
+    font-size: 0.9em;
+    color: var(--vscode-inputValidation-errorForeground, var(--vscode-editor-foreground));
+    background: var(--vscode-inputValidation-errorBackground, rgba(190, 30, 30, 0.2));
+    border-bottom: 1px solid var(--vscode-inputValidation-errorBorder, rgba(190, 30, 30, 0.6));
+}
+
+/* ---- cells ---- */
+
+.wnb-scroll {
+    flex: 1 1 auto;
+    overflow-y: auto;
+    overflow-x: hidden;
+}
+
+.wnb-cells {
+    padding: 8px 12px 60vh 12px;
+    max-width: 1000px;
+}
+
+.wnb-cell {
+    position: relative;
+    padding: 2px 8px;
+    border-left: 2px solid transparent;
+    border-radius: 3px;
+}
+
+/* The cell holding the cursor in the source editor. */
+.wnb-cell.is-active {
+    border-left-color: var(--vscode-focusBorder);
+    background: var(--vscode-editor-inactiveSelectionBackground, transparent);
+}
+
+.wnb-cell-code {
+    margin: 10px 0;
+    padding-bottom: 6px;
+}
+
+.wnb-cell-code.is-running {
+    opacity: 0.75;
+}
+
+.wnb-cell-markup {
+    line-height: 1.55;
+}
+
+.wnb-cell-markup :first-child {
+    margin-top: 0;
+}
+
+.wnb-cell-markup img,
+.wnb-cell-markup video {
+    max-width: 100%;
+}
+
+.wnb-cell-markup table {
+    border-collapse: collapse;
+}
+
+.wnb-cell-markup th,
+.wnb-cell-markup td {
+    border: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.35));
+    padding: 3px 8px;
+}
+
+.wnb-cell-markup blockquote {
+    margin-left: 0;
+    padding-left: 12px;
+    border-left: 3px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.35));
+    opacity: 0.9;
+}
+
+/* A markdown link that points into the workspace: clicking opens the file. */
+.webnb-workspace-link {
+    cursor: pointer;
+    text-decoration: underline;
+    color: var(--vscode-textLink-foreground);
+}
+
+/* ---- code cell chrome ---- */
+
+.wnb-cell-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 4px;
+}
+
+.wnb-run {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-family: inherit;
+    font-size: 0.85em;
+    padding: 1px 8px;
+    border: none;
+    border-radius: 2px;
+    cursor: pointer;
+    color: var(--vscode-button-foreground);
+    background: var(--vscode-button-background);
+}
+
+.wnb-run:hover {
+    background: var(--vscode-button-hoverBackground);
+}
+
+.wnb-run-icon {
+    font-size: 0.8em;
+}
+
+.wnb-chip {
+    font-size: 0.75em;
+    padding: 1px 6px;
+    border-radius: 8px;
+    background: var(--vscode-badge-background);
+    color: var(--vscode-badge-foreground);
+}
+
+.wnb-chip-muted {
+    opacity: 0.65;
+    font-family: var(--vscode-editor-font-family), monospace;
+}
+
+.wnb-link-button {
+    font-family: inherit;
+    font-size: 0.8em;
+    padding: 0;
+    border: none;
+    background: none;
+    cursor: pointer;
+    color: var(--vscode-textLink-foreground);
+}
+
+.wnb-link-button:hover {
+    text-decoration: underline;
+}
+
+/* The cell's source, read-only: the text editor beside the preview is where
+ * edits happen. */
+.wnb-cell-source {
+    margin: 0;
+    padding: 6px 10px;
+    overflow-x: auto;
+    border: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.35));
+    border-radius: 3px;
+    background: var(--vscode-textCodeBlock-background, rgba(128, 128, 128, 0.1));
+    font-family: var(--vscode-editor-font-family), monospace;
+    font-size: var(--vscode-editor-font-size, 12px);
+    line-height: 1.45;
+}
+
+.wnb-cell-source code {
+    font-family: inherit;
+    background: none;
+    padding: 0;
+}
+
+/* One row per source line, so a click resolves to that exact line. */
+.wnb-source-line {
+    display: inline-block;
+    width: 100%;
+}
+
+/* Clicking anything in the preview moves the editor's cursor to the matching
+ * source line; these show what the click will land on. Outputs are excluded --
+ * there the click belongs to the widget. */
+.wnb-source-line:hover,
+.wnb-cell-markup [data-webnb-line]:hover {
+    background: var(--vscode-editor-hoverHighlightBackground, rgba(127, 127, 127, 0.12));
+    border-radius: 2px;
+}
+
+.wnb-cell-markup [data-webnb-line],
+.wnb-source-line {
+    cursor: pointer;
+}
+
+.wnb-cell-output {
+    margin-top: 4px;
+}
+
+.webnb-render-error {
+    margin: 0;
+    padding: 8px;
+    white-space: pre-wrap;
+    color: var(--vscode-errorForeground);
+    background: var(--vscode-inputValidation-errorBackground, rgba(190, 30, 30, 0.15));
+    border-radius: 3px;
+}

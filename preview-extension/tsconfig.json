@@ -1,0 +1,28 @@
+{
+    "compilerOptions": {
+        "target": "ES2022",
+        "module": "ESNext",
+        "moduleResolution": "bundler",
+        "lib": ["ES2022", "DOM", "DOM.Iterable"],
+        "types": ["node", "vscode"],
+        "strict": true,
+        "skipLibCheck": true,
+        "noEmit": true,
+        "isolatedModules": true,
+        "resolveJsonModule": true,
+        "baseUrl": ".",
+        // `@webnb/...` is the extension's own src/ one level up: this folder
+        // builds a second extension out of the same sources rather than a copy
+        // of them. esbuild reads these paths too, so they resolve identically at
+        // type-check time and at bundle time.
+        "paths": {
+            "@webnb/*": ["../src/*"],
+            // The terminal stylesheet the renderer's shadow root needs, from the
+            // repo's own dependencies rather than a second copy here.
+            "@xterm/xterm/css/xterm.css": ["../node_modules/@xterm/xterm/css/xterm.css"]
+        }
+    },
+    // The extension's ambient declarations (smartypants, *.css) come from its
+    // own .d.ts files rather than a second copy here.
+    "include": ["src", "test", "types.d.ts", "esbuild.mjs", "../src/client/*.d.ts"]
+}

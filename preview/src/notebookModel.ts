@@ -19,6 +19,10 @@ export interface CellModel {
         id?: string;
         autorun?: boolean;
         runonstart?: boolean;
+        /** Show only this cell's output; its source starts hidden. */
+        hidecode?: boolean;
+        /** The cell's `height=` attribute, as authored. */
+        height?: string;
         rawCode?: string;
         rawCodeLanguage?: string;
     };
@@ -38,6 +42,8 @@ export function parseNotebook(content: string): CellModel[] {
             id: raw.id,
             autorun: raw.autorun,
             runonstart: raw.runonstart,
+            hidecode: raw.hidecode,
+            height: raw.height,
             rawCode: raw.rawCode,
             rawCodeLanguage: raw.rawCodeLanguage
         }

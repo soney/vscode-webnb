@@ -13,6 +13,7 @@ import {
     isTerminalAddon,
     isWalkthroughLanguage,
     normalizeAddonType,
+    runsOnOpen,
     upsertAddon
 } from '../../shared/addons';
 
@@ -215,6 +216,37 @@ suite('shared/addons', () => {
 
             assert.strictEqual(result.changed, true);
             assert.strictEqual(result.addons[0].content, 'src');
+        });
+    });
+
+    suite('runsOnOpen', () => {
+        test('a plain cell waits to be run', () => {
+            assert.strictEqual(runsOnOpen({ languageId: 'javascript' }), false);
+            assert.strictEqual(runsOnOpen({ languageId: 'html' }), false);
+        });
+
+        test('autorun and the widget languages run on open', () => {
+            assert.strictEqual(runsOnOpen({ languageId: 'javascript', autorun: true }), true);
+            for (const languageId of ['mcq', 'external', 'checklist', 'walkthrough']) {
+                assert.strictEqual(runsOnOpen({ languageId }), true, languageId);
+            }
+        });
+
+        test('hidecode runs on open by itself', () => {
+            // The reason the flag implies it: a hidden cell offers the reader a
+            // Run button for code they cannot see, which is not a real choice.
+            assert.strictEqual(runsOnOpen({ languageId: 'javascript', hidecode: true }), true);
+            assert.strictEqual(runsOnOpen({ languageId: 'html', hidecode: true }), true);
+        });
+
+        test('runonstart is spent once, the others are not', () => {
+            const runonstart = { languageId: 'javascript', runonstart: true };
+            assert.strictEqual(runsOnOpen(runonstart), true);
+            assert.strictEqual(runsOnOpen(runonstart, { runOnStartAlreadyDone: true }), false);
+
+            // A cell that also carries hidecode keeps running after that.
+            const both = { languageId: 'javascript', runonstart: true, hidecode: true };
+            assert.strictEqual(runsOnOpen(both, { runOnStartAlreadyDone: true }), true);
         });
     });
 });

@@ -48,6 +48,7 @@ import {
     isSolutionAddon,
     isTerminalAddon
 } from '../shared/addons';
+import { AUTO_OUTPUT_HEIGHT, parseOutputHeight } from '../shared/outputHeight';
 import * as Babel from '@babel/standalone';
 import * as React from 'react';
 import { createRoot, type Root } from 'react-dom/client';
@@ -73,6 +74,35 @@ const REACT_LANGUAGE_IDS = new Set(['react', 'jsx', 'javascriptreact']);
 const NODE_LANGUAGE_IDS = new Set(['node']);
 const JAVASCRIPT_LANGUAGE_IDS = new Set(['javascript', 'js']);
 type RuntimeLanguageKind = 'javascript' | 'node' | 'react';
+
+/**
+ * Sizes the output pane from the cell's `height=` attribute, as an inline style
+ * because it has to beat the stylesheet's `div#html-output:not(...)` rule. That
+ * rule's `min-height` would also win over a shorter height, so any explicit
+ * height clears the floor; `auto` drops it and lets the pane fit its content.
+ */
+function applyOutputHeight(container: HTMLElement, height: string | undefined): void {
+    const { style } = container;
+    style.removeProperty('height');
+    style.removeProperty('min-height');
+    style.removeProperty('overflow');
+    style.removeProperty('box-sizing');
+    if (height === undefined) {
+        return;
+    }
+
+    style.minHeight = '0';
+    if (height === AUTO_OUTPUT_HEIGHT) {
+        style.height = AUTO_OUTPUT_HEIGHT;
+        return;
+    }
+
+    // A pane held at a fixed height scrolls rather than clipping what does not
+    // fit, and counts its own border so `height=300` is 300px on the page.
+    style.height = height;
+    style.overflow = 'auto';
+    style.boxSizing = 'border-box';
+}
 
 function getRuntimeLanguageKind(language: string): RuntimeLanguageKind | undefined {
     if (REACT_LANGUAGE_IDS.has(language)) {
@@ -112,11 +142,18 @@ export function render({ container, feedback, mime, value, style, addStyle, cons
         : [];
     const hasHtmlAddon = activeAddons.some(addon => isHtmlAddon(addon.type));
     const runtimeLanguageKind = getRuntimeLanguageKind(language);
+    const outputHeight = parseOutputHeight(value.height);
+    // Asking for a height is asking for the pane: a JavaScript cell that draws
+    // into `document` without an `+html` fixture would otherwise have nowhere
+    // visible to draw. `height=auto` is the opposite request, so it does not
+    // count -- it takes space away rather than reserving it.
+    const heightWantsOutputContainer = outputHeight !== undefined && outputHeight !== AUTO_OUTPUT_HEIGHT;
     const shouldShowOutputContainer =
         language === 'css' ? hasHtmlAddon
             : runtimeLanguageKind === 'javascript' || runtimeLanguageKind === 'node' ? hasHtmlAddon
                 : true;
-    container.classList.toggle('webnb-output-empty', !shouldShowOutputContainer);
+    container.classList.toggle('webnb-output-empty', !shouldShowOutputContainer && !heightWantsOutputContainer);
+    applyOutputHeight(container, outputHeight);
     const defaultSource = getAddonContent(activeAddons, 'default') ?? '';
     const deferChecklistRendering = isExternalCheckLanguage(language);
     const terminalAddon = activeAddons.find(addon => isTerminalAddon(addon.type));

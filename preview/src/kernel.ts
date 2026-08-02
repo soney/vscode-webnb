@@ -9,19 +9,21 @@
  */
 import { fetchDiskSnapshot } from './api';
 import { getRequestedFilePaths } from '../../src/shared/filePaths';
-import { getDefaultCaptureAddons, isAutoWidgetLanguage, isExternalCheckLanguage } from '../../src/shared/addons';
+import { getDefaultCaptureAddons, isExternalCheckLanguage, runsOnOpen } from '../../src/shared/addons';
 import type { VirtualFs } from './vfs';
 import type { Addon, WebnbOutputValue, WorkspaceFileSnapshotEntry } from './types';
 import type { CellModel } from './notebookModel';
 
 export { isAutoWidgetLanguage, isExternalCheckLanguage } from '../../src/shared/addons';
 
-/** Cells that run on open (autorun/runonstart) or are auto-widgets (mcq/external/checklist). */
+/** Cells that run without the reader pressing anything. */
 export function shouldAutorun(model: CellModel): boolean {
-    return (
-        model.kind === 'code' &&
-        (!!model.metadata.autorun || !!model.metadata.runonstart || isAutoWidgetLanguage(model.languageId))
-    );
+    return model.kind === 'code' && runsOnOpen({
+        languageId: model.languageId,
+        autorun: model.metadata.autorun,
+        runonstart: model.metadata.runonstart,
+        hidecode: model.metadata.hidecode
+    });
 }
 
 /** Whether a cell reads the (virtual) filesystem, so it should re-run when the VFS changes. */
@@ -38,6 +40,8 @@ export interface BuildOutputParams {
     vfs: VirtualFs;
     /** The cell's `reveal` attribute (metadata), mirrored into the payload. */
     reveal?: boolean;
+    /** The cell's `height=` attribute (metadata), mirrored into the payload. */
+    height?: string;
 }
 
 export async function buildOutputValue(params: BuildOutputParams): Promise<WebnbOutputValue> {
@@ -60,6 +64,7 @@ export async function buildOutputValue(params: BuildOutputParams): Promise<Webnb
         files,
         cellUri,
         checkedAt: Date.now(),
-        reveal: params.reveal === true
+        reveal: params.reveal === true,
+        height: params.height
     };
 }

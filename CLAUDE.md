@@ -22,8 +22,8 @@ of truth for everything that must not drift between them:
   `workspaceSnapshots.ts`, `cellStructureLock.ts`, `defaultCapture.ts`,
   `markdownLock.ts`, `readOnlyMode.ts`, `restoreNotebook.ts`,
   `serializer.ts`/`markdownParser.ts` (the .webnb ⇄ notebook round-trip),
-  `notebookUris.ts`, `log.ts` (LogOutputChannel "Web Notebook"; execution
-  traces log at Trace level).
+  `notebookUris.ts`, `notebookLinkNavigator.ts`, `log.ts` (LogOutputChannel
+  "Web Notebook"; execution traces log at Trace level).
 - **`src/client/`** — the notebook renderer (webview). `render.ts` dispatches
   per cell language to `mcq.ts`, `checks.ts`, `terminal.ts`,
   `walkthroughRender.ts`, the js/node/react runtime (`runtime.ts` shims), with
@@ -34,8 +34,11 @@ of truth for everything that must not drift between them:
 - **`preview/`** — a vite dev harness that hosts the *same* `render()` and the
   same `src/shared` discovery logic, so anything cell-rendering related can be
   observed in a plain browser (`npm run preview`, needs `WEBNB_WORKSPACE`).
-- **`src/markdownItPlugin/`** — teaches VS Code's builtin markdown renderer
-  the image-size syntax (shares the parser via `src/shared/imageSize.ts`).
+- **`src/markdownItPlugin/`** — extends VS Code's builtin markdown renderer:
+  the image-size syntax (parser shared via `src/shared/imageSize.ts`) and
+  `notebookLinkClicks.ts`, which takes `[x](other.webnb#section)` clicks away
+  from VS Code and hands them to `extension/notebookLinkNavigator.ts`
+  (grammar and slugs shared via `src/shared/notebookLinks.ts`).
 
 ## The eval-scope contract (read before touching render.ts)
 
@@ -78,6 +81,9 @@ When in doubt, run the harness (below) across every cell language.
   not `innerText`. Clicking the toolbar's **Run All** exercises the whole
   kernel path deterministically. When checking for regressions, run the same
   probe against a pre-change build first (control) and diff the profiles.
+  `tests/workbench/notebook-links.js` is one such probe, kept because
+  cross-notebook navigation exists only in the workbench: start the server on
+  `samplenotebooks/links.webnb`, then run it (see its header).
 
 ## Conventions
 

@@ -5,6 +5,7 @@ import { activate as activateKernel, deactivate as deactivateKernel } from './we
 import { activate as activateCellStructureLock, deactivate as deactivateCellStructureLock } from './cellStructureLock';
 import { activate as activateDefaultCapture, deactivate as deactivateDefaultCapture } from './defaultCapture';
 import { activate as activateMarkdownLock, deactivate as deactivateMarkdownLock } from './markdownLock';
+import { activate as activateNotebookLinks, deactivate as deactivateNotebookLinks } from './notebookLinkNavigator';
 import { activate as activateReadOnlyMode, deactivate as deactivateReadOnlyMode } from './readOnlyMode';
 
 export function activate(context: vscode.ExtensionContext) {
@@ -13,6 +14,7 @@ export function activate(context: vscode.ExtensionContext) {
     activateCellStructureLock(context);
     activateDefaultCapture(context);
     activateMarkdownLock(context);
+    activateNotebookLinks(context);
     activateReadOnlyMode(context);
     // Files opened programmatically (via a payload openFile command) don't
     // open as notebooks; watch for one and reopen it with the notebook editor.
@@ -25,6 +27,7 @@ export function deactivate() {
     deactivateCellStructureLock();
     deactivateDefaultCapture();
     deactivateMarkdownLock();
+    deactivateNotebookLinks();
     deactivateReadOnlyMode();
 }
 

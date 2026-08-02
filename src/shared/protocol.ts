@@ -51,6 +51,10 @@ export interface WebnbOutputValue {
      * solution" button for `+solution` addons and "Show Answer" on MCQ cells.
      * The content stays hidden until the reader clicks. */
     reveal?: boolean;
+    /** The cell's `height=` attribute, as the author wrote it; the renderer
+     * resolves it through shared/outputHeight. Undefined leaves the output pane
+     * at its default size. */
+    height?: string;
 }
 
 export interface WebNbRefreshCellMessage {

@@ -5,6 +5,7 @@
  */
 import type { Addon } from '../shared/protocol';
 import { getAddonContent } from '../shared/addons';
+import { dedent } from '../shared/indentation';
 import { renderMarkdownBlock, renderMarkdownInline } from './markdown';
 import type { FeedbackWriters } from './feedback';
 
@@ -102,7 +103,13 @@ export function parseMcqSource(source: string): ParsedMcq {
     }
 
     return {
-        question: questionLines.join('\n').trim(),
+        // Dedent before trimming: a cell nested in a list item indents every
+        // line of its question, and only the first one loses that indent to
+        // trim(). What is left reads to Markdown as an indented code block --
+        // and an intentional snippet, indented FURTHER than the question, comes
+        // out with the difference doubled. Removing the shared indent leaves
+        // any deliberate extra indentation meaning exactly what it meant.
+        question: dedent(questionLines.join('\n')).trim(),
         options,
         correctFeedback,
         wrongFeedback,

@@ -103,3 +103,31 @@
   color: var(--webnb-hl-attribute);
   text-decoration: underline;
 }
+
+/* Fenced code blocks, as renderCodeBlockHtml() emits them: the renderer's own
+   markdown (walkthrough commentary, MCQ questions, checklist labels) and the
+   markup cells of a preview page.
+
+   The `pre` qualifier is load-bearing. In a shadow root this file is
+   concatenated BEFORE style.css, whose `.mcq-question code` rule would
+   otherwise win on source order and give a fenced block the inline-code look. */
+pre.webnb-code-block {
+  margin: 8px 0;
+  padding: 8px 10px;
+  border: 1px solid var(--vscode-notebook-cellBorderColor, var(--vscode-panel-border, rgba(127, 127, 127, 0.3)));
+  border-radius: 6px;
+  background: var(--vscode-textCodeBlock-background, var(--vscode-editorWidget-background, rgba(127, 127, 127, 0.08)));
+  overflow-x: auto;
+}
+
+pre.webnb-code-block code {
+  display: block;
+  padding: 0;
+  background: none;
+  color: var(--vscode-editor-foreground);
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: var(--vscode-editor-font-size, 13px);
+  line-height: 1.5;
+  white-space: pre;
+  tab-size: 4;
+}

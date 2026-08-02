@@ -1,5 +1,6 @@
 /**
- * Extends VS Code's built-in notebook markdown renderer with image sizing.
+ * Everything this extension adds to VS Code's built-in notebook markdown
+ * renderer: image sizing, and links between notebooks.
  *
  * Notebook markup cells are rendered by VS Code's own markdown-it instance
  * (`vscode.markdown-it-renderer`), not by this extension's `marked` setup. This
@@ -11,9 +12,14 @@
  * Either dimension may be omitted to preserve the aspect ratio:
  *   ![alt](img.png =200x100)   ![alt](img.png =200x)   ![alt](img.png =x100)
  *   ![alt](img.png =200)       ![alt](img.png "title" =200x100)
+ *
+ * It also owns clicks on `[text](other.webnb#section)` links -- see
+ * `notebookLinkClicks.ts`. That listener is on the whole webview document, so it
+ * covers links in output cells (MCQ prompts, walkthrough notes) too.
  */
 import type { RendererContext } from 'vscode-notebook-renderer';
 import { parseSizedImage } from '../shared/imageSize';
+import { installNotebookLinkClicks } from './notebookLinkClicks';
 
 // --- markdown-it plugin ------------------------------------------------------
 // Minimal structural typing for the markdown-it pieces we touch, so the plugin
@@ -95,6 +101,13 @@ interface MarkdownItRenderer {
 }
 
 export async function activate(context: RendererContext<void>): Promise<void> {
+    // Messaging is declared `optional`, so a host that does not grant it still
+    // gets image sizing -- links just fall back to VS Code's own handling.
+    const postMessage = context.postMessage;
+    if (postMessage) {
+        installNotebookLinkClicks(message => postMessage(message));
+    }
+
     if (typeof context.getRenderer !== 'function') {
         return;
     }

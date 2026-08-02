@@ -38,6 +38,39 @@ suite('client/mcq', () => {
             });
         });
 
+        test('a question indented to sit in a list keeps only its deliberate indentation', () => {
+            // The whole cell is indented 4 to nest under a numbered step; the
+            // snippet is indented 4 FURTHER because it is meant to be a code
+            // block. Only the shared 4 is the list's, so only that comes off --
+            // otherwise the snippet renders with the difference doubled.
+            const source = [
+                '    Which elements does `.note` select?',
+                '    ',
+                '        <p class="note">First</p>',
+                '        <div class="note">Third</div>',
+                '    ',
+                '    shuffle: false',
+                '    [x] `<p class="note">First</p>`',
+                '    [ ] `<p>Second</p>`'
+            ].join('\n');
+
+            const parsed = parseMcqSource(source);
+            assert.strictEqual(
+                parsed.question,
+                'Which elements does `.note` select?\n\n    <p class="note">First</p>\n    <div class="note">Third</div>'
+            );
+            assert.strictEqual(parsed.shuffle, false);
+            assert.deepStrictEqual(parsed.options, [
+                { text: '`<p class="note">First</p>`', correct: true },
+                { text: '`<p>Second</p>`', correct: false }
+            ]);
+        });
+
+        test('an unindented question is untouched', () => {
+            const parsed = parseMcqSource('Question\n\n    <p>snippet</p>\n[x] a');
+            assert.strictEqual(parsed.question, 'Question\n\n    <p>snippet</p>');
+        });
+
         test('defaults: shuffle on, not deterministic, no feedback', () => {
             const parsed = parseMcqSource('Q\n[x] a');
             assert.strictEqual(parsed.shuffle, true);

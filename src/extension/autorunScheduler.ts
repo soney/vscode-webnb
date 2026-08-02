@@ -12,6 +12,7 @@
  * autorun cells already ran at their current versions is never re-run.
  */
 import * as vscode from 'vscode';
+import { runsOnOpen } from '../shared/addons';
 import { logExecution, rangesLabel, uriLabel, warnExecution } from './log';
 import { getNotebookKey, isRemoteNotebookAlias, notebookUrisMatch } from './notebookUris';
 
@@ -24,8 +25,6 @@ export interface AutorunSchedulerDeps {
     notebookType: string;
     /** Marks the kernel's controller as preferred for the notebook. */
     ensureControllerAssociation(notebook: vscode.NotebookDocument): void;
-    /** True for cells that render interactive widgets and should run on open. */
-    isAutoWidgetCell(cell: vscode.NotebookCell): boolean;
     /** Executes the ranges; resolves true when every cell actually ran. */
     executeRanges(notebook: vscode.NotebookDocument, ranges: vscode.NotebookRange[]): Promise<boolean>;
 }
@@ -126,12 +125,16 @@ export class AutorunScheduler {
         const runOnStartAlreadyDone = this._runOnStartExecutedNotebooks.has(notebookKey);
         return notebook.getCells()
             .filter(cell =>
-                cell.kind === vscode.NotebookCellKind.Code &&
-                    (
-                        cell.metadata?.autorun ||
-                        this._deps.isAutoWidgetCell(cell) ||
-                        (cell.metadata?.runonstart && !runOnStartAlreadyDone)
-                    )
+                cell.kind === vscode.NotebookCellKind.Code
+                && runsOnOpen(
+                    {
+                        languageId: cell.document.languageId,
+                        autorun: cell.metadata?.autorun,
+                        runonstart: cell.metadata?.runonstart,
+                        hidecode: cell.metadata?.hidecode
+                    },
+                    { runOnStartAlreadyDone }
+                )
             );
     }
 

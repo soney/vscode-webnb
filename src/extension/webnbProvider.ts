@@ -44,6 +44,12 @@ function getCellAddons(cell: vscode.NotebookCell): Addon[] {
     return Array.isArray(addons) ? addons : [];
 }
 
+/** The cell's `height=` attribute, passed to the renderer as authored. */
+function getCellHeight(cell: vscode.NotebookCell): string | undefined {
+    const height = cell.metadata?.height;
+    return typeof height === 'string' ? height : undefined;
+}
+
 /** Cells that render an interactive widget and should run on notebook open. */
 function isAutoWidgetCell(cell: vscode.NotebookCell): boolean {
     return isAutoWidgetLanguage(cell.document.languageId);
@@ -104,7 +110,6 @@ export class WebNotebookKernel implements vscode.Disposable {
         this._scheduler = new AutorunScheduler({
             notebookType: this.notebookType,
             ensureControllerAssociation: notebook => this._ensureControllerAssociation(notebook),
-            isAutoWidgetCell,
             executeRanges: (notebook, ranges) => this._executeNotebookRanges(notebook, ranges)
         });
         this._disposables.push(new NotebookRestorer({
@@ -480,6 +485,7 @@ export class WebNotebookKernel implements vscode.Disposable {
                 cellUri: cell.document.uri.toString(),
                 checkedAt: Date.now(),
                 reveal: this._shouldShowSolutions(cell),
+                height: getCellHeight(cell),
             }, WEBNB_OUTPUT_MIME)
         ]);
 

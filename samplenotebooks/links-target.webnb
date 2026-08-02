@@ -1,0 +1,27 @@
+# Link Target
+
+The notebook other notebooks link into.
+
+## Alpha
+
+The first section.
+
+## Not A Heading Below
+
+The next heading sits inside a fenced block, so it is not a section and
+`#fenced-heading` must not resolve to it:
+
+```markdown
+## Fenced Heading
+```
+
+## The `fetch` API, really?
+
+A heading with markup and punctuation in it. Its anchor is
+`#the-fetch-api-really`.
+
+## Beta
+
+The section most of the example links point at.
+
+Back to [Notebook Links](links.webnb).

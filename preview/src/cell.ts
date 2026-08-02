@@ -10,7 +10,7 @@ import { CellOutputHost, type PreviewRendererContext } from './rendererHost';
 import { renderMarkdownBlock, resolveRelativeAssets } from './markdown';
 import { buildOutputValue, dependsOnFiles, shouldAutorun } from './kernel';
 import { cellKeyFor, type CellModel } from './notebookModel';
-import { getAddonContent, normalizeAddonType, upsertAddon } from '../../src/shared/addons';
+import { getAddonContent, isAutoWidgetLanguage, normalizeAddonType, upsertAddon } from '../../src/shared/addons';
 import type { Addon, RendererMessage } from './types';
 import type { VirtualFs } from './vfs';
 import type { ScratchStore } from './scratch';
@@ -68,6 +68,11 @@ export class CellView {
 
     private get addons(): Addon[] {
         return this.model.metadata.addons ?? [];
+    }
+
+    /** Cells the notebook editor opens with their source collapsed. */
+    private startsCollapsed(): boolean {
+        return this.model.metadata.hidecode === true || isAutoWidgetLanguage(this.model.languageId);
     }
 
     // ---- markup ------------------------------------------------------------
@@ -148,7 +153,9 @@ export class CellView {
             el.append(toolbar);
         }
 
-        // Editor
+        // Editor. Widget cells and `hidecode` cells open collapsed, matching the
+        // notebook editor -- but the toggle stays, because this harness exists
+        // to inspect cells, including the ones a reader never sees the code for.
         const editorHost = document.createElement('div');
         editorHost.className = 'cell-editor';
         const initialDoc = this.ctx.scratch.getCode(this.cellKey) ?? this.model.value;
@@ -159,6 +166,24 @@ export class CellView {
             onRun: () => void this.run()
         });
         editorHost.append(this.editor.dom);
+
+        if (this.startsCollapsed()) {
+            const sourceToggle = document.createElement('button');
+            sourceToggle.className = 'cell-source-toggle';
+            sourceToggle.type = 'button';
+            let collapsed = true;
+            const applyCollapsed = () => {
+                editorHost.hidden = collapsed;
+                sourceToggle.textContent = collapsed ? 'Show source' : 'Hide source';
+            };
+            sourceToggle.addEventListener('click', () => {
+                collapsed = !collapsed;
+                applyCollapsed();
+            });
+            applyCollapsed();
+            toolbar.insertBefore(sourceToggle, spacer);
+        }
+
         el.append(editorHost);
 
         // Output
@@ -292,7 +317,8 @@ export class CellView {
                 languageId: this.model.languageId,
                 addons,
                 vfs: this.ctx.vfs,
-                reveal: this.ctx.showSolutions()
+                reveal: this.ctx.showSolutions(),
+                height: this.model.metadata.height
             });
             if (token !== this.runToken) { return; } // superseded by a newer run
             this.host.render(value);
