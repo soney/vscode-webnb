@@ -9,6 +9,10 @@ node_modules/**
 out/test/**
 src/**
 preview/**
+preview-extension/**
+# README images are rewritten to raw.githubusercontent URLs at package time,
+# so the local copies are dead weight in the VSIX.
+images/**
 samplenotebooks/**
 scripts/**
 tests/**

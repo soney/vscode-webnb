@@ -9,16 +9,21 @@
         "url": "https://github.com/soney/vscode-webnb.git"
     },
     "license": "MIT",
+    "icon": "icons/webnb-icon.png",
     "engines": {
-        "vscode": "^1.130.0",
+        "vscode": "^1.125.0",
         "node": "^22.18.0 || >=24.11.0"
     },
     "keywords": [
-        "notebookRenderer",
-        "notebookKernelWebNotebook"
+        "notebook",
+        "tutorial",
+        "interactive",
+        "markdown",
+        "education"
     ],
     "categories": [
-        "Other"
+        "Notebooks",
+        "Education"
     ],
     "activationEvents": [
         "onNotebook:web-notebook",

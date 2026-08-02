@@ -1,8 +1,100 @@
 # Web Notebook
 
-Web Notebook files are Markdown documents with executable tutorial cells. Use fenced code blocks for learner-editable cells, and attach addon blocks for fixtures, styles, tests, or references.
+Interactive coding tutorials in VS Code, written as plain Markdown.
 
-Authoring reference: **[SYNTAX.md](SYNTAX.md)** documents every cell type, addon, test helper, and widget — cell format, tests, automatic running, multiple choice questions, external checks, and code walkthroughs. SYNTAX.md is standalone so other projects can reference it directly. Working examples of every cell type live in [`samplenotebooks/`](samplenotebooks/); `samplenotebooks/walkthrough.webnb` is a complete walkthrough example over `samplenotebooks/demo-src/`. This file covers building and developing the extension itself.
+A `.webnb` file is a Markdown document whose fenced code blocks are live,
+editable cells. Learners edit HTML, CSS, JavaScript, Node, or React right in
+the notebook, run it, and see rendered output and pass/fail test results
+inline — no server, no build step, no toolchain for them to install.
+
+![A Web Notebook open in VS Code: an editable JavaScript cell, its live HTML output, and passing tests](images/screenshot.png)
+
+## A notebook is just Markdown
+
+Prose is Markdown. A cell is a fenced block with a language in braces, and
+`+` blocks attached underneath supply the fixture, the tests, and the answer:
+
+````markdown
+# Adding a click handler
+
+Make the button append "Hello" to the output box.
+
+```{js}
+// your code here
+```
+```+html
+<button id="el">Click me</button>
+<div id="outp"></div>
+```
+```+test
+assert('#el').click().run('Button did not respond', 'Clicked button');
+assert('#outp').should('have.text', 'Hello').run('No output yet', 'Set output');
+```
+```+solution
+document.querySelector('#el').addEventListener('click', () => {
+    document.querySelector('#outp').textContent += 'Hello';
+});
+```
+````
+
+Because the source is Markdown, notebooks diff and review like ordinary text
+files in git.
+
+## What you can put in a notebook
+
+- **Runnable cells** — HTML, CSS, JavaScript, Node, ES modules, and React
+  (JSX), with syntax highlighting and a live output pane.
+- **Tests** that grade a learner's work and report each assertion as a green
+  check or a red x, with the failure message you wrote.
+- **Multiple choice questions**, with feedback per answer or per question.
+- **Code walkthroughs** that step through real files in the workspace,
+  highlighting a region at a time with your annotations beside it.
+- **Workspace checklists** that watch the learner's actual files and tick off
+  goals as they edit them.
+- **A simulated terminal** for command-line exercises.
+- **Solutions and starter code** — reveal an answer on demand, reset a cell
+  back to its starting state, or restore the whole notebook.
+- **Links between notebooks**, so a course reads as a connected set of pages.
+
+## Getting started
+
+1. Install the extension.
+2. Create a file ending in `.webnb` and write some Markdown in it.
+3. Open it — VS Code opens `.webnb` files as Web Notebooks automatically.
+
+To author rather than take a notebook, turn off `webnb.lockCellStructure` so
+you can add, remove, and reorder cells.
+
+## Settings
+
+| Setting | Default | What it does |
+| --- | --- | --- |
+| `webnb.lockCellStructure` | `true` | Stops cells being added, removed, or reordered. Contents stay editable, so learners can still edit code and answer questions. Turn off to author. |
+| `webnb.allowRevealingSolutions` | `true` | Shows the "View solution" and "Show Answer" buttons. Turn off during an assessment. |
+| `webnb.lockMarkdown` | `false` | Makes prose cells read-only so instructions stay intact; code cells stay editable and runnable. |
+| `webnb.readOnly` | `false` | Makes `.webnb` files fully read-only, for notebooks meant purely for reading. Nothing is written back — not outputs, not saved answers. |
+
+## Authoring reference
+
+**[SYNTAX.md](SYNTAX.md)** documents every cell type, addon, test helper, and
+widget: the cell format, tests, automatic running, multiple choice questions,
+external checks, and code walkthroughs. It is standalone, so a course repo can
+link to it directly.
+
+Working examples of every cell type live in
+[`samplenotebooks/`](samplenotebooks/);
+`samplenotebooks/walkthrough.webnb` is a complete walkthrough over
+`samplenotebooks/demo-src/`.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
+
+---
+
+# Developing this extension
+
+Everything below is for working on the extension itself.
 
 ## Coursera Docker Dev
 
@@ -167,3 +259,9 @@ jobs:
 
 (The second checkout lands the harness inside the course checkout, so pass the
 course root explicitly rather than relying on the default working directory.)
+
+## Releasing
+
+`npm run gen-vsix` builds and packages `web-notebook.vsix`. Bump `version` in
+`package.json` and add a `CHANGELOG.md` entry before publishing with
+`npx vsce publish`.
