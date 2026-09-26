@@ -3,10 +3,10 @@
  * for each cell output, and this mounts the shared render() pipeline into the
  * output element (see mountRenderer.ts for the DOM contract).
  */
-import errorOverlay from 'vscode-notebook-error-overlay';
 import type { ActivationFunction } from 'vscode-notebook-renderer';
 import { createCellMount, type CellMount } from './mountRenderer';
-import type { WebnbOutputValue } from '../shared/protocol';
+import { isForgetTerminalHistoryMessage, type WebnbOutputValue } from '../shared/protocol';
+import { forgetTerminalSessions } from './terminal';
 import xtermCss from '@xterm/xterm/css/xterm.css';
 import highlightCss from './syntaxHighlight.css';
 import styleCss from './style.css';
@@ -22,6 +22,14 @@ export const activate: ActivationFunction = (context) => {
     const mounts = new WeakMap<HTMLElement, CellMount>();
     const mountsByOutputId = new Map<string, CellMount>();
 
+    // After Restore Notebook the kernel asks for the restored terminals'
+    // in-memory history to go too; it re-runs those cells right after.
+    context.onDidReceiveMessage?.(message => {
+        if (isForgetTerminalHistoryMessage(message)) {
+            forgetTerminalSessions(message.cellUris);
+        }
+    });
+
     return {
         renderOutputItem(outputItem, element) {
             const value = outputItem.json();
@@ -36,10 +44,9 @@ export const activate: ActivationFunction = (context) => {
 
             let mount = mounts.get(element);
             if (!mount) {
-                mount = createCellMount(element, {
-                    cssText,
-                    wrapRender: (root, fn) => errorOverlay.wrap(root, fn)
-                });
+                // No wrapRender: the mount shows a render error inside the
+                // output, where the learner can see it.
+                mount = createCellMount(element, { cssText });
                 mounts.set(element, mount);
             }
             mountsByOutputId.set(outputItem.id, mount);

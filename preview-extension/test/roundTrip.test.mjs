@@ -4,22 +4,22 @@
  * The serializer is the only thing standing between an author's Markdown and
  * what lands on disk, and every loss it takes is silent: nothing surfaces until
  * a diff shows blank lines gone or indentation added. So this checks
- * parse -> write against every real notebook there is, byte for byte.
+ * open -> save, through the serializer's own deserializeWebnb/serializeWebnb,
+ * against every real notebook there is, byte for byte.
  *
- * These live here rather than in src/test because markdownParser.ts imports
- * `vscode`; this folder already bundles it against a stub to run the parser
- * under node.
+ * These live here rather than in src/test because the serializer imports
+ * `vscode`; this folder already bundles it against a stub to run it under node.
  */
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import test from 'node:test';
 import { findNotebooks, loadHarness, notebooksDir, readNotebook, samplesDir } from './harness.mjs';
 
-const { parseMarkdown, writeCellsToMarkdown, toCellData } = await loadHarness();
+const { parseMarkdown, deserializeWebnb, serializeWebnb } = await loadHarness();
 
-/** Parse a document and write it straight back out, as saving does. */
+/** Open a document and save it straight back out, as VS Code does. */
 function roundTrip(text) {
-    return writeCellsToMarkdown(toCellData(parseMarkdown(text)));
+    return new TextDecoder().decode(serializeWebnb(deserializeWebnb(new TextEncoder().encode(text))));
 }
 
 /** The first line where two documents differ, for a readable failure. */
@@ -38,9 +38,11 @@ function firstDifference(before, after) {
  * Files the serializer still rewrites once, and why. Each is a form the parser
  * cannot tell apart from the canonical one, so writing has to pick a side:
  *
- *  - an empty block written as fence/blank/fence rather than fence/fence;
- *  - `{jsx}`, an alias of `{react}`, which comes back as the canonical spelling
- *    (sample.webnb demonstrates the alias on purpose, so it stays as authored).
+ *  - an empty block written as fence/blank/fence rather than fence/fence
+ *    (sample.webnb has one on purpose: an empty `{html}` cell).
+ *
+ * (`{jsx}`, an alias of `{react}`, used to come back as the canonical spelling
+ * too; the language alias is kept now, so it round-trips.)
  *
  * Rewriting each file once empties this list. Anything NOT listed that starts
  * drifting is a regression, which is what the test below is for.
@@ -190,23 +192,18 @@ test('hidecode is parsed, carried, and written back', () => {
     assert.equal(roundTrip(text), text);
 });
 
-test('hidecode is read in any order, and written in the canonical one', () => {
+test('hidecode is read in any order, and written back as authored', () => {
     const authored = '```{javascript hidecode autorun id=chart}\nx\n```\n';
     const cell = parseMarkdown(authored)[0];
     assert.equal(cell.id, 'chart');
     assert.equal(cell.autorun, true);
     assert.equal(cell.hidecode, true);
 
-    // Flags are re-emitted in a fixed order (id, autorun, runonstart, hidecode),
-    // which predates this flag -- `{js runonstart id=x}` has always come back as
-    // `{js id=x runonstart}`. So a save can reorder flags once. What must hold is
-    // that the meaning survives and the second save changes nothing.
+    // The fence's attributes are carried as written (fenceAttributes), so a
+    // save keeps the author's order rather than re-emitting flags in a fixed
+    // one -- and a second save changes nothing either.
     const written = roundTrip(authored);
-    assert.equal(written, '```{javascript id=chart autorun hidecode}\nx\n```\n');
-    const reparsed = parseMarkdown(written)[0];
-    assert.equal(reparsed.id, 'chart');
-    assert.equal(reparsed.autorun, true);
-    assert.equal(reparsed.hidecode, true);
+    assert.equal(written, authored);
     assert.equal(roundTrip(written), written);
 });
 

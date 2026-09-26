@@ -5,7 +5,7 @@
  */
 import * as vscode from 'vscode';
 import { warnExecution } from './log';
-import { resolveWorkspaceFileUri } from './workspaceSnapshots';
+import { resolveContainedWorkspaceFileUri, resolveWorkspaceFileUri } from './workspaceSnapshots';
 
 export class WalkthroughHighlighter implements vscode.Disposable {
     /** The lines a hovered walkthrough step shows, marked in open editors. */
@@ -98,7 +98,8 @@ export class WalkthroughHighlighter implements vscode.Disposable {
     }
 
     public async open(cell: vscode.NotebookCell, requestPath: string, line?: number): Promise<void> {
-        const uri = resolveWorkspaceFileUri(cell, requestPath);
+        // Opening shows the file's contents, so a symlink out of the workspace is refused.
+        const uri = await resolveContainedWorkspaceFileUri(cell, requestPath);
         if (!uri) {
             return;
         }

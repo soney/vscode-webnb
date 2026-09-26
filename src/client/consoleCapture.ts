@@ -156,8 +156,31 @@ function wrapHtmlConsoleHandlers(
  * `didLog` checks and the on-page console view) and mirrors it to the real
  * browser console.
  */
+/**
+ * Past this many messages the console pane stops growing (a runaway
+ * `setInterval(console.log)` would otherwise add DOM forever); history for
+ * `console.didLog` checks keeps a larger, still bounded, window.
+ */
+const MAX_DISPLAYED_CONSOLE_MESSAGES = 1000;
+const MAX_CONSOLE_HISTORY = 10000;
+
 export function createCellConsole(consoleElement: HTMLElement) {
     const consoleHistory: ConsoleHistoryEntry[] = [];
+    let displayedMessages = 0;
+
+    function appendConsoleLine(el: HTMLElement): void {
+        if (displayedMessages === MAX_DISPLAYED_CONSOLE_MESSAGES) {
+            const notice = document.createElement('div');
+            notice.classList.add('info', 'console-message', 'console-truncated');
+            notice.textContent = `Console output stopped after ${MAX_DISPLAYED_CONSOLE_MESSAGES} messages.`;
+            consoleElement.append(notice);
+        }
+        displayedMessages++;
+        if (displayedMessages > MAX_DISPLAYED_CONSOLE_MESSAGES) {
+            return;
+        }
+        consoleElement.append(el);
+    }
 
     function addConsoleMessage(objects: ConsoleObjectView[], category: messageType = 'info') {
         const el = document.createElement('div');
@@ -166,7 +189,19 @@ export function createCellConsole(consoleElement: HTMLElement) {
             const view = obj.getElement();
             el.append(view);
         }
-        consoleElement.append(el);
+        appendConsoleLine(el);
+    }
+
+    /**
+     * An error nobody caught, shown the way a browser console shows one. It is
+     * not a console call, so it stays out of `console.history()`: tests that
+     * count logged lines must not change because a demo's promise rejected.
+     */
+    function reportUncaught(text: string): void {
+        const el = document.createElement('div');
+        el.classList.add('error', 'console-message', 'console-uncaught');
+        el.textContent = text;
+        appendConsoleLine(el);
     }
 
     function formatConsoleValue(value: any): string {
@@ -209,7 +244,9 @@ export function createCellConsole(consoleElement: HTMLElement) {
             text: args.map(formatConsoleValue).join(' '),
             timestamp: Date.now()
         };
-        consoleHistory.push(entry);
+        if (consoleHistory.length < MAX_CONSOLE_HISTORY) {
+            consoleHistory.push(entry);
+        }
         addConsoleMessage(args.map(arg => new ConsoleObjectView(arg)), consoleMethodToMessageType(method));
     }
 
@@ -246,11 +283,12 @@ export function createCellConsole(consoleElement: HTMLElement) {
         didLog: (expected: string | RegExp): boolean => consoleHistory.some(entry => consoleEntryMatches(entry, expected)),
         clear: (): void => {
             consoleHistory.length = 0;
+            displayedMessages = 0;
             consoleElement.innerHTML = '';
         }
     };
 
-    return { console, recordConsoleMessage };
+    return { console, recordConsoleMessage, reportUncaught };
 }
 
 /**

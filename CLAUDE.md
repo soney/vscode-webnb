@@ -12,25 +12,36 @@ of truth for everything that must not drift between them:
 
 - **`src/shared/`** — dependency-free (no vscode, no DOM). `protocol.ts` (the
   kernel→renderer output payload, the renderer→kernel message union + guard,
-  the mime constant), `addons.ts` (addon-type and language predicates),
-  `checklist.ts` (the `kind: path | value | label` grammar), `filePaths.ts`
-  (which workspace files a cell references, path normalization/resolution),
-  `imageSize.ts` (the `![alt](url =WxH)` syntax).
+  the mime constant, which addons the renderer may write), `addons.ts`
+  (addon-type and language predicates), `checklist.ts` (the
+  `kind: path | value | label` grammar), `filePaths.ts` (which workspace files a
+  cell references, path normalization/resolution), `imageSize.ts` (the
+  `![alt](url =WxH)` syntax), `indentation.ts` (list-item indentation of cells),
+  `outputHeight.ts` (the `height=` attribute), `notebookLinks.ts` (link grammar,
+  VS Code-exact heading slugs, the link-handler handshake).
 - **`src/extension/`** — extension host. `webnbProvider.ts` is the kernel
-  (controller lifecycle, cell execution → JSON output); one concern per file
-  around it: `autorunScheduler.ts`, `walkthroughHighlighter.ts`,
-  `workspaceSnapshots.ts`, `cellStructureLock.ts`, `defaultCapture.ts`,
-  `markdownLock.ts`, `readOnlyMode.ts`, `restoreNotebook.ts`,
-  `serializer.ts`/`markdownParser.ts` (the .webnb ⇄ notebook round-trip),
-  `notebookUris.ts`, `notebookLinkNavigator.ts`, `log.ts` (LogOutputChannel
-  "Web Notebook"; execution traces log at Trace level).
+  (controller lifecycle, cell execution → JSON output; background runs never
+  take focus); one concern per file around it: `autorunScheduler.ts`,
+  `walkthroughHighlighter.ts`, `workspaceSnapshots.ts` +
+  `workspaceContainment.ts` (paths and symlinks stay inside the workspace),
+  `cellStructureLock.ts`, `defaultCapture.ts` (captures `+default` on first
+  edit; nothing else writes it), `markdownLock.ts`, `readOnlyMode.ts`,
+  `restoreNotebook.ts`, `inputCollapser.ts` (hidecode and widget cells),
+  `reopenAsNotebook.ts` (a `.webnb` opened as text at startup),
+  `serializer.ts`/`markdownParser.ts` (the .webnb ⇄ notebook round-trip:
+  byte-identical, malformed blocks kept as text), `notebookUris.ts`,
+  `notebookLinkNavigator.ts`, `log.ts` (LogOutputChannel "Web Notebook";
+  execution traces log at Trace level).
 - **`src/client/`** — the notebook renderer (webview). `render.ts` dispatches
-  per cell language to `mcq.ts`, `checks.ts`, `terminal.ts`,
+  per cell language to `mcq.ts`, `checks.ts`, `terminal.ts`, `walkthrough.ts` /
   `walkthroughRender.ts`, the js/node/react runtime (`runtime.ts` shims), with
   `cellActions.ts` (View solution / Reset code strip), `consoleCapture.ts`,
-  `feedback.ts`, `markdown.ts`, `lite-cy.ts` (the assertion/grading engine)
-  underneath. `mountRenderer.ts` is the DOM contract
-  both hosts mount through.
+  `feedback.ts`, `markdown.ts` + `markedImageSize.ts`, `syntaxHighlight.ts`,
+  `lite-cy.ts` (the assertion/grading engine), `cellGlobals.ts` (the
+  cell-scoped `document`/`window`, tracked timers and listeners, async error
+  routing) and `loopGuard.ts` (runaway-loop protection spliced into cell code)
+  underneath. `mountRenderer.ts` is the DOM contract both hosts mount through;
+  it shows render errors inside the output.
 - **`preview/`** — a vite dev harness that hosts the *same* `render()` and the
   same `src/shared` discovery logic, so anything cell-rendering related can be
   observed in a plain browser (`npm run preview`, needs `WEBNB_WORKSPACE`).
@@ -38,17 +49,24 @@ of truth for everything that must not drift between them:
   the image-size syntax (parser shared via `src/shared/imageSize.ts`) and
   `notebookLinkClicks.ts`, which takes `[x](other.webnb#section)` clicks away
   from VS Code and hands them to `extension/notebookLinkNavigator.ts`
-  (grammar and slugs shared via `src/shared/notebookLinks.ts`).
+  (grammar and slugs shared via `src/shared/notebookLinks.ts`). That renderer
+  runs in every notebook type's webview, so it intercepts nothing until the
+  host answers its hello with "this is a Web Notebook".
+- **`preview-extension/`** — a separate, unpublished extension: a live preview
+  beside a `.webnb` opened as text, built on the same parser and `render()`.
 
 ## The eval-scope contract (read before touching render.ts)
 
 `render()` deliberately exposes its local bindings to notebook and addon code
-through bare `eval()` calls (html/css/external addons, plain-JS cells) and a
-`new Function` sandbox (node/react/module cells). The names in scope —
-`console`, `document`, `assert`, `assertRule`, `wrap`, `check`, `checklist`,
-`file`, `createFileResult`, `files`, `source`, `cy`, `sy`, `defaultSource`,
-`terminal`, `renderReact`, `pathModule`, … — are API for existing notebooks,
-invisible to the type checker. Two traps:
+through a direct `eval()` in `evalCellCode` (html/css/external addons, plain-JS
+cells) and a `new Function` sandbox (node/react/module cells). The names in
+scope — `console`, `document`, `window`, `assert`, `assertRule`, `wrap`,
+`check`, `checklist`, `file`, `createFileResult`, `files`, `source`, `cy`, `sy`,
+`defaultSource`, `terminal`, `renderReact`, `React`, `ReactDOM`, `pathModule`,
+the timer functions, … — are API for existing notebooks, invisible to the type
+checker. `document` and `window` are the cell-scoped stand-ins from
+`cellGlobals.ts`; `__webnbNow` / `__webnbLoopFail` must stay in scope for the
+loop guards. Two traps:
 
 - webpack rewrites **import bindings**, so an imported name is NOT eval-visible;
   it must be re-bound as a local `const` inside `render()` (see `pathModule`).
@@ -60,8 +78,11 @@ When in doubt, run the harness (below) across every cell language.
 
 - `npm run compile-dev` / `npm run compile` — webpack, all four targets, with
   type-checking. `npm run lint`.
-- `npm run test:unit` — mocha over the pure modules (compiled via
-  `tsc -p src/test`).
+- `npm run test:unit` — mocha over the pure modules (`src/test/unit`) and the
+  extension-host modules (`src/test/host`, `src/test/extension.test.ts`),
+  compiled via `tsc -p src/test`; host code runs against the `vscode` stub in
+  `src/test/host/vscodeStub.ts`, loaded by the require hook in
+  `src/test/setup/vscodeHook.ts`.
 - `npm run test:harness` — renders every cell of `samplenotebooks/` in the
   preview harness and diffs against `tests/harness/goldens/`. This is the
   renderer regression suite; after an intentional rendering change run
@@ -69,12 +90,19 @@ When in doubt, run the harness (below) across every cell language.
 - `npm run verify:notebooks -- /path/to/course` (or
   `node scripts/verify-notebooks.js` from inside a course repo) — structural
   verification of an arbitrary workspace's notebooks through the same preview
-  harness: parses/loads, renders, no uncaught errors. `--baseline` gives a
-  course repo its own committed golden workflow.
+  harness: parses/loads, renders every code cell (a render error fails), no
+  uncaught errors. `--solutions` swaps each `+solution` in for its cell (the
+  preview's `?solutions` mode) and fails on any error from a cell that has one:
+  the check that every reference answer passes its own tests in the real
+  renderer. `--baseline` gives a course repo its own committed golden workflow.
+- `npm run check:vsix` — packages into a temp folder and fails on any file
+  that should not ship, a missing entry point, or a VSIX over 2 MiB.
 - `npm run test:browser` — lite-cy specs in real Chromium (needs
-  `getComputedStyle`), imported through vite's transform pipeline.
+  `getComputedStyle`), imported through vite's transform pipeline; each spec's
+  host sits in a shadow root, as a real cell output does.
 - Extension-host behavior (kernel selection, autorun, message routing) is NOT
-  covered by the preview harness. Drive the real workbench:
+  covered by the preview harness (`@vscode/test-web` checks online for the
+  newest build at each launch, so it needs network). Drive the real workbench:
   `node scripts/vscode-test-web.js samplenotebooks/sample.webnb --browser none --port 3066`
   and connect via `http://localhost:3066` (literally `localhost`). Outputs
   live in webview iframes AND shadow roots — read `shadowRoot.textContent`,

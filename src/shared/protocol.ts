@@ -62,10 +62,41 @@ export interface WebNbRefreshCellMessage {
     cellUri: string;
 }
 
+/**
+ * The addons the renderer may write back into its notebook: saved multiple
+ * choice answers (`+selection`) and terminal history (`+history`). Nothing else
+ * the renderer says can reach the file.
+ */
+export type RendererWritableAddonType = 'selection' | 'history';
+
+const RENDERER_WRITABLE_ADDON_TYPES: ReadonlySet<string> = new Set<RendererWritableAddonType>(['selection', 'history']);
+
+/**
+ * Whether the renderer may store `content` as a `+addonType` addon. Both kinds
+ * are JSON, so content must parse as JSON; and it may not contain a line that
+ * starts a fence, which could close the addon block early when the notebook is
+ * saved and turn the rest into cells of its own.
+ */
+export function isRendererWritableAddon(addonType: unknown, content: unknown): boolean {
+    if (typeof addonType !== 'string' || !RENDERER_WRITABLE_ADDON_TYPES.has(addonType) || typeof content !== 'string') {
+        return false;
+    }
+    if (/^[ \t]*(`{3,}|~{3,})/m.test(content)) {
+        return false;
+    }
+    try {
+        JSON.parse(content);
+        return true;
+    } catch {
+        return false;
+    }
+}
+
 export interface WebNbUpsertCellAddonMessage {
     type: 'webnb.upsertCellAddon';
     cellUri: string;
-    addonType: string;
+    addonType: RendererWritableAddonType;
+    /** JSON text; see isRendererWritableAddon. */
     content: string;
 }
 
@@ -115,7 +146,7 @@ export function isRendererMessage(message: unknown): message is WebNbRendererMes
     }
 
     if (candidate.type === 'webnb.upsertCellAddon') {
-        return typeof candidate.cellUri === 'string' && typeof candidate.addonType === 'string' && typeof candidate.content === 'string';
+        return typeof candidate.cellUri === 'string' && isRendererWritableAddon(candidate.addonType, candidate.content);
     }
 
     if (candidate.type === 'webnb.openWorkspaceFile') {
@@ -135,4 +166,27 @@ export function isRendererMessage(message: unknown): message is WebNbRendererMes
     }
 
     return false;
+}
+
+/**
+ * Kernel -> renderer: forget the in-memory terminal session of these cells.
+ * A cell's terminal history lives in the renderer (and in its `+history`
+ * addon); after Restore Notebook drops the addon, this makes the renderer
+ * drop its copy too, before the restored cells re-render.
+ */
+export interface WebNbForgetTerminalHistoryMessage {
+    type: 'webnb.forgetTerminalHistory';
+    cellUris: string[];
+}
+
+export const FORGET_TERMINAL_HISTORY_MESSAGE = 'webnb.forgetTerminalHistory';
+
+export function isForgetTerminalHistoryMessage(message: unknown): message is WebNbForgetTerminalHistoryMessage {
+    if (!message || typeof message !== 'object') {
+        return false;
+    }
+    const candidate = message as Partial<WebNbForgetTerminalHistoryMessage>;
+    return candidate.type === FORGET_TERMINAL_HISTORY_MESSAGE
+        && Array.isArray(candidate.cellUris)
+        && candidate.cellUris.every(uri => typeof uri === 'string');
 }

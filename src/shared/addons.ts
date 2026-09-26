@@ -81,6 +81,17 @@ export function getAddonContent(addons: Addon[], type: string): string | undefin
     return match?.content;
 }
 
+/**
+ * Whether `addons` has an addon of `type`, empty or not. For `default` this is
+ * the question that matters: an empty `+default` still records a starter --
+ * the empty one -- so "Reset code" and "Restore Notebook" must restore it
+ * rather than keep whatever the learner typed.
+ */
+export function hasAddon(addons: Addon[], type: string): boolean {
+    const normalizedType = normalizeAddonType(type);
+    return addons.some(addon => normalizeAddonType(addon.type) === normalizedType);
+}
+
 export function upsertAddon(addons: Addon[], type: string, content: string): Addon[] {
     const normalizedType = normalizeAddonType(type);
     const existingIndex = addons.findIndex(addon => normalizeAddonType(addon.type) === normalizedType);
@@ -95,29 +106,4 @@ export function upsertAddon(addons: Addon[], type: string, content: string): Add
     }
 
     return [...addons, { type, content }];
-}
-
-/**
- * Fills an empty `default` addon with the cell's current source, so "reset to
- * default" can restore what the author originally shipped. Returns `changed`
- * so the extension can write the capture back into cell metadata.
- */
-export function getDefaultCaptureAddons(addons: Addon[], source: string): { addons: Addon[]; changed: boolean } {
-    const defaultIndex = addons.findIndex(addon => normalizeAddonType(addon.type) === 'default');
-    if (defaultIndex < 0) {
-        return { addons, changed: false };
-    }
-
-    const existing = addons[defaultIndex];
-    if (existing.content.trim().length > 0) {
-        return { addons, changed: false };
-    }
-
-    const updated = addons.slice();
-    updated[defaultIndex] = {
-        ...existing,
-        content: source
-    };
-
-    return { addons: updated, changed: true };
 }

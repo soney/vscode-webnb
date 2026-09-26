@@ -14,10 +14,40 @@ import { deepEqual } from './utils';
  * from raw source text (they cannot prove absence, so negated assertions
  * ignore them). Every assertion also accepts a `not.` prefix, which inverts
  * it: `should('not.exist')`, `should('not.have.text', 'Heading')`.
+ *
+ * Grading must never pass by accident, so three things fail loudly instead of
+ * passing vacuously: an assertion name this engine does not know, an action
+ * (`click`, `type`, `clear`) on a selector that matched nothing, and a chain
+ * that selected nothing and asserted nothing before `run()`.
  */
 
-type BaseAssertion = 'exist' | 'have.text' | 'have.class' | 'have.attribute' | 'have.attr' | 'have.css' | 'have.length' | 'have.property' | 'be.a' | 'be.an' | 'equal' | 'contain';
-type Assertion = BaseAssertion | `not.${BaseAssertion}`;
+/** The assertions `should()` understands, by the name a test writes. */
+const BASE_ASSERTIONS = [
+    'exist', 'have.text', 'contain.text', 'have.class', 'have.attribute', 'have.attr',
+    'have.css', 'have.length', 'have.property', 'have.value', 'be.visible',
+    'be.checked', 'be.disabled', 'be.a', 'be.an', 'equal', 'contain', 'include',
+    'be.true', 'be.false', 'be.null', 'be.undefined'
+] as const;
+
+type BaseAssertion = typeof BASE_ASSERTIONS[number];
+type Assertion = BaseAssertion | `not.${BaseAssertion}` | string;
+
+/** Other spellings (mostly Chai's) of the assertions above. */
+const ASSERTION_ALIASES: Record<string, BaseAssertion> = {
+    'eq': 'equal',
+    'eql': 'equal',
+    'deep.equal': 'equal',
+    'include.text': 'contain.text',
+    'have.lengthOf': 'have.length'
+};
+
+const KNOWN_ASSERTIONS = new Set<string>(BASE_ASSERTIONS);
+
+/** Assertions about a DOM element; they need an element, not a plain value. */
+const ELEMENT_ASSERTIONS = new Set<string>([
+    'have.text', 'contain.text', 'have.class', 'have.attribute', 'have.attr',
+    'have.value', 'be.visible', 'be.checked', 'be.disabled'
+]);
 
 const NOT_PREFIX = 'not.';
 
@@ -50,6 +80,15 @@ type ElementCheck =
     | { status: 'satisfied' | 'skipped' }
     | { status: 'failed', failMessage: string };
 
+type OnResult = (passed: boolean, message: string, trace: string[]) => void;
+
+interface ChainOptions {
+    /** See the header: elements recovered from source text. */
+    sourceOnly?: boolean;
+    /** Runs after every action, e.g. to flush a React update the action caused. */
+    afterAction?: () => void;
+}
+
 interface Chainable {
     failed: boolean;
     messageTrace: string[];
@@ -60,7 +99,7 @@ interface Chainable {
      * assertions ignore them. See the `assert()` helper in render.ts.
      */
     sourceOnly: boolean;
-    onResult: (passed: boolean, message: string, trace: string[]) => void;
+    onResult: OnResult;
 
     // `expected`/`value` are `any` because assertions compare against whatever
     // the notebook passes: `should('equal', { name: 'Ada' })` is as valid as
@@ -74,6 +113,26 @@ interface Chainable {
     contains(text: string): Chainable;
     run(failMessage?: string, successMessage?: string): void;
     subject?: any;
+}
+
+/**
+ * Writes a value as a code span for a feedback message. Feedback text gets
+ * smart typography, which would turn `a--b...` into an en dash and an
+ * ellipsis inside quotes; code spans are left alone.
+ */
+function codeSpan(text: string): string {
+    if (text === '') {
+        return '(empty text)';
+    }
+    const longestRun = Math.max(0, ...(text.match(/`+/g) ?? []).map(run => run.length));
+    const fence = '`'.repeat(longestRun + 1);
+    const padded = text.startsWith('`') || text.endsWith('`') ? ` ${text} ` : text;
+    return `${fence}${padded}${fence}`;
+}
+
+/** Text as a reader sees it: runs of whitespace collapse, ends trim. */
+function normalizeText(text: string | null | undefined): string {
+    return (text ?? '').replace(/\s+/g, ' ').trim();
 }
 
 /** Parses a `"property: value"` CSS assertion string; both forms share it. */
@@ -105,16 +164,26 @@ function normalizeCssValue(prop: string, value: string, tagName: string = 'div',
 function describeElementAssertion(assertion: BaseAssertion, expected?: any, value?: any): string {
     switch (assertion) {
         case 'have.text':
-            return `have text "${expected}"`;
+            return `have text ${codeSpan(String(expected))}`;
+        case 'contain.text':
+            return `contain text ${codeSpan(String(expected))}`;
         case 'have.class':
-            return `have class "${expected}"`;
+            return `have class ${codeSpan(String(expected))}`;
         case 'have.attribute':
         case 'have.attr':
-            return value === undefined ? `have attribute "${expected}"` : `have attribute "${expected}" set to "${value}"`;
+            return value === undefined ? `have attribute ${codeSpan(String(expected))}` : `have attribute ${codeSpan(String(expected))} set to ${codeSpan(String(value))}`;
         case 'have.css':
-            return `have CSS "${expected}"`;
+            return `have CSS ${codeSpan(String(expected))}`;
         case 'have.property':
-            return value === undefined ? `have property "${expected}"` : `have property "${expected}" set to ${describeValue(value)}`;
+            return value === undefined ? `have property ${codeSpan(String(expected))}` : `have property ${codeSpan(String(expected))} set to ${describeValue(value)}`;
+        case 'have.value':
+            return `have value ${codeSpan(String(expected))}`;
+        case 'be.visible':
+            return 'be visible';
+        case 'be.checked':
+            return 'be checked';
+        case 'be.disabled':
+            return 'be disabled';
         default:
             return `match "${assertion}"`;
     }
@@ -127,7 +196,7 @@ function describeElementAssertion(assertion: BaseAssertion, expected?: any, valu
  */
 function describeValue(value: any): string {
     if (typeof value === 'string') {
-        return `"${value}"`;
+        return codeSpan(value);
     }
     if (typeof value === 'bigint') {
         return `${value}n`;
@@ -139,11 +208,12 @@ function describeValue(value: any): string {
         return String(value);
     }
     if (value instanceof Element) {
-        return `<${value.tagName.toLowerCase()}>`;
+        return codeSpan(`<${value.tagName.toLowerCase()}>`);
     }
     try {
         // Circular structures and BigInt values both make JSON.stringify throw.
-        return JSON.stringify(value) ?? String(value);
+        const json = JSON.stringify(value);
+        return json === undefined ? String(value) : codeSpan(json);
     } catch {
         return Object.prototype.toString.call(value);
     }
@@ -176,6 +246,9 @@ const TYPE_ALIASES: Record<string, string> = {
     arr: 'array'
 };
 
+/** An async or generator function is still a function to a learner asking. */
+const FUNCTION_TAGS = new Set(['function', 'asyncfunction', 'generatorfunction', 'asyncgeneratorfunction']);
+
 /**
  * Whether `subject` is of type `expected`. `'element'` is accepted on top of the
  * JavaScript types, since the subject of a notebook test is often a DOM node,
@@ -190,6 +263,9 @@ function isOfType(subject: any, expected: string): boolean {
         // `be.an('object')` should not be satisfied by an array or a null, both
         // of which `typeof` calls an object.
         return typeNameOf(subject) === 'object';
+    }
+    if (wanted === 'function') {
+        return FUNCTION_TAGS.has(typeNameOf(subject));
     }
     return typeNameOf(subject) === wanted;
 }
@@ -207,6 +283,15 @@ function readProperty(subject: any, name: string): { present: boolean, value?: a
     return name in target ? { present: true, value: target[name] } : { present: false };
 }
 
+/** Whether an element takes up space on the page and is not hidden by CSS. */
+function isVisible(el: Element): boolean {
+    if (el.getClientRects().length === 0) {
+        return false;
+    }
+    const computed = window.getComputedStyle(el);
+    return computed.visibility !== 'hidden' && computed.visibility !== 'collapse' && computed.opacity !== '0';
+}
+
 function checkElement(el: Element, assertion: BaseAssertion, expected?: any, value?: any): ElementCheck {
     if (assertion === 'have.property') {
         // The DOM *property*, as opposed to the attribute `have.attr` reads.
@@ -214,28 +299,54 @@ function checkElement(el: Element, assertion: BaseAssertion, expected?: any, val
         // <input> moves `.value` but leaves the `value` attribute alone.
         const found = readProperty(el, String(expected));
         if (!found.present) {
-            return { status: 'failed', failMessage: `Expected element to have property "${expected}"` };
+            return { status: 'failed', failMessage: `Expected element to have property ${codeSpan(String(expected))}` };
         }
         if (value !== undefined && !deepEqual(found.value, value)) {
             return {
                 status: 'failed',
-                failMessage: `Expected property "${expected}" to be ${describeValue(value)}, got ${describeValue(found.value)}`
+                failMessage: `Expected property ${codeSpan(String(expected))} to be ${describeValue(value)}, got ${describeValue(found.value)}`
             };
         }
     } else if (assertion === 'have.text') {
-        if (el.textContent !== expected) {
-            return { status: 'failed', failMessage: `Expected text "${expected}", got "${el.textContent}"` };
+        // Compared as a reader sees it: the indentation Format Document puts
+        // inside `<li>\n  Apples\n</li>` is not part of the text.
+        if (normalizeText(el.textContent) !== normalizeText(String(expected))) {
+            return { status: 'failed', failMessage: `Expected text ${codeSpan(normalizeText(String(expected)))}, got ${codeSpan(normalizeText(el.textContent))}` };
+        }
+    } else if (assertion === 'contain.text') {
+        if (!normalizeText(el.textContent).includes(normalizeText(String(expected)))) {
+            return { status: 'failed', failMessage: `Expected text to contain ${codeSpan(normalizeText(String(expected)))}, got ${codeSpan(normalizeText(el.textContent))}` };
         }
     } else if (assertion === 'have.class') {
-        if (!(el instanceof HTMLElement) || !el.classList.contains(expected!)) {
-            return { status: 'failed', failMessage: `Expected element to have class "${expected}"` };
+        if (!el.classList.contains(expected!)) {
+            return { status: 'failed', failMessage: `Expected element to have class ${codeSpan(String(expected))}` };
         }
     } else if (assertion === 'have.attribute' || assertion === 'have.attr') {
-        if (!(el instanceof HTMLElement) || !el.hasAttribute(expected!)) {
-            return { status: 'failed', failMessage: `Expected element to have attribute "${expected}"` };
+        if (!el.hasAttribute(expected!)) {
+            return { status: 'failed', failMessage: `Expected element to have attribute ${codeSpan(String(expected))}` };
         }
-        if (value !== undefined && el.getAttribute(expected!) !== value) {
-            return { status: 'failed', failMessage: `Expected attribute "${expected}" to be "${value}", got "${el.getAttribute(expected!)}"` };
+        if (value !== undefined && el.getAttribute(expected!) !== String(value)) {
+            return { status: 'failed', failMessage: `Expected attribute ${codeSpan(String(expected))} to be ${codeSpan(String(value))}, got ${codeSpan(el.getAttribute(expected!) ?? '')}` };
+        }
+    } else if (assertion === 'have.value') {
+        const actual = (el as HTMLInputElement).value;
+        if (actual === undefined) {
+            return { status: 'failed', failMessage: 'Expected a form field (input, textarea or select) to check its value' };
+        }
+        if (actual !== String(expected)) {
+            return { status: 'failed', failMessage: `Expected value ${codeSpan(String(expected))}, got ${codeSpan(actual)}` };
+        }
+    } else if (assertion === 'be.visible') {
+        if (!isVisible(el)) {
+            return { status: 'failed', failMessage: 'Expected element to be visible' };
+        }
+    } else if (assertion === 'be.checked') {
+        if ((el as HTMLInputElement).checked !== true) {
+            return { status: 'failed', failMessage: 'Expected element to be checked' };
+        }
+    } else if (assertion === 'be.disabled') {
+        if ((el as HTMLInputElement).disabled !== true) {
+            return { status: 'failed', failMessage: 'Expected element to be disabled' };
         }
     } else if (assertion === 'have.css') {
         const parsed = parseCssAssertion(expected);
@@ -243,7 +354,7 @@ function checkElement(el: Element, assertion: BaseAssertion, expected?: any, val
             return parsed;
         }
         const { prop, expectedValue } = parsed;
-        if (!(el instanceof HTMLElement)) {
+        if (!(el instanceof HTMLElement) && !(el instanceof SVGElement)) {
             return { status: 'skipped' };
         }
         const computed = window.getComputedStyle(el);
@@ -252,17 +363,40 @@ function checkElement(el: Element, assertion: BaseAssertion, expected?: any, val
         const computedExpected = normalizeCssValue(prop, expectedValue, el.tagName, el.parentElement);
 
         if (actualValue.trim() !== expectedValue && actualValue.trim() !== computedExpected.trim()) {
-            return { status: 'failed', failMessage: `Expected CSS "${prop}: ${expectedValue}", got "${actualValue}"` };
+            return { status: 'failed', failMessage: `Expected CSS ${codeSpan(`${prop}: ${expectedValue}`)}, got ${codeSpan(actualValue)}` };
         }
     }
     return { status: 'satisfied' };
 }
 
+/** Whether a wrapped value is a set of elements rather than a plain value. */
+function elementsOf(subject: any): Element[] | undefined {
+    if (typeof Element === 'undefined') {
+        return undefined;
+    }
+    if (subject instanceof Element) {
+        return [subject];
+    }
+    if ((typeof NodeList !== 'undefined' && subject instanceof NodeList)
+        || (typeof HTMLCollection !== 'undefined' && subject instanceof HTMLCollection)) {
+        return Array.from(subject as ArrayLike<Node>).filter((node): node is Element => node instanceof Element);
+    }
+    if (Array.isArray(subject) && subject.length > 0 && subject.every(item => item instanceof Element)) {
+        return subject as Element[];
+    }
+    return undefined;
+}
+
 /**
  * Evaluate the plain form of `assertion`. Negation is applied by the caller.
  */
-function evaluateAssertion(elements: Element[], subject: any, assertion: BaseAssertion, expected?: any, value?: any): AssertionOutcome {
-    if (subject !== undefined && assertion === 'equal') {
+function evaluateAssertion(elements: Element[], subject: any, hasSubject: boolean, assertion: BaseAssertion, expected?: any, value?: any): AssertionOutcome {
+    if (!hasSubject && (assertion === 'equal' || assertion === 'include' || assertion === 'be.true' || assertion === 'be.false' || assertion === 'be.null' || assertion === 'be.undefined')) {
+        // These compare a value; on a selection of elements they would check nothing.
+        return { error: `"${assertion}" checks a value: wrap(value).should('${assertion}'${assertion === 'equal' || assertion === 'include' ? ', expected' : ''})` };
+    }
+
+    if (hasSubject && assertion === 'equal') {
         return {
             passed: deepEqual(subject, expected),
             failMessage: `Expected ${describeValue(subject)} to equal ${describeValue(expected)}`,
@@ -270,10 +404,20 @@ function evaluateAssertion(elements: Element[], subject: any, assertion: BaseAss
         };
     }
 
+    if (assertion === 'be.true' || assertion === 'be.false' || assertion === 'be.null' || assertion === 'be.undefined') {
+        const wanted = { 'be.true': true, 'be.false': false, 'be.null': null, 'be.undefined': undefined }[assertion];
+        const word = assertion.slice(3);
+        return {
+            passed: subject === wanted,
+            failMessage: `Expected ${describeValue(subject)} to be ${word}`,
+            negatedFailMessage: `Expected the subject not to be ${word}`
+        };
+    }
+
     if (assertion === 'be.a' || assertion === 'be.an') {
         // A type assertion is about a value, so it needs a wrapped subject;
         // against elements it would only ever restate what `assert()` returned.
-        if (subject === undefined) {
+        if (!hasSubject) {
             return { error: `"${assertion}" needs a wrapped value: wrap(value).should('${assertion}', 'array')` };
         }
         if (typeof expected !== 'string' || expected.trim() === '') {
@@ -289,7 +433,7 @@ function evaluateAssertion(elements: Element[], subject: any, assertion: BaseAss
         };
     }
 
-    if (subject !== undefined && assertion === 'have.property') {
+    if (hasSubject && assertion === 'have.property') {
         if (expected === undefined || expected === null || String(expected).trim() === '') {
             return { error: `Expected a property name, e.g. should('have.property', 'name')` };
         }
@@ -299,29 +443,29 @@ function evaluateAssertion(elements: Element[], subject: any, assertion: BaseAss
         if (!found.present) {
             return {
                 passed: false,
-                failMessage: `Expected ${describeValue(subject)} to have property "${name}"`,
-                negatedFailMessage: `Expected the subject not to have property "${name}"`
+                failMessage: `Expected ${describeValue(subject)} to have property ${codeSpan(name)}`,
+                negatedFailMessage: `Expected the subject not to have property ${codeSpan(name)}`
             };
         }
         // Present with no expected value: the assertion is only about existence.
         if (value === undefined) {
             return {
                 passed: true,
-                failMessage: `Expected ${describeValue(subject)} to have property "${name}"`,
-                negatedFailMessage: `Expected the subject not to have property "${name}", but it does`
+                failMessage: `Expected ${describeValue(subject)} to have property ${codeSpan(name)}`,
+                negatedFailMessage: `Expected the subject not to have property ${codeSpan(name)}, but it does`
             };
         }
         return {
             passed: deepEqual(found.value, value),
-            failMessage: `Expected property "${name}" to be ${describeValue(value)}, got ${describeValue(found.value)}`,
-            negatedFailMessage: `Expected property "${name}" not to be ${describeValue(value)}, but it was`
+            failMessage: `Expected property ${codeSpan(name)} to be ${describeValue(value)}, got ${describeValue(found.value)}`,
+            negatedFailMessage: `Expected property ${codeSpan(name)} not to be ${describeValue(value)}, but it was`
         };
     }
 
     if (assertion === 'exist') {
-        if (subject !== undefined) {
+        if (hasSubject) {
             return {
-                passed: !(subject === null || (subject.length !== undefined && subject.length === 0)),
+                passed: !(subject === null || subject === undefined || (subject.length !== undefined && subject.length === 0)),
                 failMessage: 'Expected subject to exist, but it was null or empty',
                 negatedFailMessage: 'Expected the subject not to exist, but it was present'
             };
@@ -334,13 +478,35 @@ function evaluateAssertion(elements: Element[], subject: any, assertion: BaseAss
         };
     }
 
+    if (hasSubject && (assertion === 'include' || (assertion === 'contain' && !elementsOf(subject)))) {
+        // A wrapped string or array: does it include the expected part?
+        if (typeof subject === 'string') {
+            return {
+                passed: subject.includes(String(expected)),
+                failMessage: `Expected ${describeValue(subject)} to include ${describeValue(expected)}`,
+                negatedFailMessage: `Expected ${describeValue(subject)} not to include ${describeValue(expected)}`
+            };
+        }
+        if (Array.isArray(subject)) {
+            return {
+                passed: subject.some(item => deepEqual(item, expected)),
+                failMessage: `Expected ${describeValue(subject)} to include ${describeValue(expected)}`,
+                negatedFailMessage: `Expected ${describeValue(subject)} not to include ${describeValue(expected)}`
+            };
+        }
+        return { error: `"${assertion}" needs a string or an array: wrap(value).should('${assertion}', part)` };
+    }
+    if (assertion === 'include') {
+        return { error: `"include" needs a wrapped string or array: wrap(value).should('include', part)` };
+    }
+
     if (assertion === 'contain') {
         if (elements.length === 0) {
             // Nothing to contain anything, so `not.contain` holds vacuously.
             return {
                 passed: false,
                 negatedPassed: true,
-                failMessage: `Expected elements to contain "${expected}", but no matching elements were found`
+                failMessage: `Expected elements to contain ${codeSpan(String(expected))}, but no matching elements were found`
             };
         }
 
@@ -348,8 +514,8 @@ function evaluateAssertion(elements: Element[], subject: any, assertion: BaseAss
         return {
             passed: containing.length === elements.length,
             negatedPassed: containing.length === 0,
-            failMessage: `Expected element to contain "${expected}", but no descendant matched`,
-            negatedFailMessage: `Expected no element to contain "${expected}", but ${containing.length} of ${elements.length} did`
+            failMessage: `Expected element to contain ${codeSpan(String(expected))}, but no descendant matched`,
+            negatedFailMessage: `Expected no element to contain ${codeSpan(String(expected))}, but ${containing.length} of ${elements.length} did`
         };
     }
 
@@ -359,7 +525,7 @@ function evaluateAssertion(elements: Element[], subject: any, assertion: BaseAss
             return { error: `Expected a numeric length value, got "${expected}"` };
         }
 
-        const usesSubject = subject !== undefined && subject !== null && subject.length !== undefined;
+        const usesSubject = hasSubject && subject !== null && subject !== undefined && subject.length !== undefined;
         const actualLength = usesSubject ? subject.length : elements.length;
         return {
             passed: actualLength === expectedLength,
@@ -372,40 +538,36 @@ function evaluateAssertion(elements: Element[], subject: any, assertion: BaseAss
         };
     }
 
-    if (subject !== undefined && assertion === 'have.css') {
+    if (hasSubject && assertion === 'have.css' && !elementsOf(subject)) {
         const parsed = parseCssAssertion(expected);
         if ('error' in parsed) {
             return parsed;
         }
         const { prop, expectedValue } = parsed;
 
-        if (subject instanceof Element) {
-            const computed = window.getComputedStyle(subject);
-            const actualValue = computed.getPropertyValue(prop);
-            const computedExpected = normalizeCssValue(prop, expectedValue, subject.tagName, subject.parentElement);
-
-            return {
-                passed: actualValue.trim() === expectedValue || actualValue.trim() === computedExpected.trim(),
-                failMessage: `Expected CSS "${prop}: ${expectedValue}", got "${actualValue}"`,
-                negatedFailMessage: `Expected CSS "${prop}" not to be "${expectedValue}", but it was "${actualValue}"`
-            };
-        } else if (subject.style) { // It's a CSSStyleRule
+        if (subject && subject.style) { // A CSS rule (or merged rules) from getRule
             const actualValue = subject.style.getPropertyValue(prop).trim();
             const computedActual = document.body ? normalizeCssValue(prop, actualValue) : actualValue;
             const computedExpected = document.body ? normalizeCssValue(prop, expectedValue) : expectedValue;
 
             return {
                 passed: actualValue === expectedValue || computedActual === computedExpected,
-                failMessage: `Expected CSS rule "${prop}: ${expectedValue}", got "${actualValue}"`,
-                negatedFailMessage: `Expected the CSS rule "${prop}" not to be "${expectedValue}", but it was "${actualValue}"`
+                failMessage: `Expected CSS rule ${codeSpan(`${prop}: ${expectedValue}`)}, got ${codeSpan(actualValue)}`,
+                negatedFailMessage: `Expected the CSS rule ${codeSpan(prop)} not to be ${codeSpan(expectedValue)}, but it was ${codeSpan(actualValue)}`
             };
         }
         return { error: `Subject does not have a style property to check CSS against` };
     }
 
+    if (hasSubject && elements.length === 0 && !elementsOf(subject)) {
+        // An element assertion on a plain value would otherwise pass without
+        // checking anything.
+        return { error: `"${assertion}" checks an element; wrap(value) supports equal, include, have.property, have.length, be.a, exist` };
+    }
+
     // Element assertions implicitly fail when nothing matched. A negated
     // assertion instead holds vacuously: no element can violate it.
-    if (subject === undefined && elements.length === 0) {
+    if (elements.length === 0) {
         return {
             passed: false,
             negatedPassed: true,
@@ -437,7 +599,52 @@ function evaluateAssertion(elements: Element[], subject: any, assertion: BaseAss
     };
 }
 
-function createChain(elements: Element[], onResult: (passed: boolean, message: string, trace: string[]) => void = () => { }, messageTrace: string[] = [], failed: boolean = false, subject?: any, sourceOnly: boolean = false): Chainable {
+/** Resolves a written assertion name to a known one, or undefined. */
+function resolveAssertion(name: string): BaseAssertion | undefined {
+    const resolved = ASSERTION_ALIASES[name] ?? name;
+    return KNOWN_ASSERTIONS.has(resolved) ? resolved as BaseAssertion : undefined;
+}
+
+/** Sets a form field's value the way typing does, so frameworks see it. */
+function setFieldValue(el: HTMLInputElement | HTMLTextAreaElement, text: string): void {
+    // React tracks a field's value through the prototype's setter; assigning
+    // `el.value` directly skips that, and a controlled input never updates.
+    const prototype = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+    const setter = Object.getOwnPropertyDescriptor(prototype, 'value')?.set;
+    if (setter) {
+        setter.call(el, text);
+    } else {
+        el.value = text;
+    }
+    el.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+    el.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
+}
+
+interface ChainState {
+    /** What the chain selected, for messages; undefined for the root and for wrap(). */
+    selector?: string;
+    /** Whether the chain came from wrap(), even wrap(undefined). */
+    wrapped?: boolean;
+    /** Whether any assertion ran; a chain that selected nothing must assert something. */
+    asserted: boolean;
+    options: ChainOptions;
+}
+
+function createChain(elements: Element[], onResult: OnResult = () => { }, messageTrace: string[] = [], failed: boolean = false, subject?: any, state: ChainState = { asserted: false, options: {} }): Chainable {
+    const sourceOnly = state.options.sourceOnly === true;
+    const next = (nextElements: Element[], trace: string[], nextFailed: boolean, changes: Partial<ChainState> = {}) =>
+        createChain(nextElements, onResult, trace, nextFailed, subject, { ...state, ...changes });
+
+    /** An action needs something to act on; with nothing matched it fails the chain. */
+    const failAction = (action: string): Chainable => next(
+        elements,
+        messageTrace.concat(state.selector
+            ? `Could not ${action}: nothing matched ${codeSpan(state.selector)}`
+            : `Could not ${action}: there was no element to ${action}`),
+        true,
+        { asserted: true }
+    );
+
     const chain: Chainable = {
         elements,
         messageTrace,
@@ -450,12 +657,21 @@ function createChain(elements: Element[], onResult: (passed: boolean, message: s
             if (failed) { return this; }
 
             const negated = assertion.startsWith(NOT_PREFIX);
-            const baseAssertion = (negated ? assertion.slice(NOT_PREFIX.length) : assertion) as BaseAssertion;
+            const written = negated ? assertion.slice(NOT_PREFIX.length) : assertion;
+            const baseAssertion = resolveAssertion(written);
+            if (!baseAssertion) {
+                return next(this.elements, messageTrace.concat(
+                    `Unknown assertion "${assertion}". Supported: ${BASE_ASSERTIONS.join(', ')} (each also with "not.")`
+                ), true, { asserted: true });
+            }
             // Elements recovered from raw source cannot prove that something is
             // absent from the rendered output, so a negated assertion checks the
             // rendered set only (which is empty whenever a fallback kicked in).
             const target = negated && this.sourceOnly ? [] : this.elements;
-            const outcome = evaluateAssertion(target, this.subject, baseAssertion, expected, value);
+            const hasSubject = state.wrapped === true;
+            const outcome = ELEMENT_ASSERTIONS.has(baseAssertion) && hasSubject && !elementsOf(this.subject)
+                ? { error: `"${assertion}" checks an element, but the wrapped value is ${describeValue(this.subject)}` }
+                : evaluateAssertion(target, this.subject, hasSubject, baseAssertion, expected, value);
 
             let holds: boolean;
             let message: string;
@@ -465,7 +681,7 @@ function createChain(elements: Element[], onResult: (passed: boolean, message: s
                 message = outcome.error;
             } else if (negated ? (outcome.negatedPassed ?? !outcome.passed) : outcome.passed) {
                 holds = true;
-                message = `Assertion passed: ${assertion}${expected === undefined ? '' : ` with value "${expected}"`}`;
+                message = `Assertion passed: ${assertion}${expected === undefined ? '' : ` with value ${describeValue(expected)}`}`;
             } else {
                 holds = false;
                 message = negated
@@ -473,41 +689,54 @@ function createChain(elements: Element[], onResult: (passed: boolean, message: s
                     : outcome.failMessage;
             }
 
-            return createChain(this.elements, this.onResult, messageTrace.concat(message), holds ? this.failed : true, this.subject, this.sourceOnly);
+            return next(this.elements, messageTrace.concat(message), holds ? this.failed : true, { asserted: true });
         },
 
         click(): Chainable {
             if (failed) { return this; }
+            if (this.elements.length === 0) {
+                return failAction('click');
+            }
 
             this.elements.forEach(el => {
                 if (el instanceof HTMLElement) {
                     el.click();
+                } else {
+                    // SVG and other elements have no click(); dispatch one.
+                    el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, composed: true }));
                 }
             });
+            state.options.afterAction?.();
             return chain;
         },
 
         type(text: string): Chainable {
             if (failed) { return this; }
+            if (this.elements.length === 0) {
+                return failAction('type');
+            }
             this.elements.forEach(el => {
                 if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
-                    el.value = text;
-                    el.dispatchEvent(new Event('input', { bubbles: true }));
+                    setFieldValue(el, text);
                 } else {
                     throw new Error('`type()` can only be called on <input> or <textarea> elements');
                 }
             });
+            state.options.afterAction?.();
             return chain;
         },
 
         clear(): Chainable {
             if (failed) { return this; }
+            if (this.elements.length === 0) {
+                return failAction('clear');
+            }
             this.elements.forEach(el => {
                 if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
-                    el.value = '';
-                    el.dispatchEvent(new Event('input', { bubbles: true }));
+                    setFieldValue(el, '');
                 }
             });
+            state.options.afterAction?.();
             return chain;
         },
 
@@ -517,7 +746,7 @@ function createChain(elements: Element[], onResult: (passed: boolean, message: s
             this.elements.forEach(el => {
                 found = found.concat(Array.from(el.querySelectorAll(selector)));
             });
-            return createChain(found, this.onResult, this.messageTrace, this.failed, this.subject, this.sourceOnly);
+            return next(found, this.messageTrace, this.failed, { selector, asserted: false });
         },
 
         get(selector: string): Chainable {
@@ -527,62 +756,103 @@ function createChain(elements: Element[], onResult: (passed: boolean, message: s
         contains(text: string): Chainable {
             if (failed) { return this; }
 
-            const all = Array.from(document.querySelectorAll('*'));
-            const found = all.filter(el => el.textContent?.includes(text));
-            return createChain(found, this.onResult, this.messageTrace, this.failed, this.subject, this.sourceOnly);
+            // Like Cypress: the deepest elements, within what the chain holds,
+            // whose text includes `text`.
+            const wanted = normalizeText(text);
+            const found: Element[] = [];
+            const visit = (el: Element) => {
+                if (!normalizeText(el.textContent).includes(wanted)) {
+                    return;
+                }
+                const before = found.length;
+                for (const child of Array.from(el.children)) {
+                    visit(child);
+                }
+                if (found.length === before) {
+                    found.push(el);
+                }
+            };
+            this.elements.forEach(visit);
+            return next(found, this.messageTrace, this.failed, { selector: `text "${text}"`, asserted: false });
         },
 
         run(failMessage?: string, successMessage?: string): void {
+            let isFailed = this.failed;
+            let trace = this.messageTrace;
+            // A selection with nothing asserted proves nothing by itself; like
+            // Cypress's get(), it at least requires that something matched.
+            if (!isFailed && !state.asserted && state.selector !== undefined && this.elements.length === 0) {
+                isFailed = true;
+                trace = trace.concat(`Expected to find ${codeSpan(state.selector)}, but nothing matched`);
+            }
             if (this.onResult) {
-                this.onResult(!this.failed, (this.failed ? (failMessage) : (successMessage)) ?? this.messageTrace.join('\n'), this.messageTrace);
+                this.onResult(!isFailed, (isFailed ? (failMessage) : (successMessage)) ?? trace.join('\n'), trace);
             }
         }
     };
     return chain;
 }
 
+/** Every stylesheet in the document and in any shadow root, in page order. */
+function allDocumentStyleSheets(): CSSStyleSheet[] {
+    const sheets: CSSStyleSheet[] = Array.from(document.styleSheets);
+    document.querySelectorAll('*').forEach(el => {
+        if (el.shadowRoot?.styleSheets) {
+            sheets.push(...Array.from(el.shadowRoot.styleSheets));
+        }
+    });
+    return sheets;
+}
+
 const sy = Object.assign(
-    function (el: string | Element | Element[], onResult?: (passed: boolean, message: string, trace: string[]) => void, options?: { sourceOnly?: boolean }): Chainable {
-        const sourceOnly = options?.sourceOnly === true;
+    function (el: string | Element | Element[], onResult?: OnResult, options?: ChainOptions): Chainable {
+        const state: ChainState = { asserted: false, options: options ?? {} };
         if (typeof el === 'string') {
             const nodes = Array.from(document.querySelectorAll(el));
-            return createChain(nodes, onResult, [], false, undefined, sourceOnly);
+            return createChain(nodes, onResult, [], false, undefined, { ...state, selector: el });
         } else if (el instanceof Element) {
-            return createChain([el], onResult, [], false, undefined, sourceOnly);
+            return createChain([el], onResult, [], false, undefined, state);
         } else if (Array.isArray(el)) {
-            return createChain(el, onResult, [], false, undefined, sourceOnly);
+            return createChain(el, onResult, [], false, undefined, state);
         } else {
             throw new Error('Invalid argument: must be a string selector, Element, or array of Elements');
         }
     }, {
-    wrap: (object: any, onResult?: (passed: boolean, message: string, trace: string[]) => void) => {
-        return createChain([], onResult, [], false, object);
+    wrap: (object: any, onResult?: OnResult) => {
+        // A wrapped element (or list of them) can take element assertions:
+        // wrap(el).should('have.text', 'Hi') checks the element's text.
+        return createChain(elementsOf(object) ?? [], onResult, [], false, object, { asserted: false, wrapped: true, options: {} });
     },
-    getRule: (selector: string, onResult?: (passed: boolean, message: string, trace: string[]) => void) => {
-        const allSheets: StyleSheetList[] = [document.styleSheets];
-        document.querySelectorAll('*').forEach(el => {
-            if (el.shadowRoot?.styleSheets) {
-                allSheets.push(el.shadowRoot.styleSheets);
+    /**
+     * The CSS declared for `selector`, merged across every rule with exactly
+     * that selector in the given stylesheets (all of the page's when none are
+     * given), later rules winning as they do in the cascade.
+     */
+    getRule: (selector: string, onResult?: OnResult, sheets?: CSSStyleSheet[]) => {
+        const merged = document.createElement('div').style;
+        let matched = false;
+        for (const sheet of sheets ?? allDocumentStyleSheets()) {
+            let rules: CSSRuleList;
+            try {
+                rules = sheet.cssRules;
+            } catch {
+                continue; // cross-origin sheet
             }
-        });
-
-        for (const sheets of allSheets) {
-            for (let i = 0; i < sheets.length; i++) {
-                const sheet = sheets[i] as CSSStyleSheet;
-                try {
-                    const rules = sheet.cssRules || sheet.rules;
-                    for (let j = 0; j < rules.length; j++) {
-                        const rule = rules[j];
-                        if (rule instanceof CSSStyleRule && rule.selectorText === selector) {
-                            return createChain([], onResult, [], false, rule);
-                        }
+            for (let j = 0; j < rules.length; j++) {
+                const rule = rules[j];
+                if (rule instanceof CSSStyleRule && rule.selectorText === selector) {
+                    matched = true;
+                    for (let k = 0; k < rule.style.length; k++) {
+                        const property = rule.style[k];
+                        merged.setProperty(property, rule.style.getPropertyValue(property), rule.style.getPropertyPriority(property));
                     }
-                } catch (e) {
-                    // Ignore cross-origin issues
                 }
             }
         }
-        return createChain([], onResult, [`Expected CSS rule for "${selector}" to exist, but found none`], true, null);
+        if (matched) {
+            return createChain([], onResult, [], false, { selectorText: selector, style: merged }, { asserted: false, wrapped: true, options: {} });
+        }
+        return createChain([], onResult, [`Expected CSS rule for ${codeSpan(selector)} to exist, but found none`], true, null, { asserted: true, wrapped: true, options: {} });
     }
 }
 );

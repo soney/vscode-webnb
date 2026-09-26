@@ -20,6 +20,13 @@ export function activate(context: vscode.ExtensionContext) {
 
 export function deactivate() { }
 
+/** The revert debounce and runaway guard's limits; tests shorten them. */
+export interface MarkdownLockTiming {
+    debounceMs: number;
+    maxRevertsPerWindow: number;
+    burstWindowMs: number;
+}
+
 interface ShadowEntry {
     /** The notebook the cell belongs to, for the config lookup and to prune entries when it closes. */
     notebookUri: vscode.Uri;
@@ -49,9 +56,12 @@ export class MarkdownLock implements vscode.Disposable {
     /** Debounce timers for reverts not yet applied (keyed by cell document uri). */
     private readonly _pendingReverts = new Map<string, ReturnType<typeof setTimeout>>();
     private readonly _lastNoticeAt = new Map<string, number>();
+    /** Recent reverts per markup cell (keyed by cell document uri), for the runaway guard. */
     private readonly _revertBursts = new Map<string, { count: number; since: number }>();
+    private readonly _timing: MarkdownLockTiming;
 
-    public constructor() {
+    public constructor(timing: Partial<MarkdownLockTiming> = {}) {
+        this._timing = { debounceMs: REVERT_DEBOUNCE_MS, maxRevertsPerWindow: MAX_REVERTS_PER_WINDOW, burstWindowMs: REVERT_BURST_WINDOW_MS, ...timing };
         this._disposables.push(
             vscode.workspace.onDidChangeTextDocument(event => this._onDidChangeTextDocument(event)),
             vscode.workspace.onDidChangeNotebookDocument(event => this._onDidChangeNotebook(event)),
@@ -102,7 +112,7 @@ export class MarkdownLock implements vscode.Disposable {
         this._scheduleRevert(cellKey, event.document);
     }
 
-    private _scheduleRevert(cellKey: string, document: vscode.TextDocument): void {
+    private _scheduleRevert(cellKey: string, document: vscode.TextDocument, delayMs: number = this._timing.debounceMs): void {
         const pending = this._pendingReverts.get(cellKey);
         if (pending !== undefined) {
             clearTimeout(pending);
@@ -110,7 +120,7 @@ export class MarkdownLock implements vscode.Disposable {
         this._pendingReverts.set(cellKey, setTimeout(() => {
             this._pendingReverts.delete(cellKey);
             void this._revert(cellKey, document);
-        }, REVERT_DEBOUNCE_MS));
+        }, delayMs));
     }
 
     private async _revert(cellKey: string, document: vscode.TextDocument): Promise<void> {
@@ -126,10 +136,11 @@ export class MarkdownLock implements vscode.Disposable {
         }
 
         const notebookKey = entry.notebookUri.toString();
-        if (this._isRunawayLoop(notebookKey)) {
-            // Standing down accepts the text, so the lock never later snaps the cell back
-            // past a state it already let stand.
-            entry.text = text;
+        if (this._isRunawayLoop(cellKey)) {
+            // Something keeps re-applying this edit. Pause rather than fight, and put the
+            // locked text back once the burst window has passed: the lock never accepts
+            // an edit because it arrived too often.
+            this._scheduleRevert(cellKey, document, this._timing.burstWindowMs + 1);
             return;
         }
 
@@ -148,21 +159,21 @@ export class MarkdownLock implements vscode.Disposable {
     }
 
     /**
-     * Stands down if reverts keep firing, so a lock that somehow fights itself degrades into
-     * an unlocked notebook instead of an editor that cannot settle. Going quiet ends the
-     * burst, which lets the window lapse and the lock resume.
+     * Pauses if one cell's reverts keep firing, so a lock that somehow fights another writer
+     * cannot spin. Counted per cell: one Replace All across many locked cells is one revert
+     * each, not a runaway. Going quiet ends the burst, which lets the window lapse.
      */
     private _isRunawayLoop(key: string): boolean {
         const now = Date.now();
         const burst = this._revertBursts.get(key);
-        if (!burst || now - burst.since > REVERT_BURST_WINDOW_MS) {
+        if (!burst || now - burst.since > this._timing.burstWindowMs) {
             this._revertBursts.set(key, { count: 1, since: now });
             return false;
         }
 
         burst.count++;
-        if (burst.count > MAX_REVERTS_PER_WINDOW) {
-            warnExecution('Too many markdown reverts for %s, leaving it unlocked briefly', key);
+        if (burst.count > this._timing.maxRevertsPerWindow) {
+            warnExecution('Too many markdown reverts for %s, pausing before restoring it', key);
             return true;
         }
 
@@ -216,6 +227,7 @@ export class MarkdownLock implements vscode.Disposable {
 
     private _untrackCell(cellKey: string): void {
         this._shadow.delete(cellKey);
+        this._revertBursts.delete(cellKey);
         const pending = this._pendingReverts.get(cellKey);
         if (pending !== undefined) {
             clearTimeout(pending);
@@ -235,6 +247,5 @@ export class MarkdownLock implements vscode.Disposable {
             }
         }
         this._lastNoticeAt.delete(notebookKey);
-        this._revertBursts.delete(notebookKey);
     }
 }

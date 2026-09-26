@@ -6,10 +6,22 @@ const os = require('node:os');
 const path = require('node:path');
 
 const EXTENSION_ROOT = path.resolve(__dirname, '..');
+
+// Where a Practical-JavaScript checkout keeps its Docker dev harness, newest
+// layout first. The course moved it from tools/coursera-docker-dev/ to
+// coursera/docker-dev/ in its 2026-08 restructure; the old location is still
+// probed so an older course checkout keeps working.
+const DEV_SCRIPT_LOCATIONS = [
+    ['coursera', 'docker-dev', 'dev.sh'],
+    ['tools', 'coursera-docker-dev', 'dev.sh']
+];
+
 const DEFAULT_COURSE_REPO_CANDIDATES = [
     process.env.PRACTICAL_JAVASCRIPT_REPO,
     process.env.COURSES_REPO,
     process.env.COURSERA_DOCKER_REPO,
+    // This checkout as the course repo's vscode-extensions/vscode-webnb submodule.
+    path.resolve(EXTENSION_ROOT, '..', '..'),
     path.join(os.homedir(), 'teaching', 'Practical-JavaScript'),
     path.resolve(EXTENSION_ROOT, '..', 'Practical-JavaScript'),
     path.resolve(EXTENSION_ROOT, '..', '..', 'Practical-JavaScript')
@@ -20,25 +32,35 @@ function usage() {
   npm run coursera:import -- [--repo /path/to/Practical-JavaScript] [--no-build] [--stage-only|--production-only]
   npm run coursera:start -- [--repo /path/to/Practical-JavaScript] [--no-build] [--prepare] [dev.sh start args...]
   npm run coursera:stop -- [--repo /path/to/Practical-JavaScript] [dev.sh stop args...]
+  node scripts/coursera-docker-dev.js where [--repo /path/to/Practical-JavaScript]
 
 Commands:
   import
       Build this extension VSIX and import it into the Practical-JavaScript
-      Coursera Docker files.
+      Coursera Docker files (dev.sh import-web-notebook).
 
   start
       Build/import this extension, then run the Coursera Docker dev harness.
-      By default this uses start --no-prepare.
+      By default this uses start --no-prepare. With --prepare, the harness also
+      rebuilds the course content and the vendored extensions; web-notebook is
+      then rebuilt from this checkout too (WEB_NOTEBOOK_DIR is set to it).
 
   stop
       Stop the Coursera Docker dev harness without building or importing.
 
-Environment:
-  PRACTICAL_JAVASCRIPT_REPO=/path/to/Practical-JavaScript
-      Default repo path used when --repo is not provided.
+  where
+      Print the course repo and dev.sh these commands would use, and exit.
+      Runs nothing, so it is safe without Docker.
 
-Aliases:
-  COURSES_REPO and COURSERA_DOCKER_REPO are also accepted.`);
+Finding the course repo (first match wins; --repo replaces the whole list):
+  $PRACTICAL_JAVASCRIPT_REPO, $COURSES_REPO, $COURSERA_DOCKER_REPO
+  ${path.resolve(EXTENSION_ROOT, '..', '..')}  (this checkout as its vscode-extensions/vscode-webnb submodule)
+  ~/teaching/Practical-JavaScript
+  a Practical-JavaScript checkout next to this one, or one level up
+
+  A folder counts as the course repo when it holds coursera/docker-dev/dev.sh
+  (or tools/coursera-docker-dev/dev.sh, its location before the course's
+  2026-08 restructure).`);
 }
 
 function die(message) {
@@ -46,9 +68,14 @@ function die(message) {
     process.exit(1);
 }
 
-function isCourseRepo(candidate) {
-    return Boolean(candidate)
-        && fs.existsSync(path.join(candidate, 'tools', 'coursera-docker-dev', 'dev.sh'));
+/** The course repo's dev.sh, or undefined when `candidate` is not a course repo. */
+function findDevScript(candidate) {
+    if (!candidate) {
+        return undefined;
+    }
+    return DEV_SCRIPT_LOCATIONS
+        .map(parts => path.join(candidate, ...parts))
+        .find(devScript => fs.existsSync(devScript));
 }
 
 function resolveCourseRepo(explicitRepo) {
@@ -58,19 +85,27 @@ function resolveCourseRepo(explicitRepo) {
 
     for (const candidate of candidates) {
         const resolved = path.resolve(candidate);
-        if (isCourseRepo(resolved)) {
-            return resolved;
+        const devScript = findDevScript(resolved);
+        if (devScript) {
+            return { repoRoot: resolved, devScript };
         }
     }
 
-    die('could not find Practical-JavaScript. Pass --repo /path/to/Practical-JavaScript or set PRACTICAL_JAVASCRIPT_REPO.');
+    const tried = [...new Set(candidates.map(candidate => path.resolve(candidate)))];
+    die('could not find Practical-JavaScript (a folder holding '
+        + `${DEV_SCRIPT_LOCATIONS.map(parts => parts.join('/')).join(' or ')}). Tried:\n  `
+        + tried.join('\n  ')
+        + '\nPass --repo /path/to/Practical-JavaScript or set PRACTICAL_JAVASCRIPT_REPO.');
 }
 
-function runDev(repoRoot, args) {
-    const devScript = path.join(repoRoot, 'tools', 'coursera-docker-dev', 'dev.sh');
-    const result = spawnSync(devScript, args, {
-        cwd: repoRoot,
-        env: process.env,
+function runDev(course, args) {
+    const result = spawnSync(course.devScript, args, {
+        cwd: course.repoRoot,
+        // The harness's extension rebuild (start --prepare) reads
+        // WEB_NOTEBOOK_DIR for the web-notebook checkout. Pointing it here
+        // keeps that rebuild on this checkout instead of the course repo's
+        // submodule, which would otherwise replace the VSIX just imported.
+        env: { ...process.env, WEB_NOTEBOOK_DIR: EXTENSION_ROOT },
         stdio: 'inherit'
     });
 
@@ -140,7 +175,7 @@ function parseArgs(argv) {
     return parsed;
 }
 
-function importWebNotebook(repoRoot, parsed) {
+function importWebNotebook(course, parsed) {
     const args = ['import-web-notebook'];
 
     if (parsed.build) {
@@ -152,11 +187,11 @@ function importWebNotebook(repoRoot, parsed) {
     }
 
     args.push(EXTENSION_ROOT);
-    return runDev(repoRoot, args);
+    return runDev(course, args);
 }
 
-function startCourseraDev(repoRoot, parsed) {
-    if (!importWebNotebook(repoRoot, parsed)) {
+function startCourseraDev(course, parsed) {
+    if (!importWebNotebook(course, parsed)) {
         return false;
     }
 
@@ -166,12 +201,25 @@ function startCourseraDev(repoRoot, parsed) {
     }
 
     args.push(...parsed.passthrough);
-    return runDev(repoRoot, args);
+    return runDev(course, args);
 }
 
-function stopCourseraDev(repoRoot, parsed) {
-    return runDev(repoRoot, ['stop', ...parsed.passthrough]);
+function stopCourseraDev(course, parsed) {
+    return runDev(course, ['stop', ...parsed.passthrough]);
 }
+
+function printWhere(course) {
+    console.log(`course repo: ${course.repoRoot}`);
+    console.log(`dev.sh:      ${course.devScript}`);
+    console.log(`extension:   ${EXTENSION_ROOT}`);
+}
+
+const COMMANDS = {
+    import: importWebNotebook,
+    start: startCourseraDev,
+    stop: stopCourseraDev,
+    where: printWhere
+};
 
 const parsed = parseArgs(process.argv.slice(2));
 
@@ -180,15 +228,10 @@ if (parsed.command === 'help' || parsed.command === '-h' || parsed.command === '
     process.exit(0);
 }
 
-const repoRoot = resolveCourseRepo(parsed.repo);
-
-if (parsed.command === 'import') {
-    importWebNotebook(repoRoot, parsed);
-} else if (parsed.command === 'start') {
-    startCourseraDev(repoRoot, parsed);
-} else if (parsed.command === 'stop') {
-    stopCourseraDev(repoRoot, parsed);
-} else {
+if (!Object.prototype.hasOwnProperty.call(COMMANDS, parsed.command)) {
+    console.error(`coursera-docker-dev: unknown command "${parsed.command}"\n`);
     usage();
     process.exit(1);
 }
+
+COMMANDS[parsed.command](resolveCourseRepo(parsed.repo), parsed);

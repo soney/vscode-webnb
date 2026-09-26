@@ -15,7 +15,8 @@
  *
  * It also owns clicks on `[text](other.webnb#section)` links -- see
  * `notebookLinkClicks.ts`. That listener is on the whole webview document, so it
- * covers links in output cells (MCQ prompts, walkthrough notes) too.
+ * covers links in output cells (MCQ prompts, walkthrough notes) too, but only in
+ * Web Notebooks, and never inside a learner's own rendered page.
  */
 import type { RendererContext } from 'vscode-notebook-renderer';
 import { parseSizedImage } from '../shared/imageSize';
@@ -105,7 +106,10 @@ export async function activate(context: RendererContext<void>): Promise<void> {
     // gets image sizing -- links just fall back to VS Code's own handling.
     const postMessage = context.postMessage;
     if (postMessage) {
-        installNotebookLinkClicks(message => postMessage(message));
+        installNotebookLinkClicks(
+            message => postMessage(message),
+            context.onDidReceiveMessage ? listener => context.onDidReceiveMessage!(listener) : undefined
+        );
     }
 
     if (typeof context.getRenderer !== 'function') {

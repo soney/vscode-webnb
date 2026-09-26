@@ -19,7 +19,6 @@ const makeConfig = (argv, { entry, out, target, library = 'commonjs', chunkForma
     },
     resolve: {
         extensions: ['.ts', '.tsx', '.js', '.jsx', '.css'],
-        fallback: { "util": require.resolve("util/") }
     },
     experiments: {
         outputModule,
@@ -40,22 +39,11 @@ const makeConfig = (argv, { entry, out, target, library = 'commonjs', chunkForma
                     },
                 },
             },
-            // Allow importing CSS modules:
+            // CSS is imported as text: the renderer injects it into each
+            // output's shadow root itself.
             {
                 test: /\.css$/,
                 type: 'asset/source',
-                /*
-                use: [
-                    'style-loader',
-                    {
-                        loader: 'css-loader',
-                        options: {
-                            importLoaders: 1,
-                            modules: true,
-                        },
-                    },
-                ],
-                */
             },
         ],
     },

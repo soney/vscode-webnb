@@ -37,8 +37,26 @@ export function parseMcqSource(source: string): ParsedMcq {
     let deterministic = false;
     let sawOption = false;
     let currentOption: McqOption | undefined;
+    // A code sample in the question (SYNTAX.md recommends ~~~ fences) is text
+    // through and through: `  correct: false,` inside one is a line of code,
+    // not feedback, and `[x]` inside one is not an option.
+    let openFence: { marker: string; length: number } | undefined;
 
     for (const line of lines) {
+        const fence = /^\s*(`{3,}|~{3,})(.*)$/.exec(line);
+        if (openFence) {
+            if (fence && fence[1][0] === openFence.marker && fence[1].length >= openFence.length && !fence[2].trim()) {
+                openFence = undefined;
+            }
+            questionLines.push(line);
+            continue;
+        }
+        if (fence) {
+            openFence = { marker: fence[1][0], length: fence[1].length };
+            questionLines.push(line);
+            continue;
+        }
+
         const optionMatch = line.match(/^\s*(?:-\s*)?\[([ xX])\]\s*(.*)$/);
         if (optionMatch) {
             sawOption = true;
@@ -216,7 +234,7 @@ export interface McqCellOptions {
     addons: Addon[];
     /** Seed for deterministic option shuffling; stable per cell + source. */
     shuffleSeedSource: string;
-    /** The cell's `reveal` attribute: adds a "Show Answer" control. */
+    /** Whether answers may be revealed (webnb.allowRevealingSolutions): adds "Show Answer". */
     reveal?: boolean;
     /** The cell's `+solution` addon, shown as the explanation when revealing. */
     solutionContent?: string;
@@ -225,6 +243,9 @@ export interface McqCellOptions {
      * absent when the renderer cannot reach the extension host. */
     persistSelection?: (content: string) => void;
 }
+
+/** Unique ids for aria wiring; outputs share one webview document. */
+let nextMcqId = 0;
 
 export function renderMcqCell({ container, source, addons, shuffleSeedSource, reveal, solutionContent, addFeedback, persistSelection }: McqCellOptions): void {
     const { question, options, correctFeedback, wrongFeedback, shuffle, deterministic } = parseMcqSource(source);
@@ -245,11 +266,21 @@ export function renderMcqCell({ container, source, addons, shuffleSeedSource, re
 
     const form = document.createElement('form');
     form.classList.add('mcq-form');
+    const mcqId = `webnb-mcq-${nextMcqId++}`;
 
     const questionEl = document.createElement('div');
     questionEl.classList.add('mcq-question');
+    questionEl.id = `${mcqId}-question`;
     questionEl.innerHTML = renderMarkdownBlock(question);
     form.appendChild(questionEl);
+
+    // The options are one group named by the question, so a screen reader
+    // announces what they answer.
+    const optionsGroup = document.createElement('div');
+    optionsGroup.classList.add('mcq-options');
+    optionsGroup.setAttribute('role', inputType === 'radio' ? 'radiogroup' : 'group');
+    optionsGroup.setAttribute('aria-labelledby', questionEl.id);
+    form.appendChild(optionsGroup);
 
     const optionFeedbackEls = new Map<number, HTMLDivElement>();
 
@@ -277,7 +308,7 @@ export function renderMcqCell({ container, source, addons, shuffleSeedSource, re
 
         optionFeedbackEls.set(opt.originalIndex, optionFeedbackEl);
         optionRow.append(label, optionFeedbackEl);
-        form.appendChild(optionRow);
+        optionsGroup.appendChild(optionRow);
     });
 
     const checkBtn = document.createElement('button');
@@ -339,7 +370,13 @@ export function renderMcqCell({ container, source, addons, shuffleSeedSource, re
                 if (optionFeedbackEl) {
                     optionFeedbackEl.hidden = false;
                     optionFeedbackEl.classList.add(itemIsCorrect ? 'success' : 'error');
+                    // Right and wrong must not be told apart by color alone: the
+                    // stylesheet adds a mark, and this says it in words.
+                    const verdict = document.createElement('span');
+                    verdict.classList.add('webnb-visually-hidden');
+                    verdict.textContent = itemIsCorrect ? 'Correct: ' : 'Incorrect: ';
                     optionFeedbackEl.innerHTML = renderMarkdownInline(itemFeedback);
+                    optionFeedbackEl.prepend(verdict);
                 }
             }
         });
@@ -361,12 +398,16 @@ export function renderMcqCell({ container, source, addons, shuffleSeedSource, re
 
         const solutionEl = document.createElement('div');
         solutionEl.classList.add('mcq-solution');
+        solutionEl.id = `${mcqId}-solution`;
         solutionEl.hidden = true;
+        revealBtn.setAttribute('aria-expanded', 'false');
+        revealBtn.setAttribute('aria-controls', solutionEl.id);
 
         let revealed = false;
         revealBtn.addEventListener('click', () => {
             revealed = !revealed;
             revealBtn.textContent = revealed ? 'Hide Answer' : 'Show Answer';
+            revealBtn.setAttribute('aria-expanded', String(revealed));
 
             // Marks the correct options without touching the learner's own
             // selection; checking still grades what they actually chose.

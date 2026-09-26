@@ -4,6 +4,7 @@
  * draws), and routes renderer messages. Scheduling, highlighting, and
  * snapshotting live in their own modules:
  *  - autorunScheduler.ts   when autorun/widget cells execute
+ *  - inputCollapser.ts     which cells open with their source collapsed
  *  - walkthroughHighlighter.ts  hover highlights + opening workspace files
  *  - workspaceSnapshots.ts  path resolution + file snapshots
  */
@@ -11,11 +12,13 @@ import * as vscode from 'vscode';
 import {
     isRendererMessage,
     WEBNB_OUTPUT_MIME,
-    type Addon
+    type Addon,
+    FORGET_TERMINAL_HISTORY_MESSAGE,
+    type WebNbForgetTerminalHistoryMessage
 } from '../shared/protocol';
 import {
     getAddonContent,
-    getDefaultCaptureAddons,
+    hasAddon,
     isAutoWidgetLanguage,
     isExternalCheckLanguage,
     isSolutionAddon,
@@ -24,9 +27,9 @@ import {
     upsertAddon
 } from '../shared/addons';
 import { cellLabel, errorExecution, logChannel, logExecution, rangesLabel, uriLabel, visibleNotebookLabels, warnExecution } from './log';
-import { isRemoteNotebookAlias, notebookUrisMatch } from './notebookUris';
+import { getNotebookKey, isRemoteNotebookAlias, notebookUrisMatch } from './notebookUris';
 import { AutorunScheduler } from './autorunScheduler';
-import { getCapturedStarter } from './defaultCapture';
+import { InputCollapser } from './inputCollapser';
 import { NotebookRestorer } from './restoreNotebook';
 import { WalkthroughHighlighter } from './walkthroughHighlighter';
 import { snapshotWorkspaceFiles } from './workspaceSnapshots';
@@ -61,6 +64,10 @@ function isAutoRefreshingCell(cell: vscode.NotebookCell): boolean {
         || isWalkthroughLanguage(cell.document.languageId);
 }
 
+function cellRange(cell: vscode.NotebookCell): vscode.NotebookRange {
+    return new vscode.NotebookRange(cell.index, cell.index + 1);
+}
+
 export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(logChannel, new WebNotebookKernel(context.extension.id));
 }
@@ -77,15 +84,27 @@ export class WebNotebookKernel implements vscode.Disposable {
     private readonly _extensionId: string;
     private readonly _cellExecutionVersions = new Map<string, number>();
     private readonly _scheduler: AutorunScheduler;
+    private readonly _collapser = new InputCollapser();
     private readonly _highlighter = new WalkthroughHighlighter();
+    /** Notebooks (getNotebookKey) this controller is the selected kernel for.
+     * Executing in one of them needs no selection, so nothing is shown and
+     * focus never moves. */
+    private readonly _selectedNotebooks = new Set<string>();
     /** Notebooks owed a re-render because the reveal setting changed while
      * they were not visible (the setting is usually flipped from the Settings
      * editor, which hides the notebook until the reader switches back). */
     private readonly _pendingSolutionRefresh = new Set<string>();
-    /** Serializes flushes: returning to a notebook fires the active-editor and
-     * visible-editors events back to back, and two concurrent flushes collide
-     * on createNotebookCellExecution for the same cells. */
-    private _solutionRefreshChain: Promise<void> = Promise.resolve();
+    /** Notebooks (getNotebookKey) whose checklist or walkthrough refresh was
+     * dropped, usually because no editor showed them. The renderer only asks
+     * for its next refresh once the last one has rendered, so polling stays
+     * stopped until these cells run again, which they do the next time the
+     * notebook is on screen. */
+    private readonly _pendingAutoRefresh = new Set<string>();
+    /** Serializes the background re-renders: returning to a notebook fires the
+     * active-editor and visible-editors events back to back, and two
+     * concurrent flushes collide on createNotebookCellExecution for the same
+     * cells. */
+    private _backgroundChain: Promise<void> = Promise.resolve();
 
     private _ensureControllerAssociation(notebook: vscode.NotebookDocument): void {
         if (notebook.notebookType !== this.notebookType || isRemoteNotebookAlias(notebook.uri)) {
@@ -112,20 +131,33 @@ export class WebNotebookKernel implements vscode.Disposable {
             ensureControllerAssociation: notebook => this._ensureControllerAssociation(notebook),
             executeRanges: (notebook, ranges) => this._executeNotebookRanges(notebook, ranges)
         });
-        this._disposables.push(new NotebookRestorer({
-            executeRanges: (notebook, ranges) => this._executeNotebookRanges(notebook, ranges)
-        }));
         const rendererMessaging = vscode.notebooks.createRendererMessaging(RENDERER_ID);
+        this._disposables.push(this._collapser, new NotebookRestorer({
+            executeRanges: (notebook, ranges) => this._executeNotebookRanges(notebook, ranges),
+            clearOutputs: cells => this._clearCellOutputs(cells),
+            forgetTerminalHistory: async (notebook, cellUris) => {
+                const message: WebNbForgetTerminalHistoryMessage = { type: FORGET_TERMINAL_HISTORY_MESSAGE, cellUris };
+                for (const editor of vscode.window.visibleNotebookEditors) {
+                    if (editor.notebook === notebook) {
+                        await rendererMessaging.postMessage(message, editor);
+                    }
+                }
+            }
+        }));
 
         const initializeEditor = (editor: vscode.NotebookEditor) => {
-            this._collapseWidgetCells(editor);
+            this._collapser.collapseForEditor(editor);
             this._scheduler.runForEditor(editor);
         };
 
         this._disposables.push(
             this._controller.onDidChangeSelectedNotebooks(({ notebook, selected }) => {
+                const key = getNotebookKey(notebook.uri);
                 if (selected) {
+                    this._selectedNotebooks.add(key);
                     this._scheduler.runForNotebook(notebook);
+                } else {
+                    this._selectedNotebooks.delete(key);
                 }
             }),
             rendererMessaging.onDidReceiveMessage(({ editor, message }) => {
@@ -143,9 +175,7 @@ export class WebNotebookKernel implements vscode.Disposable {
                     if (!isAutoRefreshingCell(cell)) {
                         return;
                     }
-                    void this._executeNotebookRanges(editor.notebook, [
-                        new vscode.NotebookRange(cell.index, cell.index + 1)
-                    ]);
+                    void this._refreshCell(cell);
                     return;
                 }
 
@@ -164,11 +194,15 @@ export class WebNotebookKernel implements vscode.Disposable {
                     return;
                 }
 
+                // The guard admitted only `+selection` / `+history` JSON.
                 void this._upsertCellAddon(cell, message.addonType, message.content);
             }),
             vscode.workspace.onDidCloseNotebookDocument(notebook => {
+                const key = getNotebookKey(notebook.uri);
                 this._scheduler.forgetNotebook(notebook.uri);
                 this._pendingSolutionRefresh.delete(notebook.uri.toString());
+                this._pendingAutoRefresh.delete(key);
+                this._selectedNotebooks.delete(key);
                 for (const cell of notebook.getCells()) {
                     this._cellExecutionVersions.delete(cell.document.uri.toString());
                 }
@@ -201,13 +235,13 @@ export class WebNotebookKernel implements vscode.Disposable {
 
                 void this._selectControllerForEditor(editor);
                 initializeEditor(editor);
-                void this._flushSolutionRefresh();
+                this._flushBackgroundRefreshes();
             }),
             vscode.window.onDidChangeVisibleNotebookEditors(editors => {
                 for (const editor of editors) {
                     initializeEditor(editor);
                 }
-                void this._flushSolutionRefresh();
+                this._flushBackgroundRefreshes();
             }),
             vscode.workspace.onDidChangeConfiguration(event => {
                 if (event.affectsConfiguration(`${CONFIG_SECTION}.${ALLOW_REVEAL_SETTING}`)) {
@@ -229,6 +263,7 @@ export class WebNotebookKernel implements vscode.Disposable {
     }
 
     public dispose(): void {
+        this._scheduler.dispose();
         this._highlighter.dispose();
         this._controller.dispose();
         this._disposables.forEach(d => d.dispose());
@@ -329,8 +364,7 @@ export class WebNotebookKernel implements vscode.Disposable {
             uriLabel(vscode.window.activeNotebookEditor?.notebook.uri),
             visibleNotebookLabels());
 
-        const editor = vscode.window.visibleNotebookEditors
-            .find(candidate => !isRemoteNotebookAlias(candidate.notebook.uri) && notebookUrisMatch(candidate.notebook.uri, notebook.uri));
+        const editor = this._visibleEditorFor(notebook);
         if (!editor) {
             warnExecution('prepareNotebook no visible editor notebook=%s visible=%s',
                 uriLabel(notebook.uri),
@@ -346,6 +380,27 @@ export class WebNotebookKernel implements vscode.Disposable {
         return selected;
     }
 
+    private _visibleEditorFor(notebook: vscode.NotebookDocument): vscode.NotebookEditor | undefined {
+        return vscode.window.visibleNotebookEditors
+            .find(candidate => !isRemoteNotebookAlias(candidate.notebook.uri) && notebookUrisMatch(candidate.notebook.uri, notebook.uri));
+    }
+
+    private _isActiveNotebook(notebook: vscode.NotebookDocument): boolean {
+        const active = vscode.window.activeNotebookEditor;
+        return !!active && notebookUrisMatch(active.notebook.uri, notebook.uri);
+    }
+
+    /**
+     * Makes this controller the notebook's kernel, so its cells can execute.
+     *
+     * Every execution that reaches here runs in the background -- autorun, a
+     * checklist poll, a re-render -- or was started by VS Code, which selected
+     * the controller first. None of them may move focus: a learner typing in a
+     * file beside the notebook must keep typing there. So a notebook whose
+     * kernel is already this controller needs nothing at all, and a first
+     * selection, which the select command can only make for the active notebook
+     * editor, waits until the notebook is active rather than activating it.
+     */
     private async _selectControllerForEditor(editor: vscode.NotebookEditor): Promise<boolean> {
         const { notebook } = editor;
         if (notebook.notebookType !== this.notebookType) {
@@ -359,6 +414,12 @@ export class WebNotebookKernel implements vscode.Disposable {
             return false;
         }
 
+        const key = getNotebookKey(notebook.uri);
+        if (this._selectedNotebooks.has(key)) {
+            logExecution('selectController already selected notebook=%s', uriLabel(notebook.uri));
+            return true;
+        }
+
         logExecution('selectController start notebook=%s viewColumn=%s activeNotebook=%s',
             uriLabel(notebook.uri),
             String(editor.viewColumn),
@@ -367,18 +428,25 @@ export class WebNotebookKernel implements vscode.Disposable {
         this._ensureControllerAssociation(notebook);
 
         try {
-            if (!vscode.window.activeNotebookEditor || !notebookUrisMatch(vscode.window.activeNotebookEditor.notebook.uri, notebook.uri)) {
+            if (!this._isActiveNotebook(notebook)) {
                 logExecution('selectController showing notebook notebook=%s currentActive=%s',
                     uriLabel(notebook.uri),
                     uriLabel(vscode.window.activeNotebookEditor?.notebook.uri));
                 await vscode.window.showNotebookDocument(notebook, {
                     viewColumn: editor.viewColumn,
-                    preserveFocus: false,
+                    preserveFocus: true,
                     preview: false
                 });
-                logExecution('selectController showed notebook notebook=%s activeNotebook=%s',
+            }
+            if (!this._isActiveNotebook(notebook)) {
+                // The select command acts on the active notebook editor; run
+                // now, it would pick a kernel for some other notebook (or open
+                // the kernel picker over it). The next time this notebook is
+                // active, the active-editor handler selects it.
+                logExecution('selectController deferred until the notebook is active notebook=%s currentActive=%s',
                     uriLabel(notebook.uri),
                     uriLabel(vscode.window.activeNotebookEditor?.notebook.uri));
+                return false;
             }
 
             const selected = await vscode.commands.executeCommand<boolean>(SELECT_KERNEL_COMMAND, {
@@ -389,6 +457,9 @@ export class WebNotebookKernel implements vscode.Disposable {
             logExecution('selectController command result notebook=%s selected=%s',
                 uriLabel(notebook.uri),
                 String(selected));
+            if (selected !== false) {
+                this._selectedNotebooks.add(key);
+            }
             return selected !== false;
         } catch (error) {
             errorExecution('Could not select notebook controller for %s: %s', notebook.uri.toString(), String(error));
@@ -418,59 +489,20 @@ export class WebNotebookKernel implements vscode.Disposable {
         return notebook.cellAt(cell.index);
     }
 
-    /** Hides widget cells' source editors so learners see just the widget. */
-    private _collapseWidgetCells(editor: vscode.NotebookEditor): void {
-        if (editor.notebook.notebookType !== this.notebookType || isRemoteNotebookAlias(editor.notebook.uri)) {
-            return;
-        }
-
-        const widgetIndexes = editor.notebook.getCells()
-            .map((cell, index) => isAutoWidgetCell(cell) ? index : -1)
-            .filter(index => index >= 0);
-
-        if (widgetIndexes.length === 0) {
-            return;
-        }
-
-        setTimeout(() => {
-            void this._collapseCellInputs(editor, widgetIndexes);
-        }, 700);
-    }
-
-    private async _collapseCellInputs(editor: vscode.NotebookEditor, indexes: number[]): Promise<void> {
-        const originalSelection = editor.selection;
-        const originalSelections = editor.selections;
-
-        try {
-            for (const index of indexes) {
-                editor.selection = new vscode.NotebookRange(index, index + 1);
-                editor.selections = [editor.selection];
-                await vscode.commands.executeCommand('notebook.cell.collapseCellInput');
-            }
-        } finally {
-            editor.selection = originalSelection;
-            editor.selections = originalSelections;
-        }
-    }
-
     private async _doExecuteCell(cell: vscode.NotebookCell): Promise<void> {
         logExecution('cell execute start %s', cellLabel(cell));
         const source = cell.document.getText();
         const { languageId } = cell.document;
-        let addons = getCellAddons(cell);
+        const addons = getCellAddons(cell);
         logExecution('cell source loaded index=%d language=%s sourceLength=%d addonTypes=%s',
             cell.index,
             languageId,
             source.length,
             addons.map(addon => normalizeAddonType(addon.type)).join(',') || '<none>');
-        // Record the cell's pre-edit text as its starter, never the live source:
-        // a run that lands right after an edit must not enshrine the edit.
-        const defaultCapture = getDefaultCaptureAddons(addons, getCapturedStarter(cell) ?? source);
-        if (defaultCapture.changed) {
-            logExecution('cell default capture addon updated index=%d', cell.index);
-            addons = defaultCapture.addons;
-            await this._replaceCellAddons(cell, addons);
-        }
+        // Running never records a starter: defaultCapture.ts captures the
+        // pre-edit text on a cell's first edit, and an empty `+default` means
+        // the starter is empty. Filling it here from the live source recorded
+        // the learner's first attempt as the starter.
         const files = await snapshotWorkspaceFiles(cell, addons, languageId, source);
         logExecution('cell snapshots ready index=%d snapshotKeys=%s',
             cell.index,
@@ -507,6 +539,39 @@ export class WebNotebookKernel implements vscode.Disposable {
         } catch (error) {
             errorExecution('Cell execution failed for %s: %s', cellLabel(cell), String(error));
             throw error;
+        }
+    }
+
+    /**
+     * Drops cells' outputs through this controller, so it is the notebook the
+     * cells belong to that is cleared -- not whichever one is active, which is
+     * all `notebook.clearAllCellsOutputs` can target.
+     */
+    private async _clearCellOutputs(cells: vscode.NotebookCell[]): Promise<void> {
+        for (const cell of cells) {
+            if (cell.outputs.length === 0) {
+                continue;
+            }
+            try {
+                const exec = this._controller.createNotebookCellExecution(cell);
+                exec.start();
+                await exec.clearOutput();
+                exec.end(undefined);
+            } catch (error) {
+                logExecution('could not clear output of %s: %s', cellLabel(cell), String(error));
+            }
+        }
+    }
+
+    /**
+     * Re-runs a polling checklist or watching walkthrough. When that cannot
+     * happen -- typically because the notebook is not on screen -- the notebook
+     * is remembered, and its refreshing cells run again when it next shows.
+     */
+    private async _refreshCell(cell: vscode.NotebookCell): Promise<void> {
+        const executed = await this._executeNotebookRanges(cell.notebook, [cellRange(cell)]);
+        if (!executed && !cell.notebook.isClosed) {
+            this._pendingAutoRefresh.add(getNotebookKey(cell.notebook.uri));
         }
     }
 
@@ -560,14 +625,15 @@ export class WebNotebookKernel implements vscode.Disposable {
                 this._pendingSolutionRefresh.add(notebook.uri.toString());
             }
         }
-        void this._flushSolutionRefresh();
+        this._flushBackgroundRefreshes();
     }
 
-    private _flushSolutionRefresh(): Promise<void> {
-        this._solutionRefreshChain = this._solutionRefreshChain
+    private _flushBackgroundRefreshes(): Promise<void> {
+        this._backgroundChain = this._backgroundChain
             .then(() => this._doFlushSolutionRefresh())
-            .catch(error => errorExecution('Solution refresh failed: %s', String(error)));
-        return this._solutionRefreshChain;
+            .then(() => this._doFlushAutoRefresh())
+            .catch(error => errorExecution('Background refresh failed: %s', String(error)));
+        return this._backgroundChain;
     }
 
     /**
@@ -585,9 +651,7 @@ export class WebNotebookKernel implements vscode.Disposable {
                 continue;
             }
 
-            const visible = vscode.window.visibleNotebookEditors
-                .some(editor => !isRemoteNotebookAlias(editor.notebook.uri) && notebookUrisMatch(editor.notebook.uri, notebook.uri));
-            if (!visible) {
+            if (!this._visibleEditorFor(notebook)) {
                 continue;
             }
 
@@ -595,7 +659,7 @@ export class WebNotebookKernel implements vscode.Disposable {
             const ranges = notebook.getCells()
                 .filter(cell => cell.outputs.length > 0
                     && (isAutoWidgetCell(cell) || getCellAddons(cell).some(addon => isSolutionAddon(addon.type))))
-                .map(cell => new vscode.NotebookRange(cell.index, cell.index + 1));
+                .map(cellRange);
 
             // One range per call: the same visibility event that triggers this
             // flush also triggers the autorun scheduler, and a collision on one
@@ -607,21 +671,44 @@ export class WebNotebookKernel implements vscode.Disposable {
     }
 
     /**
+     * Restarts the polling of notebooks whose refresh was dropped: their
+     * checklist and walkthrough cells that have output run again, which renders
+     * fresh results and lets the renderer schedule its next refresh.
+     */
+    private async _doFlushAutoRefresh(): Promise<void> {
+        for (const notebook of vscode.workspace.notebookDocuments) {
+            const key = getNotebookKey(notebook.uri);
+            if (!this._pendingAutoRefresh.has(key) || isRemoteNotebookAlias(notebook.uri) || !this._visibleEditorFor(notebook)) {
+                continue;
+            }
+
+            this._pendingAutoRefresh.delete(key);
+            const cells = notebook.getCells().filter(cell => isAutoRefreshingCell(cell) && cell.outputs.length > 0);
+            logExecution('restarting %d refreshing cell(s) in %s', cells.length, uriLabel(notebook.uri));
+            for (const cell of cells) {
+                await this._refreshCell(cell);
+            }
+        }
+    }
+
+    /**
      * Restores a code cell's text to its `+default` addon (the starter code the
-     * author shipped, or the first-edit capture) and re-executes it so the output
-     * matches what the cell now says.
+     * author shipped, or the first-edit capture; an empty one means the cell
+     * started empty) and re-executes it so the output matches what the cell
+     * now says.
      */
     private async _resetCellToDefault(cell: vscode.NotebookCell): Promise<void> {
         if (cell.kind !== vscode.NotebookCellKind.Code) {
             return;
         }
 
-        const defaultContent = getAddonContent(getCellAddons(cell), 'default');
-        if (defaultContent === undefined || defaultContent.trim().length === 0) {
+        const addons = getCellAddons(cell);
+        if (!hasAddon(addons, 'default')) {
             warnExecution('Ignored reset for %s: it has no default source to restore', cellLabel(cell));
             return;
         }
 
+        const defaultContent = getAddonContent(addons, 'default') ?? '';
         if (cell.document.getText() !== defaultContent) {
             const fullRange = cell.document.validateRange(
                 new vscode.Range(0, 0, cell.document.lineCount, 0)
@@ -636,8 +723,6 @@ export class WebNotebookKernel implements vscode.Disposable {
 
         // Re-run either way: the reader asked for the starter state, and stale
         // output from the edited code would contradict the restored text.
-        await this._executeNotebookRanges(cell.notebook, [
-            new vscode.NotebookRange(cell.index, cell.index + 1)
-        ]);
+        await this._executeNotebookRanges(cell.notebook, [cellRange(cell)]);
     }
 }

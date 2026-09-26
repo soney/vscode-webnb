@@ -10,7 +10,8 @@
         "noEmit": true,
         "isolatedModules": true,
         "resolveJsonModule": true,
-        "baseUrl": ".",
+        // No baseUrl (deprecated in TypeScript 6): `paths` resolve against this
+        // file's folder on their own, for tsc and esbuild alike.
         // `@webnb/...` is the extension's own src/ one level up: this folder
         // builds a second extension out of the same sources rather than a copy
         // of them. esbuild reads these paths too, so they resolve identically at

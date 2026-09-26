@@ -1,8 +1,9 @@
 /**
  * The simulated terminal for exercise cells: a persistent per-cell session
- * (history survives re-renders), an xterm view when the cell carries a
- * `+terminal` addon, and the `terminal` API (`run`/`history`/`didRun`/...)
- * exposed to check code. Command output is simulated — nothing executes.
+ * (history survives re-renders, and a reload through the cell's `+history`
+ * addon), an xterm view when the cell carries a `+terminal` addon, and the
+ * `terminal` API (`run`/`history`/`didRun`/...) exposed to check code. Command
+ * output is simulated — nothing executes.
  */
 import { Terminal } from '@xterm/xterm';
 
@@ -24,6 +25,13 @@ const DEFAULT_TERMINAL_PROMPT = '$';
 
 /** Sessions are keyed by cell URI so a cell's history survives re-renders. */
 const terminalSessions = new Map<string, TerminalSessionState>();
+
+/** Drops these cells' sessions (Restore Notebook cleared their saved history). */
+export function forgetTerminalSessions(cellKeys: readonly string[]): void {
+    for (const key of cellKeys) {
+        terminalSessions.delete(key);
+    }
+}
 
 export function parseTerminalAddon(content: string): ParsedTerminalAddon {
     const parsed: ParsedTerminalAddon = {
@@ -80,6 +88,33 @@ export interface TerminalControllerOptions {
     /** Called after a command runs (typed or via `terminal.run`), so external
      * checklists can re-check command history. */
     onCommandRan: (command: string) => void;
+    /** History saved in the cell's `+history` addon, for a fresh session. */
+    savedHistory?: string[];
+    /** Called whenever the history changes, so it can be saved to the cell. */
+    onHistoryChanged?: (history: string[]) => void;
+}
+
+/** Reads a `+history` addon: `{"commands": [...]}`. Anything else is no history. */
+export function parseTerminalHistoryAddon(content: string | undefined): string[] | undefined {
+    if (!content || !content.trim()) {
+        return undefined;
+    }
+    try {
+        const parsed: unknown = JSON.parse(content);
+        const commands = parsed && typeof parsed === 'object' ? (parsed as { commands?: unknown }).commands : undefined;
+        return Array.isArray(commands) && commands.every(command => typeof command === 'string') ? commands : undefined;
+    } catch {
+        return undefined;
+    }
+}
+
+export function serializeTerminalHistoryAddon(history: string[]): string {
+    return JSON.stringify({ commands: history });
+}
+
+/** xterm draws on a canvas and cannot resolve CSS variables, so read their values. */
+function themeColor(element: HTMLElement, variable: string, fallback: string): string {
+    return getComputedStyle(element).getPropertyValue(variable).trim() || fallback;
 }
 
 export interface TerminalController {
@@ -90,13 +125,14 @@ export interface TerminalController {
     dispose(): void;
 }
 
-export function createTerminalController({ widgetHost, cellKey, config, onCommandRan }: TerminalControllerOptions): TerminalController {
+export function createTerminalController({ widgetHost, cellKey, config, onCommandRan, savedHistory, onHistoryChanged }: TerminalControllerOptions): TerminalController {
     const terminalState = terminalSessions.get(cellKey) || {
-        history: [],
+        history: savedHistory ? savedHistory.slice() : [],
         prompt: config?.prompt || DEFAULT_TERMINAL_PROMPT,
         welcomeShown: false,
         restoreFocus: false,
-        startupRan: false
+        // Saved history already includes whatever the startup commands ran.
+        startupRan: !!savedHistory
     };
     terminalState.prompt = config?.prompt || terminalState.prompt || DEFAULT_TERMINAL_PROMPT;
     terminalSessions.set(cellKey, terminalState);
@@ -120,13 +156,18 @@ export function createTerminalController({ widgetHost, cellKey, config, onComman
         return `simulated command: ${normalized}`;
     }
 
-    function runTerminalCommand(command: string, term?: Terminal): string {
+    // `persist` is off for the addon's startup commands: opening a notebook
+    // must not write to it.
+    function runTerminalCommand(command: string, term?: Terminal, persist = true): string {
         const normalized = command.trim();
         if (!normalized) {
             return '';
         }
 
         terminalState.history.push(normalized);
+        if (persist) {
+            onHistoryChanged?.(terminalState.history.slice());
+        }
 
         if (normalized === 'clear') {
             term?.clear();
@@ -157,8 +198,10 @@ export function createTerminalController({ widgetHost, cellKey, config, onComman
             convertEol: true,
             disableStdin: false,
             theme: {
-                background: 'var(--vscode-editor-background)',
-                foreground: 'var(--vscode-editor-foreground)'
+                background: themeColor(widgetHost, '--vscode-editor-background', '#1e1e1e'),
+                foreground: themeColor(widgetHost, '--vscode-editor-foreground', '#d4d4d4'),
+                cursor: themeColor(widgetHost, '--vscode-editorCursor-foreground', '#aeafad'),
+                selectionBackground: themeColor(widgetHost, '--vscode-editor-selectionBackground', '#264f78')
             }
         });
         terminalInstance.open(terminalHost);
@@ -172,7 +215,7 @@ export function createTerminalController({ widgetHost, cellKey, config, onComman
 
         if (!terminalState.startupRan) {
             for (const command of config.run) {
-                runTerminalCommand(command);
+                runTerminalCommand(command, undefined, false);
             }
             terminalState.startupRan = true;
         }
@@ -256,6 +299,7 @@ export function createTerminalController({ widgetHost, cellKey, config, onComman
         },
         clear(): void {
             terminalState.history.length = 0;
+            onHistoryChanged?.([]);
         },
         last(): string | undefined {
             return terminalState.history[terminalState.history.length - 1];

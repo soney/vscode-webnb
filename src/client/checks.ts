@@ -6,6 +6,7 @@
  * terminal's history — never the real filesystem.
  */
 import type { WorkspaceFileSnapshotEntry } from '../shared/protocol';
+import { parseRequestedPathReference } from '../shared/filePaths';
 import {
     normalizeChecklistCheckKind,
     splitChecklistFields,
@@ -175,8 +176,12 @@ export function parseRegexLike(value: string): RegExp | string {
 
 /** Renders checklist results into the feedback pane; returns whether all passed. */
 export function createChecklistFeedback(feedback: HTMLElement) {
-    return function addChecklistFeedback(results: FileCheckResult[], title?: string, options: { checkedAt?: number; intervalMs?: number; autoRefresh?: boolean } = {}): boolean {
-    feedback.innerHTML = '';
+    return function addChecklistFeedback(results: FileCheckResult[], title?: string, options: { checkedAt?: number; intervalMs?: number; autoRefresh?: boolean; append?: boolean } = {}): boolean {
+    // A checklist cell owns its whole pane; a checklist() called from a code
+    // cell's test adds its block after the results already reported.
+    if (!options.append) {
+        feedback.innerHTML = '';
+    }
 
     const allPassed = results.length > 0 && results.every(result => result.passed);
     const refreshIntervalMs = options.intervalMs ?? 0;
@@ -260,7 +265,8 @@ export interface CheckApiDeps {
     files: Record<string, WorkspaceFileSnapshotEntry>;
     terminal: TerminalApi;
     didLog: (expected: string | RegExp) => boolean;
-    addFeedback: FeedbackWriters['addFeedback'];
+    /** Results a test reports with `.run()` join the others; they never replace them. */
+    appendFeedback: FeedbackWriters['appendFeedback'];
     /** External/checklist cells collect results and render them all at once. */
     deferChecklistRendering: boolean;
     addChecklistFeedback: ChecklistFeedback;
@@ -270,7 +276,7 @@ export interface CheckApiDeps {
  * Builds the `check` / `file` / `checklist` API a cell's test code calls.
  * Everything is bound to one cell's snapshots, terminal, and feedback pane.
  */
-export function createCheckApi({ files, terminal, didLog, addFeedback, deferChecklistRendering, addChecklistFeedback }: CheckApiDeps) {
+export function createCheckApi({ files, terminal, didLog, appendFeedback, deferChecklistRendering, addChecklistFeedback }: CheckApiDeps) {
     const deferredChecklistResults: FileCheckResult[] = [];
     let deferredChecklistTitle: string | undefined;
 
@@ -280,7 +286,10 @@ export function createCheckApi({ files, terminal, didLog, addFeedback, deferChec
 
     function getFileSnapshot(path: string): WorkspaceFileSnapshotEntry {
         const normalizedPath = normalizeWorkspacePath(path);
-        return files[normalizedPath] || files[path] || {
+        // The kernel keys each snapshot by the same request string it parsed,
+        // so `workspace: x` (with a space) is found under `workspace:x`.
+        const requestKey = parseRequestedPathReference(path).requestPath;
+        return files[requestKey] || files[normalizedPath] || files[path] || {
             path: normalizedPath || path,
             exists: false,
             error: `Add \`${path}\` to a \`+files\` block before checking it.`
@@ -295,9 +304,9 @@ export function createCheckApi({ files, terminal, didLog, addFeedback, deferChec
             path,
             run(failMessage?: string, successMessage?: string) {
                 if (passed) {
-                    addFeedback(successMessage || label, 'success');
+                    appendFeedback(successMessage || label, 'success');
                 } else {
-                    addFeedback(failMessage || detail || label, 'error');
+                    appendFeedback(failMessage || detail || label, 'error');
                 }
             }
         };
@@ -542,7 +551,7 @@ export function createCheckApi({ files, terminal, didLog, addFeedback, deferChec
             return results.length > 0 && results.every(result => result.passed);
         }
 
-        return addChecklistFeedback(results, title);
+        return addChecklistFeedback(results, title, { append: true });
     }
 
     return {

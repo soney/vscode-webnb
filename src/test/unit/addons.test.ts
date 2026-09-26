@@ -3,7 +3,6 @@ import * as assert from 'assert';
 import type { Addon } from '../../shared/protocol';
 import {
     getAddonContent,
-    getDefaultCaptureAddons,
     isAutoWidgetLanguage,
     isCssAddon,
     isExternalCheckLanguage,
@@ -173,49 +172,6 @@ suite('shared/addons', () => {
             assert.notStrictEqual(replaced, original);
             assert.notStrictEqual(appended, original);
             assert.deepStrictEqual(original, snapshot);
-        });
-    });
-
-    suite('getDefaultCaptureAddons', () => {
-        test('returns the same array unchanged when there is no default addon', () => {
-            const input: Addon[] = [{ type: 'test', content: 'x' }];
-            const result = getDefaultCaptureAddons(input, 'source');
-
-            assert.strictEqual(result.changed, false);
-            assert.strictEqual(result.addons, input);
-        });
-
-        test('leaves a non-empty default addon alone', () => {
-            const input: Addon[] = [{ type: 'default', content: 'already captured' }];
-            const result = getDefaultCaptureAddons(input, 'source');
-
-            assert.strictEqual(result.changed, false);
-            assert.strictEqual(result.addons, input);
-            assert.strictEqual(input[0].content, 'already captured');
-        });
-
-        test('fills an empty default addon with the source', () => {
-            const input: Addon[] = [
-                { type: 'css', content: 'body {}' },
-                { type: '+Default', content: '', id: 'd' }
-            ];
-            const result = getDefaultCaptureAddons(input, 'the source');
-
-            assert.strictEqual(result.changed, true);
-            assert.deepStrictEqual(result.addons, [
-                { type: 'css', content: 'body {}' },
-                { type: '+Default', content: 'the source', id: 'd' }
-            ]);
-            // Input is not mutated.
-            assert.strictEqual(input[1].content, '');
-        });
-
-        test('whitespace-only content counts as empty', () => {
-            const input: Addon[] = [{ type: 'default', content: '  \n\t ' }];
-            const result = getDefaultCaptureAddons(input, 'src');
-
-            assert.strictEqual(result.changed, true);
-            assert.strictEqual(result.addons[0].content, 'src');
         });
     });
 

@@ -13,6 +13,13 @@
  *
  * IMPORTANT: This plugin NEVER writes to the workspace. All browser-side edits
  * live in the browser's virtual filesystem (see src/vfs.ts). Disk is read-only.
+ *
+ * Reads are fenced in, because anyone who can reach the dev server can call
+ * these endpoints with any path (vite binds localhost unless started with
+ * --host): every read must resolve -- symlinks included -- inside the
+ * workspace, and no path with a segment starting with "." is served (.env,
+ * .git/, .ssh/, key files kept in dot-folders, ...). A notebook file check of
+ * a dotfile therefore reports an error here, where VS Code would read it.
  */
 import type { Plugin, ViteDevServer } from 'vite';
 import type { IncomingMessage, ServerResponse } from 'node:http';
@@ -89,15 +96,50 @@ function toPosix(value: string): string {
     return value.split(path.sep).join('/');
 }
 
+/** Whether `target` is `root` or lies beneath it (both absolute, same form). */
+function isInside(root: string, target: string): boolean {
+    const rel = path.relative(root, target);
+    return rel === '' || (rel !== '..' && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel));
+}
+
 /** Reject paths that escape the workspace root. Returns an absolute path or null. */
 function safeResolve(workspaceRoot: string, relativePath: string): string | null {
     const normalized = relativePath.replace(/\\/g, '/').replace(/^\/+/, '');
     const abs = path.resolve(workspaceRoot, normalized);
-    const rel = path.relative(workspaceRoot, abs);
-    if (rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel))) {
-        return abs;
+    return isInside(workspaceRoot, abs) ? abs : null;
+}
+
+const DOT_SEGMENT_ERROR = 'The preview does not read paths with a segment starting with "." (dotfiles, dot-folders).';
+const SYMLINK_ESCAPE_ERROR = 'Resolved path escaped the workspace through a symlink.';
+
+/** Any segment starting with "." -- `.env`, `.git/config`, `a/.ssh/id`, and also `.`/`..`. */
+function hasDotSegment(relativePath: string): boolean {
+    return relativePath.split(/[\\/]+/).some(segment => segment.startsWith('.'));
+}
+
+/** The workspace root with symlinks resolved, so realpath checks compare like with like. */
+function realpathOrSelf(dir: string): string {
+    try {
+        return fs.realpathSync(dir);
+    } catch {
+        return dir;
     }
-    return null;
+}
+
+/**
+ * Where `abs` really lives: its real path when that is inside the (real)
+ * workspace root, 'outside' when a symlink leads out of it, 'missing' when
+ * nothing is there. `safeResolve` only checks the path as written; this
+ * catches a link inside the workspace that points at, say, ~/.ssh.
+ */
+async function resolveReal(realRoot: string, abs: string): Promise<{ real: string } | 'outside' | 'missing'> {
+    let real: string;
+    try {
+        real = await fsp.realpath(abs);
+    } catch {
+        return 'missing';
+    }
+    return isInside(realRoot, real) ? { real } : 'outside';
 }
 
 function notebookRelativeDir(notebookRelPath: string): string {
@@ -142,6 +184,7 @@ async function walkNotebooks(root: string): Promise<string[]> {
 
 async function snapshotOne(
     workspaceRoot: string,
+    realWorkspaceRoot: string,
     notebookRelPath: string,
     request: SnapshotRequest
 ): Promise<WorkspaceFileSnapshotEntry> {
@@ -166,11 +209,32 @@ async function snapshotOne(
             error: 'Resolved path escaped the workspace.'
         };
     }
+    if (hasDotSegment(workspaceResolvedPath)) {
+        return {
+            path: request.requestPath,
+            resolvedPath: workspaceResolvedPath,
+            exists: false,
+            error: DOT_SEGMENT_ERROR
+        };
+    }
+
+    const resolved = await resolveReal(realWorkspaceRoot, abs);
+    if (resolved === 'outside') {
+        return {
+            path: request.requestPath,
+            resolvedPath: workspaceResolvedPath,
+            exists: false,
+            error: SYMLINK_ESCAPE_ERROR
+        };
+    }
+    if (resolved === 'missing') {
+        return { path: request.requestPath, resolvedPath: workspaceResolvedPath, exists: false };
+    }
 
     try {
         // Follow symlinks like the extension's vscode.workspace.fs.stat, so a
         // symlink to a file/dir reports the target's type (not 'symlink').
-        const stat = await fsp.stat(abs);
+        const stat = await fsp.stat(resolved.real);
         const type = fileTypeFromStat(stat);
         const snapshot: WorkspaceFileSnapshotEntry = {
             path: request.requestPath,
@@ -181,12 +245,12 @@ async function snapshotOne(
         };
         if (type === 'file') {
             if (stat.size <= MAX_FILE_SNAPSHOT_BYTES) {
-                snapshot.content = await fsp.readFile(abs, 'utf-8');
+                snapshot.content = await fsp.readFile(resolved.real, 'utf-8');
             } else {
                 snapshot.error = fileTooLargeError();
             }
         } else if (type === 'directory') {
-            const entries = await fsp.readdir(abs, { withFileTypes: true });
+            const entries = await fsp.readdir(resolved.real, { withFileTypes: true });
             snapshot.entries = entries.map(entry => ({
                 name: entry.name,
                 type: entry.isDirectory() ? 'directory' : entry.isFile() ? 'file' : entry.isSymbolicLink() ? 'symlink' : 'unknown'
@@ -232,6 +296,7 @@ export interface WebnbDevServerOptions {
 
 export function webnbDevServer(options: WebnbDevServerOptions): Plugin {
     const workspaceRoot = options.workspaceRoot;
+    const realWorkspaceRoot = realpathOrSelf(workspaceRoot);
 
     let broadcastFsChange: (event: 'change' | 'add' | 'unlink', file: string) => boolean = () => false;
 
@@ -296,11 +361,17 @@ export function webnbDevServer(options: WebnbDevServerOptions): Plugin {
                     if (route === '/__webnb/api/notebook') {
                         const rel = parsed.searchParams.get('path') || '';
                         const abs = safeResolve(workspaceRoot, rel);
-                        if (!abs || !rel.toLowerCase().endsWith(WEBNB_EXTENSION)) {
+                        // The listing never includes dot-folders, so neither does this.
+                        if (!abs || hasDotSegment(rel) || !rel.toLowerCase().endsWith(WEBNB_EXTENSION)) {
                             return sendJson(res, 400, { error: 'Invalid notebook path.' });
                         }
+                        const resolved = await resolveReal(realWorkspaceRoot, abs);
+                        if (resolved === 'outside') {
+                            return sendJson(res, 403, { error: SYMLINK_ESCAPE_ERROR });
+                        }
                         try {
-                            const content = await fsp.readFile(abs, 'utf-8');
+                            if (resolved === 'missing') { throw new Error('missing'); }
+                            const content = await fsp.readFile(resolved.real, 'utf-8');
                             return sendJson(res, 200, { path: rel, content });
                         } catch {
                             return sendJson(res, 404, { error: 'Notebook not found.' });
@@ -318,7 +389,7 @@ export function webnbDevServer(options: WebnbDevServerOptions): Plugin {
                         const requests: SnapshotRequest[] = Array.isArray(body.requests) ? body.requests : [];
                         const result: Record<string, WorkspaceFileSnapshotEntry> = {};
                         for (const request of requests) {
-                            result[request.requestPath] = await snapshotOne(workspaceRoot, notebookPath, request);
+                            result[request.requestPath] = await snapshotOne(workspaceRoot, realWorkspaceRoot, notebookPath, request);
                         }
                         return sendJson(res, 200, { files: result });
                     }
@@ -330,14 +401,24 @@ export function webnbDevServer(options: WebnbDevServerOptions): Plugin {
                             res.statusCode = 400;
                             return res.end('Invalid asset path.');
                         }
+                        if (hasDotSegment(rel)) {
+                            res.statusCode = 403;
+                            return res.end(DOT_SEGMENT_ERROR);
+                        }
+                        const resolved = await resolveReal(realWorkspaceRoot, abs);
+                        if (resolved === 'outside') {
+                            res.statusCode = 403;
+                            return res.end(SYMLINK_ESCAPE_ERROR);
+                        }
                         try {
-                            const stat = await fsp.stat(abs);
+                            if (resolved === 'missing') { throw new Error('missing'); }
+                            const stat = await fsp.stat(resolved.real);
                             if (!stat.isFile()) { throw new Error('not a file'); }
                             const ext = path.extname(abs).toLowerCase();
                             res.statusCode = 200;
                             res.setHeader('Content-Type', ASSET_CONTENT_TYPES[ext] || 'application/octet-stream');
                             res.setHeader('Cache-Control', 'no-cache');
-                            const stream = fs.createReadStream(abs);
+                            const stream = fs.createReadStream(resolved.real);
                             stream.on('error', () => {
                                 if (!res.headersSent) {
                                     res.statusCode = 500;

@@ -342,6 +342,21 @@ body {
     border-color: var(--accent);
 }
 
+/* Shown when the page was opened with ?solutions (see main.ts). */
+.mode-chip {
+    align-self: center;
+    padding: 4px 10px;
+    border: 1px solid var(--accent);
+    border-radius: 999px;
+    color: var(--accent);
+    font-size: 12px;
+    white-space: nowrap;
+}
+
+.mode-chip[hidden] {
+    display: none;
+}
+
 /* Three glyph buttons welded into one segmented control: auto / light / dark. */
 .theme-picker {
     display: flex;

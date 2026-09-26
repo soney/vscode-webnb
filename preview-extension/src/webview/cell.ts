@@ -11,7 +11,7 @@ import {
     annotateBlockLines,
     renderMarkdownBlock,
     resolveRelativeAssets,
-    SOURCE_LINE_ATTRIBUTE,
+    SOURCE_LINE_OFFSET_ATTRIBUTE,
     type AssetResolver
 } from './markdown';
 import { escapeHtml, highlightToLines } from '@webnb/client/syntaxHighlight';
@@ -47,6 +47,8 @@ export interface CellDeps {
     setSelection(stableKey: string, content: string): void;
     /** Move the source editor to a line in the document. */
     jumpToLine(line: number): void;
+    /** A link clicked in a markup cell, as written (another notebook, a `#section`, a file). */
+    openLink(href: string): void;
     openWorkspaceFile(path: string, line?: number): void;
     highlightWorkspaceLines(target: WorkspaceLineTarget): void;
 }
@@ -98,6 +100,7 @@ export class CellView {
     private readonly deps: CellDeps;
     private host?: CellOutputHost;
     private outputEl?: HTMLElement;
+    private gotoButton?: HTMLButtonElement;
     private runToken = 0;
     private hasRun = false;
 
@@ -140,6 +143,13 @@ export class CellView {
     /** Reuse this view for an identical cell that moved in the document. */
     adoptPosition(model: PreviewCell): void {
         this.model = model;
+        this.updateGotoTitle();
+    }
+
+    private updateGotoTitle(): void {
+        if (this.gotoButton) {
+            this.gotoButton.title = `Reveal line ${this.model.startLine + 1} in the editor`;
+        }
     }
 
     setActive(active: boolean): void {
@@ -167,20 +177,30 @@ export class CellView {
 
         // The most specific tagged ancestor: a source line or a rendered block,
         // falling back to the cell itself for anything that carries no tag.
-        const anchor = target.closest<HTMLElement>(`[${SOURCE_LINE_ATTRIBUTE}]`);
-        const tagged = Number(anchor?.getAttribute(SOURCE_LINE_ATTRIBUTE));
-        this.deps.jumpToLine(Number.isFinite(tagged) && anchor ? tagged : this.model.startLine);
+        // Tags are offsets into the cell, so this is right even after lines
+        // were added above a cell whose own text did not change.
+        const anchor = target.closest<HTMLElement>(`[${SOURCE_LINE_OFFSET_ATTRIBUTE}]`);
+        const offset = Number(anchor?.getAttribute(SOURCE_LINE_OFFSET_ATTRIBUTE));
+        this.deps.jumpToLine(this.model.startLine + (anchor && Number.isFinite(offset) ? offset : 0));
     }
 
     // ---- markup ------------------------------------------------------------
 
     private buildMarkupCell(): void {
         this.element.innerHTML = renderMarkdownBlock(this.model.value);
-        annotateBlockLines(this.element, this.model.value, this.model.startLine);
+        annotateBlockLines(this.element, this.model.value);
         resolveRelativeAssets(this.element, this.deps.assets);
-        this.element.querySelectorAll<HTMLElement>('[data-webnb-workspace-link]').forEach(link => {
-            link.addEventListener('click', () => {
-                this.deps.openWorkspaceFile(link.dataset.webnbWorkspaceLink!);
+        this.element.querySelectorAll<HTMLElement>('[data-webnb-link]').forEach(link => {
+            const follow = (event: Event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                this.deps.openLink(link.dataset.webnbLink!);
+            };
+            link.addEventListener('click', follow);
+            link.addEventListener('keydown', event => {
+                if (event.key === 'Enter') {
+                    follow(event);
+                }
             });
         });
     }
@@ -231,7 +251,8 @@ export class CellView {
         gotoButton.type = 'button';
         gotoButton.className = 'wnb-link-button';
         gotoButton.textContent = 'Go to source';
-        gotoButton.title = `Reveal line ${this.model.startLine + 1} in the editor`;
+        this.gotoButton = gotoButton;
+        this.updateGotoTitle();
         gotoButton.addEventListener('click', () => this.deps.jumpToLine(this.model.startLine));
 
         toolbar.append(spacer, sourceToggle, gotoButton);
@@ -267,15 +288,15 @@ export class CellView {
 
     /**
      * The cell's source, one tagged row per line, so clicking a line goes to
-     * that line. The body starts one line after the opening fence.
+     * that line. The body starts one line after the opening fence, so body
+     * line N sits N + 1 lines below the cell's start.
      */
     private sourceHtml(highlightLanguage: string | undefined): string {
         const lines = highlightToLines(this.model.value, highlightLanguage)
             ?? this.model.value.split('\n').map(escapeHtml);
-        const firstBodyLine = this.model.startLine + 1;
         return lines
-            .map((html, offset) =>
-                `<span class="wnb-source-line" ${SOURCE_LINE_ATTRIBUTE}="${firstBodyLine + offset}">${html}</span>`)
+            .map((html, index) =>
+                `<span class="wnb-source-line" ${SOURCE_LINE_OFFSET_ATTRIBUTE}="${index + 1}">${html}</span>`)
             .join('\n');
     }
 
@@ -356,8 +377,7 @@ export class CellView {
         }
 
         try {
-            // The host applies the same default-capture the kernel does and
-            // snapshots whatever files the cell's checks name.
+            // The host snapshots whatever files the cell's checks name.
             const snapshot = await this.deps.requestSnapshot(this.model.languageId, this.model.value, addons);
             if (token !== this.runToken) {
                 return; // superseded by a newer run

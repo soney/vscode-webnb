@@ -1,6 +1,6 @@
 import './tddBridge';
 import * as assert from 'assert';
-import { isRendererMessage } from '../../shared/protocol';
+import { isRendererMessage, isRendererWritableAddon } from '../../shared/protocol';
 
 suite('shared/protocol', () => {
     suite('isRendererMessage', () => {
@@ -9,7 +9,7 @@ suite('shared/protocol', () => {
                 ['refreshCell', { type: 'webnb.refreshCell', cellUri: 'cell:0' }],
                 ['resetCellSource', { type: 'webnb.resetCellSource', cellUri: 'cell:0' }],
                 ['upsertCellAddon', { type: 'webnb.upsertCellAddon', cellUri: 'cell:0', addonType: 'selection', content: '{}' }],
-                ['upsertCellAddon with empty content', { type: 'webnb.upsertCellAddon', cellUri: 'cell:0', addonType: 't', content: '' }],
+                ['upsertCellAddon with terminal history', { type: 'webnb.upsertCellAddon', cellUri: 'cell:0', addonType: 'history', content: '{"commands":["npm init -y","ls"]}' }],
                 ['openWorkspaceFile without line', { type: 'webnb.openWorkspaceFile', cellUri: 'cell:0', path: 'src/a.ts' }],
                 ['openWorkspaceFile with line', { type: 'webnb.openWorkspaceFile', cellUri: 'cell:0', path: 'src/a.ts', line: 3 }],
                 ['highlightWorkspaceLines minimal', { type: 'webnb.highlightWorkspaceLines', cellUri: 'cell:0' }],
@@ -60,7 +60,11 @@ suite('shared/protocol', () => {
                 ['resetCellSource with numeric cellUri', { type: 'webnb.resetCellSource', cellUri: 5 }],
                 ['upsertCellAddon without content', { type: 'webnb.upsertCellAddon', cellUri: 'c', addonType: 't' }],
                 ['upsertCellAddon without addonType', { type: 'webnb.upsertCellAddon', cellUri: 'c', content: 'x' }],
-                ['upsertCellAddon with non-string content', { type: 'webnb.upsertCellAddon', cellUri: 'c', addonType: 't', content: 7 }],
+                ['upsertCellAddon with non-string content', { type: 'webnb.upsertCellAddon', cellUri: 'c', addonType: 'selection', content: 7 }],
+                ['upsertCellAddon of any other addon type', { type: 'webnb.upsertCellAddon', cellUri: 'c', addonType: 'test', content: '{}' }],
+                ['upsertCellAddon of a +default', { type: 'webnb.upsertCellAddon', cellUri: 'c', addonType: 'default', content: '{}' }],
+                ['upsertCellAddon with empty content', { type: 'webnb.upsertCellAddon', cellUri: 'c', addonType: 'selection', content: '' }],
+                ['upsertCellAddon with content that is not JSON', { type: 'webnb.upsertCellAddon', cellUri: 'c', addonType: 'history', content: 'ls' }],
                 ['openWorkspaceFile without path', { type: 'webnb.openWorkspaceFile', cellUri: 'c' }],
                 ['openWorkspaceFile with string line', { type: 'webnb.openWorkspaceFile', cellUri: 'c', path: 'p', line: '3' }],
                 ['highlightWorkspaceLines without cellUri', { type: 'webnb.highlightWorkspaceLines' }],
@@ -82,6 +86,25 @@ suite('shared/protocol', () => {
                     assert.strictEqual(isRendererMessage(message), false);
                 });
             }
+        });
+    });
+
+    suite('isRendererWritableAddon', () => {
+        test('accepts JSON +selection and +history', () => {
+            assert.strictEqual(isRendererWritableAddon('selection', '{"selected":[0,2]}'), true);
+            assert.strictEqual(isRendererWritableAddon('history', '{\n  "commands": []\n}'), true);
+        });
+
+        test('rejects other types, including case and prefix variants', () => {
+            for (const addonType of ['test', 'default', 'solution', 'Selection', '+selection', 'mcq-selection', '']) {
+                assert.strictEqual(isRendererWritableAddon(addonType, '{}'), false, addonType);
+            }
+        });
+
+        test('rejects content with a fence line, even when it would parse', () => {
+            assert.strictEqual(isRendererWritableAddon('history', '```\n{}'), false);
+            assert.strictEqual(isRendererWritableAddon('history', '{}\n  ~~~'), false);
+            assert.strictEqual(isRendererWritableAddon('selection', '{"a":"```"}'), true, 'a backtick run inside a string is not a fence line');
         });
     });
 });

@@ -40,6 +40,16 @@ would open in VS Code). Resolution order:
 
 `webnb.config.json` is git-ignored because the path is machine-specific.
 
+## Solutions mode
+
+Open the preview with `?solutions` in the URL (for example
+`http://localhost:5173/?solutions`) and every HTML, CSS, JavaScript, Node, and
+React cell that has a `+solution` starts from that solution instead of its
+source, as if a learner had solved every exercise. A "Solutions mode" chip in
+the header shows it is on; browser edits made in this mode are stored apart
+from normal-mode edits. `scripts/verify-notebooks.js --solutions` checks a whole
+workspace this way.
+
 ## How browser edits work
 
 | You edit…                         | Stored in            | Touches disk? |
@@ -50,6 +60,13 @@ would open in VS Code). Resolution order:
 
 - A cell with a browser edit shows an **"edited in browser"** badge and a
   **Reset to disk** button.
+- Starter code follows the extension's rule. A code cell with no `+default`
+  gets one on its first edit: the text it had when it opened, even if empty
+  (VS Code writes it into the file; here it is kept with the browser edits).
+  An existing `+default`, empty or not, is never changed, and running a cell
+  never creates one. The renderer's **Reset code** puts the starter back and
+  re-runs; a cell with no starter ignores it. **Reset to disk** also drops a
+  captured starter.
 - The **Virtual Files** panel (top-right) is where you create/edit the files an
   exercise checklist expects. Reads fall through to disk, so a `{external}` check
   for a file that already exists on disk still sees it; anything you create or
@@ -60,6 +77,11 @@ would open in VS Code). Resolution order:
 - This is a **dev-only** tool. The dev server (a Vite plugin) provides the file
   API and live-reload; there is no production build.
 - It is intentionally excluded from the packaged extension (`.vscodeignore`).
+- The dev server binds `localhost`. Its file API only reads inside the
+  workspace (symlinks are resolved first) and never serves a path with a
+  segment starting with `.`, so `.env`, `.git/`, and key files stay private
+  even if you start it with `--host`. The flip side: a notebook file check of
+  a dotfile reports an error here, although VS Code would read the file.
 
 ## Known limitations
 

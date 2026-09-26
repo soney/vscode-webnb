@@ -69,11 +69,20 @@ export interface PreviewActiveLineMessage {
     line: number;
 }
 
+/**
+ * Scroll to a 0-based line even with scroll sync off: the reader followed a
+ * `#section` link into this same notebook.
+ */
+export interface PreviewShowLineMessage {
+    type: 'showLine';
+    line: number;
+}
+
 /** Reply to a `snapshotRequest`. */
 export interface PreviewSnapshotResultMessage {
     type: 'snapshotResult';
     requestId: number;
-    /** Addons after default-capture is applied, matching notebook execution. */
+    /** The cell's addons, unchanged: running never fills a `+default`. */
     addons: Addon[];
     files: Record<string, WorkspaceFileSnapshotEntry>;
 }
@@ -97,9 +106,11 @@ export interface PreviewRunAllMessage {
 }
 
 /**
- * The document does not parse right now (half-typed addon block, `+id=`
- * reference to a cell that does not exist yet). The page keeps showing the last
- * good parse and surfaces this; `message` is undefined once it parses again.
+ * The document is malformed right now (an unclosed fence, a half-typed addon
+ * block, a `+id=` reference to a cell that does not exist yet): the parser's
+ * warnings, one per line, which the page shows above the cells. `message` is
+ * undefined once the document is clean again. (If parsing ever throws, this
+ * carries the error and the page keeps the last good parse.)
  */
 export interface PreviewParseErrorMessage {
     type: 'parseError';
@@ -112,6 +123,7 @@ export type PreviewHostMessage =
     | PreviewParseErrorMessage
     | PreviewScrollToLineMessage
     | PreviewActiveLineMessage
+    | PreviewShowLineMessage
     | PreviewSnapshotResultMessage
     | PreviewWorkspaceChangedMessage
     | PreviewConfigMessage
@@ -150,6 +162,16 @@ export interface PreviewOpenWorkspaceFileMessage {
     line?: number;
 }
 
+/**
+ * A link clicked in a markup cell, exactly as written: another notebook
+ * (`other.webnb#section`, `../x.webnb`, `%20` escapes), a `#section` of this
+ * one, or a workspace file. The host resolves it (see links.ts).
+ */
+export interface PreviewOpenLinkMessage {
+    type: 'openLink';
+    href: string;
+}
+
 export interface PreviewHighlightWorkspaceLinesMessage {
     type: 'highlightWorkspaceLines';
     path?: string;
@@ -162,5 +184,6 @@ export type PreviewWebviewMessage =
     | PreviewSnapshotRequestMessage
     | PreviewRevealLineMessage
     | PreviewJumpToLineMessage
+    | PreviewOpenLinkMessage
     | PreviewOpenWorkspaceFileMessage
     | PreviewHighlightWorkspaceLinesMessage;

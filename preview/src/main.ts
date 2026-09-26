@@ -27,6 +27,17 @@ function emptyNode(name: string): TreeNode {
 
 const SOLUTIONS_STORAGE_KEY = 'webnb-preview-solutions';
 
+/**
+ * `?solutions` (or `?solutions=1`) opens every notebook with each runnable
+ * cell's `+solution` in place of its source, so the whole notebook can be
+ * checked the way a learner who solved it would see it. `verify-notebooks
+ * --solutions` drives the corpus through this. `?solutions=0` is off.
+ */
+function readSolutionsMode(): boolean {
+    const value = new URLSearchParams(location.search).get('solutions');
+    return value !== null && value !== '0' && value.toLowerCase() !== 'false';
+}
+
 /** Reveal buttons are on unless explicitly toggled off (mirrors the
  * extension's `webnb.allowRevealingSolutions` default). localStorage throws
  * in some privacy modes; the default applies then. */
@@ -48,6 +59,8 @@ class App {
     private currentPath?: string;
     /** Mirrors VS Code's `webnb.allowRevealingSolutions` setting; on by default. */
     private showSolutions = readStoredSolutions();
+    /** Cells start from their `+solution` (see readSolutionsMode). */
+    private readonly solutionsMode = readSolutionsMode();
 
     private treeEl!: HTMLElement;
     private crumbsEl!: HTMLElement;
@@ -114,6 +127,7 @@ class App {
                     <header class="main-header">
                         <div class="crumbs"></div>
                         <div class="header-actions">
+                            <span class="mode-chip" hidden title="Opened with ?solutions: runnable cells show their +solution instead of their source. Drop the query parameter to leave this mode.">Solutions mode</span>
                             <div class="theme-picker" role="group" aria-label="Theme">
                                 <button type="button" data-choice="auto" title="Follow the system theme" aria-label="Auto theme">◐</button>
                                 <button type="button" data-choice="light" title="Always light" aria-label="Light theme">☀</button>
@@ -134,6 +148,7 @@ class App {
         this.paneEl = this.root.querySelector('.notebook-pane') as HTMLElement;
         this.statusEl = this.root.querySelector('.status') as HTMLElement;
         this.resetCellsButton = this.root.querySelector('.btn-reset-cells') as HTMLButtonElement;
+        (this.root.querySelector('.mode-chip') as HTMLElement).hidden = !this.solutionsMode;
 
         const search = this.root.querySelector('.sidebar-search') as HTMLInputElement;
         search.addEventListener('input', () => {
@@ -284,7 +299,8 @@ class App {
         const view = new NotebookView(summary, {
             workspaceId: this.workspaceId,
             vfs: this.vfs,
-            showSolutions: () => this.showSolutions
+            showSolutions: () => this.showSolutions,
+            solutionsMode: this.solutionsMode
         });
         this.currentView = view;
         this.paneEl.innerHTML = '';

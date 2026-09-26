@@ -9,7 +9,7 @@
  */
 import { fetchDiskSnapshot } from './api';
 import { getRequestedFilePaths } from '../../src/shared/filePaths';
-import { getDefaultCaptureAddons, isExternalCheckLanguage, runsOnOpen } from '../../src/shared/addons';
+import { isExternalCheckLanguage, runsOnOpen } from '../../src/shared/addons';
 import type { VirtualFs } from './vfs';
 import type { Addon, WebnbOutputValue, WorkspaceFileSnapshotEntry } from './types';
 import type { CellModel } from './notebookModel';
@@ -60,7 +60,9 @@ export async function buildOutputValue(params: BuildOutputParams): Promise<Webnb
     return {
         source,
         language: languageId,
-        addons: getDefaultCaptureAddons(addons, source).addons,
+        // As given: running never creates or fills a `+default` (the kernel no
+        // longer does; a starter is captured on a cell's first edit instead).
+        addons,
         files,
         cellUri,
         checkedAt: Date.now(),

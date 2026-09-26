@@ -7,19 +7,31 @@
  *   from this repo:       npm run verify:notebooks -- /path/to/course
  *
  * Passing means the workspace is structurally healthy: notebooks are found,
- * every one loads and renders (no parse or load errors), and nothing throws
- * an uncaught page error. Checks that ship unsatisfied on purpose -- exercise
+ * every one loads (no parse or load errors), every code cell renders (render()
+ * neither throws nor leaves the cell without output), and nothing throws an
+ * uncaught page error. Checks that ship unsatisfied on purpose -- exercise
  * checklists, tests the learner must make pass -- do NOT fail verification;
- * they are listed as warnings, and --strict-feedback promotes them to failures.
+ * they are listed as warnings, as are errors a cell's code throws later (a
+ * timer, a listener, a rejected promise), which the renderer shows in that
+ * cell's console as "Uncaught ...". --strict-feedback promotes all of these
+ * to failures.
+ *
+ * --solutions renders every HTML/CSS/JavaScript/Node/React cell with its
+ * +solution in place of its source (the preview's ?solutions mode), and then
+ * also fails on error feedback or an uncaught error from any cell that HAS a
+ * +solution: the answer the notebook ships must pass its own checks. Cells
+ * without a +solution are left as written and keep the usual rules, since some
+ * are error demos on purpose.
  *
  * With --baseline the run is also compared cell-by-cell against a saved
  * capture, giving a course repo the same golden-diff regression workflow this
  * repo uses for its sample notebooks, with the baseline committed in the
- * course repo itself.
+ * course repo itself. (A --solutions run needs a baseline of its own.)
  *
  * Usage: verify-notebooks.js [workspace] [options]
  *   workspace              folder holding .webnb files (default: current dir)
  *   --notebook <substr>    only verify notebooks whose path contains substr
+ *   --solutions            render cells from their +solution (see above)
  *   --baseline <file>      compare against a baseline capture (JSON)
  *   --update-baseline      write --baseline from this run instead of comparing
  *   --strict-feedback      fail when a cell reports error-category feedback
@@ -42,13 +54,14 @@ function usageError(message) {
 
 function firstLine(text, max = 120) {
     const line = (text || '').split('\n')[0];
-    return line.length > max ? line.slice(0, max) + '…' : line;
+    return line.length > max ? line.slice(0, max) + '...' : line;
 }
 
 async function main() {
     const { values, positionals } = parseArgs({
         options: {
             notebook: { type: 'string' },
+            solutions: { type: 'boolean' },
             baseline: { type: 'string' },
             'update-baseline': { type: 'boolean' },
             'strict-feedback': { type: 'boolean' },
@@ -80,11 +93,12 @@ async function main() {
         usageError(`Not a valid port: ${values.port}`);
     }
 
-    console.log(`Verifying notebooks in ${workspace}`);
+    const solutions = !!values.solutions;
+    console.log(`Verifying notebooks in ${workspace}${solutions ? ' (cells rendered from their +solution)' : ''}`);
     const server = await startPreview(port, workspace);
     let capture;
     try {
-        capture = await captureAll(server.url, { filter: values.notebook });
+        capture = await captureAll(server.url, { filter: values.notebook, solutions });
     } finally {
         await server.stop();
     }
@@ -108,17 +122,42 @@ async function main() {
         for (const error of pageErrorsByNotebook[notebookPath] || []) {
             problems.push(`uncaught page error: ${firstLine(error)}`);
         }
-        problems.forEach(problem => failures.push(`${notebookPath}: ${problem}`));
 
+        // Indexes count code cells only, in document order (the --json and
+        // --baseline captures use the same numbering).
         result[notebookPath].forEach((cell, index) => {
+            const where = `[${index}] (${cell.language})`;
+            if (cell.state === 'render-error') {
+                problems.push(`${where} render error: ${firstLine(cell.renderError)}`);
+            } else if (cell.state === 'not-rendered') {
+                problems.push(`${where} never rendered`);
+            }
+            // Error feedback, and errors the cell's code threw asynchronously
+            // (shown in its console as "Uncaught ..."), are what the learner
+            // sees go wrong: warnings, since lessons demonstrate errors on
+            // purpose -- except from a +solution in --solutions mode.
+            const complaints = [];
             if ((cell.feedbackKinds || []).includes('error')) {
-                const target = values['strict-feedback'] ? failures : warnings;
-                target.push(`${notebookPath}[${index}]: error feedback: "${firstLine(cell.feedback)}"`);
+                complaints.push({ kind: 'error feedback', text: cell.feedback });
+            }
+            for (const line of cell.uncaught || []) {
+                complaints.push({ kind: 'uncaught error', text: line });
+            }
+            for (const { kind, text } of complaints) {
+                const fromSolution = solutions && cell.hasSolution;
+                if (fromSolution || values['strict-feedback']) {
+                    problems.push(`${where} ${kind}${fromSolution ? ' from its +solution' : ''}: "${firstLine(text)}"`);
+                } else {
+                    warnings.push(`${notebookPath}${where}: ${kind}: "${firstLine(text)}"`);
+                }
             }
         });
+        problems.forEach(problem => failures.push(problem.startsWith('[')
+            ? `${notebookPath}${problem}`
+            : `${notebookPath}: ${problem}`));
 
         const status = problems.length > 0 ? 'FAIL' : 'ok  ';
-        console.log(`  ${status} ${notebookPath} (${result[notebookPath].length} cells)`);
+        console.log(`  ${status} ${notebookPath} (${result[notebookPath].length} code cells)`);
     }
 
     if (values.json) {
@@ -158,7 +197,7 @@ async function main() {
         process.exitCode = 1;
         return;
     }
-    console.log(`\nOK: ${notebookPaths.length} notebook(s), ${totalCells} cells rendered, no problems.`);
+    console.log(`\nOK: ${notebookPaths.length} notebook(s), ${totalCells} code cells rendered, no problems.`);
 }
 
 main().then(

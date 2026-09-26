@@ -8,10 +8,10 @@
  * to the document.
  */
 import * as vscode from 'vscode';
-import { getDefaultCaptureAddons } from '@webnb/shared/addons';
 import type { Addon } from '@webnb/shared/protocol';
 import { parseDocumentCells } from './parseDocument';
 import { snapshotWorkspaceFiles } from './documentSnapshots';
+import { followLink } from './links';
 import { openWorkspaceFile, WorkspaceLineHighlighter } from './workspaceHighlight';
 import type {
     PreviewCell,
@@ -59,15 +59,6 @@ interface PanelHost {
     onDisposed(panel: PreviewPanel): void;
     /** The panel took focus, so it is the one that should follow the editor. */
     onActivated(panel: PreviewPanel): void;
-}
-
-function makeNonce(): string {
-    const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-    let nonce = '';
-    for (let index = 0; index < 32; index++) {
-        nonce += alphabet.charAt(Math.floor(Math.random() * alphabet.length));
-    }
-    return nonce;
 }
 
 /** One preview panel. The document it shows can change; see `bind`. */
@@ -198,18 +189,27 @@ class PreviewPanel implements vscode.Disposable {
 
     private buildHtml(): string {
         const webview = this.panel.webview;
-        const nonce = makeNonce();
         const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, 'out', 'webview.js'));
         // Notebook cells run author-written JavaScript through eval()/new Function(),
         // exactly as they do in the notebook renderer, so 'unsafe-eval' is required.
         // Inline styles cover author <style> blocks and style attributes.
+        //
+        // 'unsafe-inline' lets inline event handlers run (`<button onclick=...>`,
+        // `<input oninput=...>`): the notebook renderer supports them and course
+        // notebooks rely on them (C1/M2 08's color sliders, C1/M3 03's inline-JS
+        // lesson, C3/M4 10's WCAG demo), and a preview that silently drops them
+        // is not showing what a reader sees. It cannot coexist with a script
+        // nonce (a nonce switches 'unsafe-inline' off), so the bundle is
+        // allowed by source instead. The cost is defense in depth against
+        // markup injected from outside the author's content; it adds nothing a
+        // cell cannot already do, since every cell's code is evaluated anyway.
         const csp = [
             `default-src 'none'`,
             `img-src ${webview.cspSource} https: data: blob:`,
             `media-src ${webview.cspSource} https: data: blob:`,
             `font-src ${webview.cspSource} https: data:`,
             `style-src ${webview.cspSource} 'unsafe-inline'`,
-            `script-src 'nonce-${nonce}' 'unsafe-eval'`,
+            `script-src ${webview.cspSource} 'unsafe-inline' 'unsafe-eval'`,
             `connect-src ${webview.cspSource} https: data:`
         ].join('; ');
 
@@ -223,7 +223,7 @@ class PreviewPanel implements vscode.Disposable {
 </head>
 <body>
     <div id="app"></div>
-    <script nonce="${nonce}" src="${scriptUri}"></script>
+    <script src="${scriptUri}"></script>
 </body>
 </html>`;
     }
@@ -235,15 +235,16 @@ class PreviewPanel implements vscode.Disposable {
     // ---- document -> preview -----------------------------------------------
 
     /**
-     * Parse the document, remembering the last text that parsed. A notebook
-     * mid-edit is often briefly invalid (an addon block whose code block is not
-     * typed yet), and blanking the preview on every such keystroke would be
-     * useless.
+     * Parse the document. A notebook mid-edit is often briefly malformed (an
+     * addon block whose code block is not typed yet): the parser renders such
+     * a block as text and warns, and the warnings go in the banner above the
+     * cells. Should the parser ever throw, the last good render stays up.
      */
     private cellsFor(text: string): PreviewCell[] {
+        const warnings: string[] = [];
         try {
-            this.lastGoodCells = parseDocumentCells(text);
-            this.parseError = undefined;
+            this.lastGoodCells = parseDocumentCells(text, message => warnings.push(message));
+            this.parseError = warnings.length > 0 ? warnings.join('\n') : undefined;
         } catch (error) {
             this.parseError = error instanceof Error ? error.message : String(error);
         }
@@ -353,18 +354,20 @@ class PreviewPanel implements vscode.Disposable {
                 return;
 
             case 'snapshotRequest': {
+                // Addons go back as they came: running never creates or fills a
+                // `+default` (the notebook captures one on a cell's first edit,
+                // and this preview never edits cells).
                 const addons = message.addons as Addon[];
-                const captured = getDefaultCaptureAddons(addons, message.source);
                 const files = await snapshotWorkspaceFiles(
                     this.document.uri,
-                    captured.addons,
+                    addons,
                     message.language,
                     message.source
                 );
                 this.post({
                     type: 'snapshotResult',
                     requestId: message.requestId,
-                    addons: captured.addons,
+                    addons,
                     files
                 });
                 return;
@@ -394,6 +397,14 @@ class PreviewPanel implements vscode.Disposable {
                 return;
             }
 
+            case 'openLink':
+                await followLink(message.href, {
+                    document: this.document,
+                    viewColumn: this.editor()?.viewColumn,
+                    showLine: line => this.showLine(line)
+                });
+                return;
+
             case 'openWorkspaceFile':
                 await openWorkspaceFile(this.document.uri, message.path, message.line);
                 return;
@@ -401,6 +412,20 @@ class PreviewPanel implements vscode.Disposable {
             case 'highlightWorkspaceLines':
                 this.highlighter.highlight(this.document.uri, message.path, message.ranges, message.line);
                 return;
+        }
+    }
+
+    /**
+     * A `#section` link into this notebook: the preview scrolls there, and so
+     * does the source editor when scroll sync pairs them.
+     */
+    private showLine(line: number): void {
+        this.post({ type: 'showLine', line });
+        const editor = this.editor();
+        if (editor && this.config.scrollSync) {
+            const target = this.clampLine(editor.document, line);
+            this.suppressEditorSyncUntil = Date.now() + SCROLL_QUIET_MS;
+            editor.revealRange(new vscode.Range(target, 0, target, 0), vscode.TextEditorRevealType.AtTop);
         }
     }
 

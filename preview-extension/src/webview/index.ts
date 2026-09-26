@@ -191,6 +191,12 @@ class PreviewApp {
                 }
                 return;
 
+            case 'showLine':
+                // A `#section` link in this notebook: the reader asked for it,
+                // so it scrolls whether or not scroll sync is on.
+                this.applyScrollToLine(message.line);
+                return;
+
             case 'activeLine':
                 this.markActiveLine(message.line);
                 return;
@@ -236,6 +242,7 @@ class PreviewApp {
                 this.saveState();
             },
             jumpToLine: line => this.post({ type: 'jumpToLine', line }),
+            openLink: href => this.post({ type: 'openLink', href }),
             openWorkspaceFile: (path, line) => this.post({ type: 'openWorkspaceFile', path, line }),
             highlightWorkspaceLines: message => this.post({ type: 'highlightWorkspaceLines', ...message })
         };

@@ -30,20 +30,21 @@ function toSpanInput(raw: RawNotebookCell): SpanInput {
 /**
  * Parse a document into preview cells.
  *
- * Throws whatever parseMarkdown throws: a half-typed notebook can be
- * genuinely unparseable (an addon block before any code block, a `+id=`
- * reference to a cell that does not exist yet), and the panel keeps showing
- * the last good parse rather than an empty preview.
+ * A half-typed notebook is often malformed (a fence not closed yet, an addon
+ * block with no code block above it, a `+id=` naming a cell that does not
+ * exist yet). The parser shows such a block as plain text and reports it to
+ * `onWarning`, exactly as the notebook does on open. Anything it still throws
+ * propagates, and the panel then keeps showing the last good parse.
  */
-export function parseDocumentCells(text: string): PreviewCell[] {
-    const raw = parseMarkdown(text);
+export function parseDocumentCells(text: string, onWarning?: (message: string) => void): PreviewCell[] {
+    const raw = parseMarkdown(text, onWarning);
     const spans = computeCellSpans(text, raw.map(toSpanInput));
 
     return raw.map((cell, index) => {
         const kind = cell.kind === vscode.NotebookCellKind.Code ? 'code' : 'markup';
         const addons: Addon[] = cell.addons ?? [];
         const signature = JSON.stringify([
-            kind, cell.language, cell.content, addons, cell.autorun, cell.runonstart, cell.hidecode, cell.height
+            kind, cell.language, cell.content, addons, cell.autorun, cell.runonstart, cell.hidecode, cell.height, cell.id
         ]);
 
         return {
@@ -60,9 +61,12 @@ export function parseDocumentCells(text: string): PreviewCell[] {
             hidecode: cell.hidecode,
             height: cell.height,
             stableKey: cell.id ? `id:${cell.id}` : `idx:${index}`,
-            // An id makes a cell reconcilable across edits to its own body; without
-            // one, any content change is a new cell (and so a fresh output).
-            contentKey: cell.id ? `id:${cell.id}` : `sig:${hashString(signature)}`
+            // Any change to what the cell renders makes it a new cell (and so a
+            // fresh view and output) -- an `id=` cell included, since a view
+            // reused across an edit to its body would keep showing the old one.
+            // The id still carries over what should survive an edit: stableKey
+            // keeps the remembered answer and whether the cell had been run.
+            contentKey: `sig:${hashString(signature)}`
         } satisfies PreviewCell;
     });
 }
