@@ -4,6 +4,11 @@
     "rootDir": "..",
     "outDir": "../../out/test",
     "types": ["node", "mocha"],
+    // @babel/standalone 8 ships declarations that import Babel's ESM-only
+    // packages, which this CommonJS build cannot reference. Library
+    // declarations go unchecked here; src/client type-checks the same sources
+    // in its bundler mode, where they resolve.
+    "skipLibCheck": true,
   },
   "references": []
 }

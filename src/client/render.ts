@@ -687,7 +687,7 @@ export function render({ container, feedback, mime, value, style, addStyle, cons
                         : ['transform-modules-commonjs'];
                 }
 
-                const transformed = Babel.transform(guarded, babelOptions as any).code;
+                const transformed = Babel.transform(guarded, babelOptions as any)?.code;
                 if (!transformed) {
                     const compileTarget = isReactLanguage ? 'React' : 'module';
                     addFeedback(`${compileTarget} code could not be compiled.`, 'error');

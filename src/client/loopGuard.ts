@@ -68,7 +68,9 @@ function parse(code: string, options: LoopGuardOptions): AstNode | undefined {
                 // Node cells run as a function body, where `return` is legal.
                 allowReturnOutsideFunction: true
             }
-        } as any) as { ast?: { program?: AstNode } };
+        } as any) as unknown as { ast?: { program?: AstNode } } | null;
+        // The guard walks Babel's AST generically (AstNode), not through
+        // Babel's own node types, hence the cast through unknown.
         return result?.ast?.program;
     } catch {
         return undefined;
