@@ -10,7 +10,7 @@ import { CellOutputHost, type PreviewRendererContext } from './rendererHost';
 import { renderMarkdownBlock, resolveRelativeAssets } from './markdown';
 import { buildOutputValue, dependsOnFiles, shouldAutorun } from './kernel';
 import { cellKeyFor, type CellModel } from './notebookModel';
-import { getAddonContent, isAutoWidgetLanguage, normalizeAddonType, upsertAddon } from '../../src/shared/addons';
+import { getAddonContent, hasAddon, isAutoWidgetLanguage, normalizeAddonType } from '../../src/shared/addons';
 import type { Addon, RendererMessage } from './types';
 import type { VirtualFs } from './vfs';
 import type { ScratchStore } from './scratch';
@@ -50,6 +50,8 @@ export class CellView {
     private editedBadge?: HTMLElement;
     private resetButton?: HTMLButtonElement;
     private hasRun = false;
+    /** The text the cell showed when it opened: what a first edit captures as its starter. */
+    private openText = '';
 
     constructor(private readonly model: CellModel, private readonly ctx: CellContext) {
         this.cellKey = cellKeyFor(model);
@@ -159,6 +161,7 @@ export class CellView {
         const editorHost = document.createElement('div');
         editorHost.className = 'cell-editor';
         const initialDoc = this.ctx.scratch.getCode(this.cellKey) ?? this.model.value;
+        this.openText = initialDoc;
         this.editor = createEditor({
             doc: initialDoc,
             language: this.model.languageId,
@@ -218,6 +221,7 @@ export class CellView {
     }
 
     private onEditorChange(value: string): void {
+        this.captureStarterOnFirstEdit(value);
         if (value === this.model.value) {
             this.ctx.scratch.clearCode(this.cellKey);
         } else {
@@ -227,6 +231,37 @@ export class CellView {
         this.ctx.onEditedChange();
     }
 
+    /**
+     * The extension's `+default` rule (src/extension/defaultCapture.ts): a
+     * non-widget code cell with no `+default` at all gets one on its first
+     * edit, holding the text it had when it opened -- even when that is
+     * empty. An existing `+default`, authored or captured, empty or not, is
+     * never rewritten, and running a cell never touches it. VS Code writes the
+     * capture into the cell's metadata (and so the file); here it goes to the
+     * scratch store beside the browser edits.
+     */
+    private captureStarterOnFirstEdit(value: string): void {
+        if (isAutoWidgetLanguage(this.model.languageId) || hasAddon(this.addons, 'default')) {
+            return;
+        }
+        if (value === this.openText || this.ctx.scratch.getDefault(this.cellKey) !== undefined) {
+            return;
+        }
+        this.ctx.scratch.setDefault(this.cellKey, this.openText);
+    }
+
+    /**
+     * The cell's starter: its `+default` addon when it has one (possibly
+     * empty), else the one captured on its first edit; undefined when it has
+     * neither, and then "Reset code" does nothing.
+     */
+    private starter(): string | undefined {
+        if (hasAddon(this.addons, 'default')) {
+            return getAddonContent(this.addons, 'default') ?? '';
+        }
+        return this.ctx.scratch.getDefault(this.cellKey);
+    }
+
     private refreshEditedState(): void {
         const edited = this.ctx.scratch.hasCode(this.cellKey);
         if (this.editedBadge) { this.editedBadge.hidden = !edited; }
@@ -234,31 +269,33 @@ export class CellView {
         this.element.classList.toggle('is-edited', edited);
     }
 
+    /** Drop this cell's browser edits -- code and captured starter -- and show the disk text. */
     private resetToDisk(): void {
         this.ctx.scratch.clearCode(this.cellKey);
+        this.ctx.scratch.clearDefault(this.cellKey);
+        // Back as it opened from disk, so a later first edit captures this text.
+        this.openText = this.model.value;
         this.editor?.setValue(this.model.value);
         this.refreshEditedState();
         this.ctx.onEditedChange();
         if (this.hasRun) { void this.run(); }
     }
 
-    /** The renderer's "Reset code": restore the `+default` starter source.
-     * (VS Code edits the cell document; here the edit goes to scratch.)
-     * Cells without an authored starter fall back to their on-disk text,
-     * matching the extension's first-edit capture. */
+    /** The renderer's "Reset code": the cell becomes its starter (see starter())
+     * and re-runs. (VS Code edits the cell document; here the edit goes to
+     * scratch.) Without a starter the request is ignored, as in VS Code. */
     private resetToDefault(): void {
-        const authored = getAddonContent(this.addons, 'default');
-        const defaultContent = authored && authored.trim() ? authored : this.model.value;
-        if (!defaultContent.trim()) {
+        const starter = this.starter();
+        if (starter === undefined) {
             return;
         }
 
-        if (defaultContent === this.model.value) {
+        if (starter === this.model.value) {
             this.ctx.scratch.clearCode(this.cellKey);
         } else {
-            this.ctx.scratch.setCode(this.cellKey, defaultContent);
+            this.ctx.scratch.setCode(this.cellKey, starter);
         }
-        this.editor?.setValue(defaultContent);
+        this.editor?.setValue(starter);
         this.refreshEditedState();
         this.ctx.onEditedChange();
         void this.run();
@@ -300,13 +337,14 @@ export class CellView {
                 addons.push({ type: 'selection', content: selection });
             }
         }
-        // Mirror the extension's first-edit capture: a cell with no authored
-        // starter takes its on-disk text as the `+default`. Upsert (not push)
-        // so an EMPTY `+default` block is filled rather than shadowed — and
-        // filling it here keeps the shared capture in buildOutputValue, which
-        // would otherwise record the edited source, from ever firing.
-        if (!(getAddonContent(addons, 'default') ?? '').trim()) {
-            addons = upsertAddon(addons, 'default', this.model.value);
+        // A starter captured on the first edit is the `+default` VS Code would
+        // have written into the cell by now. Running never creates or changes
+        // one (see captureStarterOnFirstEdit).
+        if (!hasAddon(addons, 'default')) {
+            const captured = this.ctx.scratch.getDefault(this.cellKey);
+            if (captured !== undefined) {
+                addons.push({ type: 'default', content: captured });
+            }
         }
 
         try {

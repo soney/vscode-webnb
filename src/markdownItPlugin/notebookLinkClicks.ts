@@ -11,20 +11,49 @@
  * opens the notebook and reveals the section through the notebook editor API.
  * The listener is capture-phase on `document` and VS Code's is bubble-phase on
  * `document.body`, so this one runs first and stops the click from reaching it.
+ *
+ * Two kinds of click are left alone:
+ *  - Anything in a notebook that is not a Web Notebook. This renderer extends
+ *    VS Code's markdown renderer, which every notebook type uses, so nothing is
+ *    intercepted until the extension host confirms the notebook type (see
+ *    LINK_HANDLER_HELLO_MESSAGE). A Jupyter notebook keeps VS Code's behavior.
+ *  - Links inside a learner's own rendered output (`data-webnb-learner-output`,
+ *    set by render()): a tab widget's `<a href="#settings">` belongs to the
+ *    learner's page, not to the notebook.
  */
-import { parseNotebookLinkHref, OPEN_NOTEBOOK_LINK_MESSAGE } from '../shared/notebookLinks';
+import {
+    isLinkHandlerConfigMessage,
+    LEARNER_OUTPUT_ATTRIBUTE,
+    LINK_HANDLER_HELLO_MESSAGE,
+    OPEN_NOTEBOOK_LINK_MESSAGE,
+    parseNotebookLinkHref
+} from '../shared/notebookLinks';
 
 const PRIMARY_BUTTON = 0;
 
-export function installNotebookLinkClicks(postMessage: (message: unknown) => void): void {
+type MessageEvent = (listener: (message: unknown) => void) => { dispose(): void } | void;
+
+export function installNotebookLinkClicks(postMessage: (message: unknown) => void, onDidReceiveMessage?: MessageEvent): void {
+    let enabled = false;
+    onDidReceiveMessage?.(message => {
+        if (isLinkHandlerConfigMessage(message)) {
+            enabled = message.enabled;
+        }
+    });
+    postMessage({ type: LINK_HANDLER_HELLO_MESSAGE });
+
     document.addEventListener('click', (event) => {
-        if (event.button !== PRIMARY_BUTTON || event.defaultPrevented) {
+        if (!enabled || event.button !== PRIMARY_BUTTON || event.defaultPrevented) {
             return;
         }
 
         // A markup cell renders inside a shadow root, so the anchor is only
         // reachable through the composed path -- `event.target` is the host.
-        const anchor = event.composedPath().find((node): node is HTMLAnchorElement => node instanceof HTMLAnchorElement);
+        const path = event.composedPath();
+        if (path.some(node => node instanceof Element && node.hasAttribute(LEARNER_OUTPUT_ATTRIBUTE))) {
+            return;
+        }
+        const anchor = path.find((node): node is HTMLAnchorElement => node instanceof HTMLAnchorElement);
         if (!anchor) {
             return;
         }

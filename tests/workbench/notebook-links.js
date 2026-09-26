@@ -14,6 +14,14 @@
  *
  * `WEBNB_RUN_ALL` runs the notebook first, for links that live in a rendered
  * output rather than in prose.
+ *
+ * Each scenario states where the click must land: the active tab, the
+ * warning it must (or must not) raise, and for section links the section the
+ * notebook selects (the last breadcrumb entry, which names the heading of the
+ * selected cell -- "at top" is printed but not checked, for the reason
+ * above). A scenario whose link cannot be found, whose notebook never
+ * renders, or that lands anywhere else FAILS, and the process exits 1 after
+ * running the rest. The printed report and screenshots are there to see why.
  */
 const fs = require('node:fs');
 const os = require('node:os');
@@ -113,44 +121,90 @@ async function observe(page) {
     return { ...workbench, headings: visible };
 }
 
-const SCENARIOS = [
-    'The whole notebook',
-    'A section of it',
-    'A section, spelled out',
-    'From the workspace root',
-    'A notebook in a subfolder, with spaces in its name',
-    'Down to the last section',
-    'A notebook that does not exist',
-    'A section that does not exist',
-    'A source file',
-];
+/**
+ * Every link in samplenotebooks/links.webnb worth clicking, keyed by its text,
+ * with where it must land: `tab` is the file in the active editor tab
+ * afterwards, `section` the heading of the cell the notebook selected
+ * (section links only), `warning` a substring the one expected notification
+ * must contain. No `warning` means none may appear.
+ */
+const SCENARIOS = {
+    'The whole notebook': { tab: 'links-target.webnb' },
+    'A section of it': { tab: 'links-target.webnb', section: 'Beta' },
+    'A section, spelled out': { tab: 'links-target.webnb', section: 'The fetch API, really?' },
+    'From the workspace root': { tab: 'links-target.webnb', section: 'Beta' },
+    'A notebook in a subfolder, with spaces in its name': { tab: 'links nested.webnb' },
+    'Down to the last section': { tab: 'links.webnb', section: 'The Last Section' },
+    'A notebook that does not exist': { tab: 'links.webnb', warning: 'There is no notebook at "missing.webnb"' },
+    'A section that does not exist': { tab: 'links-target.webnb', warning: 'has no section called "#no-such-section"' },
+    'A source file': { tab: 'notes.txt' },
+};
 
-async function runScenario(name) {
+/** Tab labels may leave the extension off ("links-target" for links-target.webnb). */
+function sameFile(label, fileName) {
+    return label === fileName || label === fileName.replace(/\.[^.]+$/, '');
+}
+
+/** Where the click landed versus where it should have; empty means it passed. */
+function mismatches(expected, observed) {
+    const problems = [];
+    if (!sameFile(observed.activeTab, expected.tab)) {
+        problems.push(`active tab is ${JSON.stringify(observed.activeTab)}, expected ${JSON.stringify(expected.tab)}`);
+    }
+    if (expected.section && observed.selectedSection !== expected.section) {
+        problems.push(`selected section is ${JSON.stringify(observed.selectedSection)}, expected ${JSON.stringify(expected.section)}`);
+    }
+    if (expected.warning) {
+        if (!observed.warnings.some(w => w.includes(expected.warning))) {
+            problems.push(`no warning containing ${JSON.stringify(expected.warning)}`);
+        }
+    } else if (observed.warnings.length > 0) {
+        problems.push(`unexpected warning(s): ${JSON.stringify(observed.warnings)}`);
+    }
+    return problems;
+}
+
+async function runScenario(name, expected) {
     const browser = await chromium.launch({ args: ['--no-sandbox'] });
     try {
         const page = await browser.newPage();
         await page.goto(URL, { waitUntil: 'domcontentloaded' });
-        if (!await waitForNotebook(page)) { return `${name}: NOTEBOOK NEVER RENDERED`; }
+        if (!await waitForNotebook(page)) {
+            return { passed: false, report: `FAIL ${name}: notebook never rendered at ${URL}` };
+        }
         await sleep(6000);
 
         if (process.env.WEBNB_RUN_ALL) { await runAllCells(page); }
         const href = await clickLink(page, name);
+        if (href === null) {
+            return { passed: false, report: `FAIL ${name}: no link with that text in the rendered notebook` };
+        }
         await sleep(7000);
         const after = await observe(page);
         const shot = path.join(SHOTS, `${name.replace(/[^a-z0-9]+/gi, '-')}.png`);
         await page.screenshot({ path: shot });
 
-        const activeTab = after.tabs.find(t => t.active)?.label;
-        const topHeading = after.headings[0]?.heading;
-        const warnings = after.warnings.filter(w => !w.includes('proposed API'));
-        return [
-            `${name}  (href=${href})`,
-            `   tab       : ${activeTab}   [${after.tabs.map(t => t.label).join(', ')}]`,
-            `   at top    : ${topHeading ?? '(no heading in view)'}`,
-            `   warnings  : ${warnings.length ? JSON.stringify(warnings) : 'none'}`,
-            `   revealed  : ${after.breadcrumb.join(' > ') || '(no breadcrumb)'}  ${after.cellStatus}`,
-            `   screenshot: ${shot}`,
-        ].join('\n');
+        const observed = {
+            activeTab: after.tabs.find(t => t.active)?.label,
+            topHeading: after.headings[0]?.heading,
+            selectedSection: after.breadcrumb[after.breadcrumb.length - 1],
+            warnings: after.warnings.filter(w => !w.includes('proposed API')),
+        };
+        const problems = expected ? mismatches(expected, observed) : [];
+        return {
+            passed: problems.length === 0,
+            report: [
+                `${problems.length ? 'FAIL' : 'ok  '} ${name}  (href=${href})`,
+                `   tab       : ${observed.activeTab}   [${after.tabs.map(t => t.label).join(', ')}]`,
+                `   at top    : ${observed.topHeading ?? '(no heading in view)'}`,
+                `   warnings  : ${observed.warnings.length ? JSON.stringify(observed.warnings) : 'none'}`,
+                `   revealed  : ${after.breadcrumb.join(' > ') || '(no breadcrumb)'}  ${after.cellStatus}`,
+                `   screenshot: ${shot}`,
+                ...problems.map(problem => `   PROBLEM   : ${problem}`),
+            ].join('\n'),
+        };
+    } catch (error) {
+        return { passed: false, report: `FAIL ${name}: ${error instanceof Error ? error.message : error}` };
     } finally {
         await browser.close();
     }
@@ -159,9 +213,21 @@ async function runScenario(name) {
 async function main() {
     fs.mkdirSync(SHOTS, { recursive: true });
     const only = process.argv[2];
-    for (const name of only ? [only] : SCENARIOS) {
-        console.log(await runScenario(name));
+    // A link text outside the table still runs (it may live in another
+    // notebook); it only fails when the link cannot be found or clicked.
+    const names = only ? [only] : Object.keys(SCENARIOS);
+    const failed = [];
+    for (const name of names) {
+        const { passed, report } = await runScenario(name, Object.hasOwn(SCENARIOS, name) ? SCENARIOS[name] : undefined);
+        console.log(report);
         console.log('');
+        if (!passed) { failed.push(name); }
+    }
+    if (failed.length > 0) {
+        console.error(`${failed.length} of ${names.length} scenario(s) failed: ${failed.join('; ')}`);
+        process.exitCode = 1;
+    } else {
+        console.log(`All ${names.length} scenario(s) landed where expected.`);
     }
 }
 

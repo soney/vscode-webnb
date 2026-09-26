@@ -77,6 +77,8 @@ body {
     padding: 6px 12px;
     font-family: var(--vscode-editor-font-family), monospace;
     font-size: 0.9em;
+    /* One parser warning per line. */
+    white-space: pre-wrap;
     color: var(--vscode-inputValidation-errorForeground, var(--vscode-editor-foreground));
     background: var(--vscode-inputValidation-errorBackground, rgba(190, 30, 30, 0.2));
     border-bottom: 1px solid var(--vscode-inputValidation-errorBorder, rgba(190, 30, 30, 0.6));

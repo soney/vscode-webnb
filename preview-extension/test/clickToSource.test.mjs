@@ -67,7 +67,7 @@ test('an empty source has no blocks', () => {
 test('every markup block resolves to a line inside its own cell', async (t) => {
     const files = await findNotebooks(notebooksDir);
     if (files.length === 0) {
-        t.skip('no course notebooks to check');
+        t.skip(`no course notebooks at ${notebooksDir} (set WEBNB_NOTEBOOKS to point at some)`);
         return;
     }
 

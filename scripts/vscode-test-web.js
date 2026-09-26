@@ -57,10 +57,18 @@ Options:
                       hostname origins load an empty workbench (see README
                       "Remote Development").
   --port <number>     Server port. Defaults to 3000.
-  --host <name>       Server host. Defaults to localhost.
+  --host <name>       Server host. Defaults to localhost. Any other bind
+                      (0.0.0.0, a LAN address, a hostname) serves this whole
+                      extension checkout and the mounted workspace, dotfiles
+                      included, to anyone who can reach the port.
   --headless          Launch the browser headlessly.
   --devtools          Open browser devtools.
-  --quality <name>    VS Code quality: insiders or stable.
+  --quality <name>    VS Code quality: insiders (the @vscode/test-web default)
+                      or stable. Learners run stable VS Code, so pass
+                      --quality stable to check a change against what they
+                      see. .vscode-test-web keeps one build at a time:
+                      switching quality downloads the other build and deletes
+                      the cached one.
   --verbose           Print extra server/browser logging.
   --watch             Watch source files, rebuild with webpack, then reload
                       VS Code Web when compiled extension output changes.
@@ -541,6 +549,41 @@ function isWildcardHost(host) {
     return host === '0.0.0.0' || host === '::' || host === '0:0:0:0:0:0:0:0';
 }
 
+/** Binds only this machine can reach. No --host means @vscode/test-web's localhost. */
+function isLoopbackHost(host) {
+    if (host === undefined || host === '') {
+        return true;
+    }
+    const name = host.toLowerCase().replace(/^\[(.*)\]$/, '$1');
+    return name === 'localhost'
+        || name.endsWith('.localhost')
+        || name === '::1'
+        || /^127(\.\d{1,3}){3}$/.test(name);
+}
+
+/**
+ * @vscode/test-web has no authentication, and it serves the extension
+ * development path (this checkout) and the mounted folder as static files with
+ * dotfiles enabled. On a non-loopback bind that is everyone's to read.
+ */
+function printExposureWarning(options, workspacePath) {
+    const port = options.port ?? 3000;
+    const lines = [
+        `WARNING: --host ${options.host} makes this server reachable from other machines.`,
+        `Anyone who can reach port ${port} can read, with no password:`,
+        `  - this entire extension checkout, dotfiles included (.git, .env, ...),`,
+        `    under /static/devextensions/: ${process.cwd()}`,
+        `  - the mounted workspace, with directory listings, under /static/mount/:`,
+        `    ${workspacePath}`,
+        `and gets a full VS Code Web session on that workspace.`,
+        `On a network you do not control, keep the default localhost bind and reach`,
+        `it through an SSH tunnel or a container port map instead.`,
+    ];
+    const width = Math.max(...lines.map(line => line.length));
+    const rule = '!'.repeat(width + 4);
+    console.warn(['', rule, ...lines.map(line => `! ${line.padEnd(width)} !`), rule, ''].join('\n'));
+}
+
 function printServerOnlyInfo(options) {
     const host = options.host ?? 'localhost';
     const port = options.port ?? 3000;
@@ -591,6 +634,10 @@ async function main() {
     const workspacePath = resolveWorkspace(options.workspace);
     if (!fs.existsSync(workspacePath)) {
         throw new Error(`Workspace folder does not exist: ${workspacePath}`);
+    }
+
+    if (!isLoopbackHost(options.host)) {
+        printExposureWarning(options, workspacePath);
     }
 
     if (options.remote) {

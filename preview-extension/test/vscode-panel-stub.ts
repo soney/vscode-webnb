@@ -161,7 +161,13 @@ export const state = {
     settings: {} as Record<string, unknown>,
     workspaceFolders: [] as { uri: Uri; name: string; index: number }[],
     visibleTextEditors: [] as TextEditorLike[],
-    panels: [] as FakeWebviewPanel[]
+    panels: [] as FakeWebviewPanel[],
+    /** The workspace on disk: path -> file text, or null for a folder. */
+    files: {} as Record<string, string | null>,
+    /** Every executeCommand call, oldest first. */
+    commands: [] as { command: string; args: unknown[] }[],
+    /** Every warning shown to the user, oldest first. */
+    warnings: [] as string[]
 };
 
 export const events = {
@@ -177,7 +183,17 @@ export function reset(): void {
     state.workspaceFolders = [];
     state.visibleTextEditors = [];
     state.panels = [];
+    state.files = {};
+    state.commands = [];
+    state.warnings = [];
 }
+
+export const commands = {
+    executeCommand(command: string, ...args: unknown[]): Promise<undefined> {
+        state.commands.push({ command, args });
+        return Promise.resolve(undefined);
+    }
+};
 
 export class ThemeColor {
     constructor(public readonly id: string) {}
@@ -226,8 +242,20 @@ export const window = {
     },
     showTextDocument(): Promise<never> {
         return Promise.reject(new Error('showTextDocument is not stubbed'));
+    },
+    showWarningMessage(message: string): Promise<undefined> {
+        state.warnings.push(message);
+        return Promise.resolve(undefined);
     }
 };
+
+function documentFor(uri: Uri): TextDocumentLike {
+    const text = state.files[uri.path];
+    if (typeof text !== 'string') {
+        throw new Error(`no file at ${uri.path}`);
+    }
+    return { uri, getText: () => text, lineCount: text.split('\n').length };
+}
 
 export const workspace = {
     get workspaceFolders(): { uri: Uri; name: string; index: number }[] {
@@ -259,12 +287,19 @@ export const workspace = {
             dispose: () => undefined
         };
     },
-    openTextDocument(): Promise<never> {
-        return Promise.reject(new Error('openTextDocument is not stubbed'));
+    openTextDocument(uri: Uri): Promise<TextDocumentLike> {
+        try {
+            return Promise.resolve(documentFor(uri));
+        } catch (error) {
+            return Promise.reject(error);
+        }
     },
     fs: {
-        stat(): Promise<never> {
-            return Promise.reject(new Error('fs is not stubbed'));
+        stat(uri: Uri): Promise<{ type: number }> {
+            if (!(uri.path in state.files)) {
+                return Promise.reject(new Error(`ENOENT: ${uri.path}`));
+            }
+            return Promise.resolve({ type: state.files[uri.path] === null ? FileType.Directory : FileType.File });
         },
         readFile(): Promise<never> {
             return Promise.reject(new Error('fs is not stubbed'));

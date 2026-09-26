@@ -1,5 +1,4 @@
 import * as vscode from 'vscode';
-import { logExecution } from './log';
 import { activate as activateSerializer, deactivate as deactivateSerializer } from './serializer';
 import { activate as activateKernel, deactivate as deactivateKernel } from './webnbProvider';
 import { activate as activateCellStructureLock, deactivate as deactivateCellStructureLock } from './cellStructureLock';
@@ -7,6 +6,7 @@ import { activate as activateDefaultCapture, deactivate as deactivateDefaultCapt
 import { activate as activateMarkdownLock, deactivate as deactivateMarkdownLock } from './markdownLock';
 import { activate as activateNotebookLinks, deactivate as deactivateNotebookLinks } from './notebookLinkNavigator';
 import { activate as activateReadOnlyMode, deactivate as deactivateReadOnlyMode } from './readOnlyMode';
+import { WebnbTextReopener } from './reopenAsNotebook';
 
 export function activate(context: vscode.ExtensionContext) {
     activateSerializer(context);
@@ -16,9 +16,9 @@ export function activate(context: vscode.ExtensionContext) {
     activateMarkdownLock(context);
     activateNotebookLinks(context);
     activateReadOnlyMode(context);
-    // Files opened programmatically (via a payload openFile command) don't
-    // open as notebooks; watch for one and reopen it with the notebook editor.
-    context.subscriptions.push(reopenWebnbFiles());
+    // Files opened programmatically (the lab launcher's openFile) open as text;
+    // for a short while after activation, reopen those with the notebook editor.
+    context.subscriptions.push(new WebnbTextReopener());
 }
 
 export function deactivate() {
@@ -29,64 +29,4 @@ export function deactivate() {
     deactivateMarkdownLock();
     deactivateNotebookLinks();
     deactivateReadOnlyMode();
-}
-
-
-
-function reopenWebnbFiles(): vscode.Disposable {
-    const WEB_NOTEBOOK_VIEW_TYPE = 'web-notebook';
-    const WEBNB_EXTENSION = '.webnb';
-    const SWEEP_INTERVAL_MS = 1000;
-
-    function checkIfOneWebnbEditorOpen(): vscode.TextEditor | vscode.NotebookEditor | undefined {
-        function isWebnbFileUri(uri: vscode.Uri): boolean {
-            return uri.scheme !== 'vscode-notebook-cell'
-                && uri.path.toLowerCase().endsWith(WEBNB_EXTENSION);
-        }
-
-        const webnbEditors = vscode.window.visibleNotebookEditors.filter(editor => editor.notebook && isWebnbFileUri(editor.notebook.uri));
-        if (webnbEditors.length === 1) {
-            return webnbEditors[0];
-        }
-
-        const textEditorsWithWebnb = vscode.window.visibleTextEditors.filter(editor => isWebnbFileUri(editor.document.uri));
-        if (textEditorsWithWebnb.length === 1) {
-            return textEditorsWithWebnb[0];
-        }
-
-        return undefined;
-    }
-
-    function getEditorUri(editor: vscode.TextEditor | vscode.NotebookEditor): vscode.Uri | undefined {
-        if ('notebook' in editor && editor.notebook) {
-            return editor.notebook.uri;
-        }
-
-        if ('document' in editor) {
-            return editor.document.uri;
-        }
-
-        return undefined;
-    }
-
-    // if there is just one .webnb file open, assume that it was opened programmatically. keep checking every SWEEP_INTERVAL_MS indefinitely, and once we find a single webnb editor, stop checking, close it, and reopen it as a web notebook.
-
-    const sweepInterval: NodeJS.Timeout = setInterval(async () => {
-        const editor = checkIfOneWebnbEditorOpen();
-        if (editor) {
-            const uri = getEditorUri(editor);
-            if (!uri) {
-                return;
-            }
-
-            // stop sweeping since we found the single editor
-            clearInterval(sweepInterval);
-
-            logExecution(`Found a single open .webnb editor for ${uri.toString()}, reopening as notebook`);
-            await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
-            await vscode.commands.executeCommand('vscode.openWith', uri, WEB_NOTEBOOK_VIEW_TYPE);
-        }
-    }, SWEEP_INTERVAL_MS);
-
-    return { dispose: () => clearInterval(sweepInterval) };
 }

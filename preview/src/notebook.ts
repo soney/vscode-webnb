@@ -4,6 +4,7 @@
  * change re-runs.
  */
 import { fetchNotebookSource } from './api';
+import { getAddonContent } from '../../src/shared/addons';
 import { parseNotebook, type CellModel } from './notebookModel';
 import { CellView } from './cell';
 import { ScratchStore } from './scratch';
@@ -15,6 +16,8 @@ export interface NotebookViewDeps {
     vfs: VirtualFs;
     /** Mirrors VS Code's `webnb.allowRevealingSolutions` setting. */
     showSolutions: () => boolean;
+    /** `?solutions` mode: runnable cells start from their `+solution`. */
+    solutionsMode?: boolean;
 }
 
 /** Where the viewport was anchored before a reload, so we can restore it after. */
@@ -38,10 +41,13 @@ export class NotebookView {
     private cancelScrollRestore?: () => void;
 
     constructor(private readonly summary: NotebookSummary, private readonly deps: NotebookViewDeps) {
-        this.scratch = new ScratchStore(deps.workspaceId, summary.path);
+        // Solutions mode keeps its own browser edits, so neither mode's
+        // scratch code shows up in the other.
+        this.scratch = new ScratchStore(deps.solutionsMode ? `${deps.workspaceId}#solutions` : deps.workspaceId, summary.path);
 
         this.element = document.createElement('div');
         this.element.className = 'notebook';
+        this.setState('loading');
 
         this.banner = document.createElement('div');
         this.banner.className = 'notebook-banner';
@@ -77,21 +83,33 @@ export class NotebookView {
         }
     }
 
+    /**
+     * `data-state` on the notebook element: `loading` until the cells exist,
+     * then `ready` once every autorun cell has been started (the rAF below),
+     * or `error` when the notebook could not be loaded. The test harness waits
+     * on it instead of sleeping; a cell still running carries `is-running`.
+     */
+    private setState(state: 'loading' | 'ready' | 'error'): void {
+        this.element.dataset.state = state;
+    }
+
     private async render(options: { autorun: boolean; restoreAnchor?: ScrollAnchor | null }): Promise<void> {
         this.cancelActiveScrollRestore();
         this.disposeCells();
         this.hideBanner();
+        this.setState('loading');
 
         let models: CellModel[];
         try {
             const source = await fetchNotebookSource(this.summary.path);
-            models = parseNotebook(source);
+            models = parseNotebook(source, { solutions: this.deps.solutionsMode });
         } catch (error) {
             this.cellsHost.innerHTML = '';
             const err = document.createElement('pre');
             err.className = 'notebook-error';
             err.textContent = `Could not load notebook:\n${(error as Error).message}`;
             this.cellsHost.append(err);
+            this.setState('error');
             return;
         }
 
@@ -105,6 +123,11 @@ export class NotebookView {
                 showSolutions: this.deps.showSolutions,
                 onEditedChange: () => this.onEditedChange()
             });
+            // For the test harness (tests/lib/capture.js): which cells carry a
+            // +solution, whatever the toolbar shows.
+            if (model.kind === 'code' && getAddonContent(model.metadata.addons ?? [], 'solution') !== undefined) {
+                view.element.dataset.hasSolution = 'true';
+            }
             fragment.append(view.element);
             return view;
         });
@@ -126,7 +149,10 @@ export class NotebookView {
                 for (const cell of cellsForThisRender) {
                     cell.autorunIfNeeded();
                 }
+                this.setState('ready');
             });
+        } else {
+            this.setState('ready');
         }
     }
 
@@ -156,7 +182,7 @@ export class NotebookView {
 
     async resetAllCells(): Promise<void> {
         const anchor = this.captureScrollAnchor();
-        this.scratch.clearAllCode();
+        this.scratch.clearAllEdits();
         await this.render({ autorun: true, restoreAnchor: anchor });
     }
 

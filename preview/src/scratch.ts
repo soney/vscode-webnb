@@ -2,6 +2,8 @@
  * Per-notebook scratch store for browser-side edits that must never touch disk:
  *  - `code` overrides: edited source for a cell, keyed by a stable cell key.
  *  - `selection` overrides: MCQ selections, persisted as the cell's `selection` addon.
+ *  - `defaults`: starters captured on a cell's first edit -- what VS Code writes
+ *    into the cell's `+default` addon (and so into the file) at that moment.
  *
  * Everything lives in localStorage so it survives reloads (the user opted into
  * persistence). Disk is never written.
@@ -12,10 +14,11 @@ const STORAGE_PREFIX = 'webnb:scratch:v1:';
 interface NotebookScratch {
     code: Record<string, string>;
     selection: Record<string, string>;
+    defaults: Record<string, string>;
 }
 
 function emptyScratch(): NotebookScratch {
-    return { code: {}, selection: {} };
+    return { code: {}, selection: {}, defaults: {} };
 }
 
 export class ScratchStore {
@@ -32,7 +35,7 @@ export class ScratchStore {
             const raw = localStorage.getItem(this.storageKey);
             if (!raw) { return emptyScratch(); }
             const parsed = JSON.parse(raw) as Partial<NotebookScratch>;
-            return { code: parsed.code || {}, selection: parsed.selection || {} };
+            return { code: parsed.code || {}, selection: parsed.selection || {}, defaults: parsed.defaults || {} };
         } catch {
             return emptyScratch();
         }
@@ -74,9 +77,31 @@ export class ScratchStore {
         return Object.keys(this.data.code);
     }
 
-    clearAllCode(): void {
+    /** Back to disk: every code edit and every captured starter goes. */
+    clearAllEdits(): void {
         this.data.code = {};
+        this.data.defaults = {};
         this.save();
+    }
+
+    // ---- captured starters -------------------------------------------------
+
+    getDefault(cellKey: string): string | undefined {
+        return Object.prototype.hasOwnProperty.call(this.data.defaults, cellKey)
+            ? this.data.defaults[cellKey]
+            : undefined;
+    }
+
+    setDefault(cellKey: string, source: string): void {
+        this.data.defaults[cellKey] = source;
+        this.save();
+    }
+
+    clearDefault(cellKey: string): void {
+        if (Object.prototype.hasOwnProperty.call(this.data.defaults, cellKey)) {
+            delete this.data.defaults[cellKey];
+            this.save();
+        }
     }
 
     // ---- MCQ selection overrides ------------------------------------------

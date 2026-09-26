@@ -1,9 +1,12 @@
 import './tddBridge';
 import * as assert from 'assert';
 import {
+    atxHeading,
     findSectionCell,
     findSections,
     headingDisplayText,
+    isLinkHandlerConfigMessage,
+    isLinkHandlerHelloMessage,
     isOpenNotebookLinkMessage,
     parseNotebookLinkHref,
     slugifySection,
@@ -39,14 +42,25 @@ suite('shared/notebookLinks', () => {
     });
 
     suite('headingDisplayText', () => {
+        // VS Code builds a heading id from the concatenated content of
+        // markdown-it's inline tokens; these mirror what that yields.
         const cases: [markdown: string, text: string][] = [
             ['The `fetch` API', 'The fetch API'],
             ['**Bold** and *italic*', 'Bold and italic'],
             ['__Bold__ and _italic_', 'Bold and italic'],
             ['A [link](https://example.com) inline', 'A link inline'],
-            ['An ![image](pic.png) inline', 'An  inline'.replace(/\s+/g, ' ').trim()],
-            ['<em>html</em> tags', 'html tags'],
+            // An image contributes its alt text.
+            ['An ![image](pic.png) inline', 'An image inline'],
+            // Raw HTML is kept as written; the slug then drops its brackets.
+            ['<em>html</em> tags', '<em>html</em> tags'],
             ['Escaped \\*not emphasis\\*', 'Escaped *not emphasis*'],
+            // Inside a code span nothing is markup: tags and underscores survive.
+            ['The `<style>` Element', 'The <style> Element'],
+            ['`__proto__` and `a * b`', '__proto__ and a * b'],
+            // Underscores inside a word are not emphasis.
+            ['snake_case_name', 'snake_case_name'],
+            ['Tom &amp; Jerry', 'Tom & Jerry'],
+            ['~~gone~~ here', 'gone here'],
         ];
 
         for (const [markdown, text] of cases) {
@@ -54,6 +68,41 @@ suite('shared/notebookLinks', () => {
                 assert.strictEqual(headingDisplayText(markdown), text);
             });
         }
+
+        test('the corpus headings with tags in code spans anchor like VS Code', () => {
+            assert.strictEqual(slugifySection(headingDisplayText('The `<style>` Element')), 'the-style-element');
+            assert.strictEqual(slugifySection(headingDisplayText('`<polygon>`')), 'polygon');
+            assert.strictEqual(slugifySection(headingDisplayText('`<path>`')), 'path');
+        });
+    });
+
+    suite('atxHeading', () => {
+        test('reads level and content, dropping a closing run of #', () => {
+            assert.deepStrictEqual(atxHeading('## Title ##'), { level: 2, content: 'Title' });
+            assert.deepStrictEqual(atxHeading('   ### x'), { level: 3, content: 'x' });
+        });
+        test('keeps a # that is part of the text', () => {
+            assert.deepStrictEqual(atxHeading('## C#'), { level: 2, content: 'C#' });
+        });
+        test('is not a heading without a space after the #s', () => {
+            assert.strictEqual(atxHeading('#hashtag'), undefined);
+            assert.strictEqual(atxHeading('####### seven'), undefined);
+        });
+        test('stays linear on a long run of spaces', () => {
+            const started = Date.now();
+            atxHeading('# a' + ' '.repeat(20000) + 'b');
+            findSections(['# x' + ' '.repeat(20000) + '#']);
+            assert.ok(Date.now() - started < 200, 'heading parsing should not backtrack');
+        });
+    });
+
+    suite('link handler handshake', () => {
+        test('guards accept only well-formed messages', () => {
+            assert.ok(isLinkHandlerHelloMessage({ type: 'webnb.linkHandlerHello' }));
+            assert.ok(!isLinkHandlerHelloMessage({ type: 'webnb.openNotebookLink' }));
+            assert.ok(isLinkHandlerConfigMessage({ type: 'webnb.linkHandlerConfig', enabled: false }));
+            assert.ok(!isLinkHandlerConfigMessage({ type: 'webnb.linkHandlerConfig' }));
+        });
     });
 
     suite('parseNotebookLinkHref', () => {
@@ -126,6 +175,14 @@ suite('shared/notebookLinks', () => {
         test('ignores a bare # and closing hashes', () => {
             const sections = findSections(['#not-a-heading\n\n## Closed ##']);
             assert.deepStrictEqual(sections.map(s => s.slug), ['closed']);
+        });
+
+        test('numbers duplicate headings within one cell the way VS Code does', () => {
+            const sections = findSections(['# Intro\n## Intro\n## Intro', '# Intro']);
+            assert.deepStrictEqual(sections.map(s => [s.cellIndex, s.slug]), [
+                [0, 'intro'], [0, 'intro-1'], [0, 'intro-2'], [1, 'intro']
+            ]);
+            assert.strictEqual(findSectionCell(['# Intro\n## Intro'], 'intro-1'), 0);
         });
     });
 

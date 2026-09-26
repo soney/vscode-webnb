@@ -19,16 +19,37 @@ async function main() {
     const update = process.argv.includes('--update');
     const server = await startPreview(PORT);
     try {
-        const { result, pageErrors } = await captureAll(server.url);
+        const { result, pageErrors, notebookErrors } = await captureAll(server.url);
         if (pageErrors.length > 0) {
             console.error('Page errors during capture:\n  ' + pageErrors.join('\n  '));
+            process.exitCode = 1;
+            return;
+        }
+        const loadErrors = Object.entries(notebookErrors);
+        if (loadErrors.length > 0) {
+            console.error('Notebooks that did not load:\n  ' + loadErrors.map(([notebook, error]) => `${notebook}: ${error}`).join('\n  '));
             process.exitCode = 1;
             return;
         }
 
         const totalCells = Object.values(result).reduce((n, cells) => n + cells.length, 0);
         if (totalCells === 0) {
-            console.error('Captured 0 cells — the harness did not render anything.');
+            console.error('Captured 0 cells: the harness did not render anything.');
+            process.exitCode = 1;
+            return;
+        }
+
+        // A crash is never a golden: refuse it even under --update.
+        const broken = [];
+        for (const [notebook, cells] of Object.entries(result)) {
+            cells.forEach((cell, index) => {
+                if (cell.state !== 'rendered') {
+                    broken.push(`${notebook}[${index}] (${cell.language}): ${cell.state}${cell.renderError ? `: ${cell.renderError}` : ''}`);
+                }
+            });
+        }
+        if (broken.length > 0) {
+            console.error('Cells that did not render:\n  ' + broken.join('\n  '));
             process.exitCode = 1;
             return;
         }

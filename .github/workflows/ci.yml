@@ -7,15 +7,24 @@ on:
 
 jobs:
   build-and-test:
+    name: build-and-test (node ${{ matrix.node-version }})
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        # package.json engines: ^22.18.0 || >=24.11.0
+        node-version: [22, 24]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version: ${{ matrix.node-version }}
           cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            preview-extension/package-lock.json
 
       - name: Install dependencies
         run: npm ci
@@ -23,7 +32,7 @@ jobs:
       - name: Build (production, all four targets)
         run: npm run compile
 
-      - name: Lint
+      - name: Lint (warnings fail)
         run: npm run lint
 
       - name: Type-check every project
@@ -32,15 +41,50 @@ jobs:
           npx tsc --noEmit -p src/extension
           npx tsc --noEmit -p src/markdownItPlugin
           npx tsc --noEmit -p src/test
+          npx tsc --noEmit -p preview
 
       - name: Unit tests
         run: npm run test:unit
 
+      - name: VSIX contents and size (only out/, icons/ and the docs; at most 2 MiB)
+        run: npm run check:vsix
+
+      - name: Resolve the Playwright version
+        id: playwright
+        run: echo "version=$(node -p "require('playwright/package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Playwright browsers
+        id: playwright-cache
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-${{ runner.os }}-${{ steps.playwright.outputs.version }}
+
       - name: Install Chromium for browser tests
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
         run: npx playwright install --with-deps chromium
+
+      - name: Install Chromium's system libraries (browser restored from cache)
+        if: steps.playwright-cache.outputs.cache-hit == 'true'
+        run: npx playwright install-deps chromium
 
       - name: Renderer regression harness
         run: npm run test:harness
 
       - name: lite-cy browser specs
         run: npm run test:browser
+
+      # The side-by-side source preview builds from this repo's src/, so it is
+      # checked here too. Its course-corpus tests skip in CI (no course
+      # checkout); everything else runs. `check` type-checks with its own
+      # TypeScript, runs its tests, and builds both bundles.
+      - name: preview-extension install
+        working-directory: preview-extension
+        run: npm ci
+
+      - name: preview-extension type-check with the repo's TypeScript
+        run: npx tsc --noEmit -p preview-extension
+
+      - name: preview-extension type-check, tests, and build
+        working-directory: preview-extension
+        run: npm run check

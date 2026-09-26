@@ -94,10 +94,19 @@ div#html-output.webnb-output-empty:not(.webnb-output-mcq):not(.webnb-output-exte
   color: var(--vscode-editor-foreground);
 }
 
-.feedback-mcq .info::before,
-.feedback-mcq .error::before,
-.feedback-mcq .success::before {
+.feedback-mcq .info::before {
   content: "";
+  margin: 0;
+}
+
+/* Right and wrong are marked, not only colored. */
+.feedback-mcq .success::before {
+  content: "\2713\00a0";
+  margin: 0;
+}
+
+.feedback-mcq .error::before {
+  content: "\2717\00a0";
   margin: 0;
 }
 
@@ -281,10 +290,18 @@ div#html-output.webnb-output-empty:not(.webnb-output-mcq):not(.webnb-output-exte
   line-height: 1.4;
 }
 
-.mcq-option-feedback.info::before,
-.mcq-option-feedback.error::before,
-.mcq-option-feedback.success::before {
+.mcq-option-feedback.info::before {
   content: "";
+  margin: 0;
+}
+
+.mcq-option-feedback.success::before {
+  content: "\2713\00a0";
+  margin: 0;
+}
+
+.mcq-option-feedback.error::before {
+  content: "\2717\00a0";
   margin: 0;
 }
 
@@ -743,4 +760,29 @@ button.walkthrough-line-number:hover {
   border-radius: 6px;
   padding: 8px 12px;
   background: var(--vscode-editor-background);
+}
+
+/* Read by screen readers, not shown. */
+.webnb-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* A cell whose output could not be drawn says so inside the output itself. */
+.webnb-render-error {
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--vscode-inputValidation-errorBorder, var(--vscode-errorForeground));
+  border-radius: 6px;
+  background: var(--vscode-inputValidation-errorBackground, transparent);
+  color: var(--vscode-errorForeground, var(--vscode-editor-foreground));
+  font-family: var(--vscode-editor-font-family, monospace);
+  white-space: pre-wrap;
 }

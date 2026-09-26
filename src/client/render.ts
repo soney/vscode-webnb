@@ -4,15 +4,18 @@
  * modules (mcq, checks, terminal, walkthroughRender, ...) and owns the
  * lexical scope that evaluated notebook code sees.
  *
- * IMPORTANT: the bare eval() calls in the branches below deliberately expose
- * this function's local bindings (console, document, assert, assertRule, wrap,
- * check, checklist, file, createFileResult, files, source, cy, sy,
- * defaultSource, terminal, renderReact, pathModule, ...) to notebook and addon
- * code. Deep internals that were incidentally visible before the split
- * (terminal/console/check-DSL implementation helpers) are intentionally no
- * longer in scope. Renaming, moving, or removing
- * any of those locals is an API change for existing notebooks, invisible to
- * the type checker — keep the preview harness green across all languages.
+ * IMPORTANT: evalCellCode() runs notebook and addon code with a direct eval,
+ * which deliberately exposes this function's local bindings (console,
+ * document, window, assert, assertRule, wrap, check, checklist, file,
+ * createFileResult, files, source, cy, sy, defaultSource, terminal,
+ * renderReact, React, ReactDOM, pathModule, the timer functions, ...) to that
+ * code; the node/react/module sandbox passes the same names explicitly.
+ * `document` and `window` are the cell-scoped stand-ins from cellGlobals.ts,
+ * not the webview's own. Deep internals that were incidentally visible before
+ * the split (terminal/console/check-DSL implementation helpers) are
+ * intentionally no longer in scope. Renaming, moving, or removing any of those
+ * locals is an API change for existing notebooks, invisible to the type
+ * checker -- keep the preview harness green across all languages.
  */
 import cy from './lite-cy';
 import { createNodeProcess, createRuntimeRequire, pathModule as importedPathModule } from './runtime';
@@ -27,7 +30,7 @@ import { renderCellActions } from './cellActions';
 import { createFeedback, type messageType } from './feedback';
 import { attachHtmlConsoleCapture, createCellConsole } from './consoleCapture';
 import { renderMcqCell } from './mcq';
-import { createTerminalController, parseTerminalAddon } from './terminal';
+import { createTerminalController, parseTerminalAddon, parseTerminalHistoryAddon, serializeTerminalHistoryAddon } from './terminal';
 import {
     createCheckApi,
     createChecklistFeedback,
@@ -41,6 +44,7 @@ import type {
 } from '../shared/protocol';
 import {
     getAddonContent,
+    hasAddon,
     isCssAddon,
     isExternalCheckLanguage,
     isHtmlAddon,
@@ -49,9 +53,13 @@ import {
     isTerminalAddon
 } from '../shared/addons';
 import { AUTO_OUTPUT_HEIGHT, parseOutputHeight } from '../shared/outputHeight';
+import { LEARNER_OUTPUT_ATTRIBUTE } from '../shared/notebookLinks';
+import { createCellGlobals, describeAsyncError } from './cellGlobals';
+import { createLoopFailure, insertLoopGuards } from './loopGuard';
 import * as Babel from '@babel/standalone';
 import * as React from 'react';
-import { createRoot, type Root } from 'react-dom/client';
+import { flushSync } from 'react-dom';
+import { createRoot, type Root, type RootOptions } from 'react-dom/client';
 
 /** The slice of the notebook-renderer context render() actually uses; the
  * preview harness provides just this instead of a full RendererContext. */
@@ -117,6 +125,53 @@ function getRuntimeLanguageKind(language: string): RuntimeLanguageKind | undefin
     return undefined;
 }
 
+/**
+ * Parses an HTML cell's source the way the page would, for assertions the
+ * rendered output cannot answer: `innerHTML` on a div drops <html>, <head> and
+ * <body>, so `assert('body')` would never match. DOMParser keeps them, but it
+ * also invents them when the source has none, and an invented element is no
+ * evidence the learner wrote it. So each of the three that the source does not
+ * actually spell out is renamed to `webnb-implicit-*`, where no selector a
+ * test writes can match it (and `body > ul` stops matching through it).
+ */
+function parseExplicitSource(markup: string): Element {
+    const parsed = new DOMParser().parseFromString(markup, 'text/html');
+    const spelledOut = (tag: string) => new RegExp(`<${tag}(\\s|>|/)`, 'i').test(markup);
+    const standIn = (element: Element, tag: string): Element => {
+        const explicit = spelledOut(tag);
+        const copy = document.createElement(explicit ? tag : `webnb-implicit-${tag}`);
+        if (explicit) {
+            for (const attribute of Array.from(element.attributes)) {
+                copy.setAttribute(attribute.name, attribute.value);
+            }
+        }
+        return copy;
+    };
+    const html = standIn(parsed.documentElement, 'html');
+    const head = standIn(parsed.head, 'head');
+    const body = standIn(parsed.body, 'body');
+    head.append(...Array.from(parsed.head.childNodes));
+    body.append(...Array.from(parsed.body.childNodes));
+    html.append(head, body);
+    const holder = document.createElement('div');
+    holder.append(html);
+    return holder;
+}
+
+/**
+ * Wraps sandboxed code in a block so its own declarations can shadow the
+ * sandbox's parameter names: `const file = 'notes.txt'` in a node cell would
+ * otherwise be a SyntaxError ("Identifier 'file' has already been
+ * declared"). A leading "use strict" stays outside the block, where it still
+ * counts as a directive.
+ */
+function wrapInBlock(code: string): string {
+    const directive = /^\s*(['"])use strict\1;?/.exec(code);
+    return directive
+        ? `${directive[0]}{${code.slice(directive[0].length)}\n}`
+        : `{${code}\n}`;
+}
+
 // This function is called to render your contents.
 export function render({ container, feedback, mime, value, style, addStyle, console: consoleElement, widgetHost, context }: IRenderInfo): void | (() => void) {
     const { language, source, addons } = value;
@@ -131,8 +186,8 @@ export function render({ container, feedback, mime, value, style, addStyle, cons
     const postToHost = (message: WebNbRendererMessage): void => {
         context.postMessage?.(message);
     };
-    // Solution addons never execute and stay hidden unless the cell's `reveal`
-    // attribute opts into the reader-facing "View solution" control.
+    // Solution addons never execute, and stay hidden unless the host allows
+    // revealing them (the webnb.allowRevealingSolutions setting, as `reveal`).
     const solutionAddon = Array.isArray(addons)
         ? addons.find((addon: Addon) => isSolutionAddon(addon.type))
         : undefined;
@@ -159,10 +214,22 @@ export function render({ container, feedback, mime, value, style, addStyle, cons
     const terminalAddon = activeAddons.find(addon => isTerminalAddon(addon.type));
     const terminalConfig = terminalAddon ? parseTerminalAddon(terminalAddon.content) : undefined;
     const terminalCellKey = typeof value.cellUri === 'string' ? value.cellUri : `webnb:${language}`;
+    const canSaveToCell = typeof value.cellUri === 'string' && typeof context.postMessage === 'function';
     const terminalController = createTerminalController({
         widgetHost,
         cellKey: terminalCellKey,
         config: terminalConfig,
+        // The commands a learner ran are saved in the cell, so a terminal
+        // checklist survives closing the notebook or reloading the lab.
+        savedHistory: terminalConfig ? parseTerminalHistoryAddon(getAddonContent(activeAddons, 'history')) : undefined,
+        onHistoryChanged: terminalConfig && canSaveToCell
+            ? history => postToHost({
+                type: 'webnb.upsertCellAddon',
+                cellUri: value.cellUri,
+                addonType: 'history',
+                content: serializeTerminalHistoryAddon(history)
+            })
+            : undefined,
         onCommandRan: command => {
             if (!command.trim()) {
                 return;
@@ -187,13 +254,27 @@ export function render({ container, feedback, mime, value, style, addStyle, cons
     let walkthroughHoverBridge: WalkthroughHoverBridge | undefined;
 
     const { appendFeedback, addFeedback } = createFeedback(feedback);
-    const { console, recordConsoleMessage } = createCellConsole(consoleElement);
+    const { console, recordConsoleMessage, reportUncaught } = createCellConsole(consoleElement);
+    // The page globals the cell's code sees: DOM queries scoped to this cell,
+    // timers and global listeners cleared on the next run, and asynchronous
+    // errors shown in this cell's console.
+    const cellScope = createCellGlobals({
+        root: container,
+        console,
+        reportError: (error, kind) => reportUncaught(describeAsyncError(error, kind))
+    });
+    const isLearnerMarkup = language === 'html' || language === 'css' || runtimeLanguageKind !== undefined;
+    if (isLearnerMarkup) {
+        container.setAttribute(LEARNER_OUTPUT_ATTRIBUTE, '');
+    } else {
+        container.removeAttribute(LEARNER_OUTPUT_ATTRIBUTE);
+    }
     const addChecklistFeedback = createChecklistFeedback(feedback);
     const checkApi = createCheckApi({
         files,
         terminal,
         didLog: expected => console.didLog(expected),
-        addFeedback,
+        appendFeedback,
         deferChecklistRendering,
         addChecklistFeedback
     });
@@ -206,29 +287,38 @@ export function render({ container, feedback, mime, value, style, addStyle, cons
     const reportAssertion = (passed: boolean, message: string, _trace: string[]) => {
         appendFeedback(`${message}`, passed ? 'success' : 'error');
     };
+    // React commits a click's state update in a microtask; flushing it right
+    // after the event lets the next assertion in the same test see the result.
+    const afterAction = runtimeLanguageKind === 'react' ? () => flushSync(() => undefined) : undefined;
     function assert(selector: string) {
         const onResult = reportAssertion;
         // Browsers strip <html> and <body> when setting innerHTML on a div, so
         // these structural elements won't be found in the container. Parse the
-        // source with DOMParser instead so document-structure assertions work.
-        // The nodes are flagged `sourceOnly` so negated assertions ignore them:
-        // this fallback only ever runs when the render matched nothing, which is
-        // exactly when `not.exist` should pass, so letting it match would turn a
-        // correct answer into a failure. DOMParser also synthesizes
-        // <html>/<head>/<body> even when the source has none, so source matches
-        // are no evidence at all that the learner wrote the element.
+        // source instead so document-structure assertions work (see
+        // parseExplicitSource for why invented elements never match). The
+        // nodes are flagged `sourceOnly` so negated assertions ignore them:
+        // this fallback only ever runs when the render matched nothing, which
+        // is exactly when `not.exist` should pass.
         if (language === 'html' && container.querySelectorAll(selector).length === 0) {
-            const doc = new DOMParser().parseFromString(source, 'text/html');
-            const nodes = Array.from(doc.querySelectorAll(selector)) as Element[];
+            const nodes = Array.from(parseExplicitSource(source).querySelectorAll(selector));
             if (nodes.length > 0) {
-                return cy(nodes, onResult, { sourceOnly: true });
+                return cy(nodes, onResult, { sourceOnly: true, afterAction });
             }
         }
-        return cy(container, onResult).get(selector);
+        return cy(container, onResult, { afterAction }).get(selector);
     }
 
+    // Only this cell's own stylesheets: its CSS, its CSS addons and any <style>
+    // in its markup -- never another cell's rules or the renderer's own.
+    const cellStyleSheets = (): CSSStyleSheet[] => {
+        const rootNode = container.getRootNode();
+        const sheets = typeof ShadowRoot !== 'undefined' && rootNode instanceof ShadowRoot
+            ? Array.from(rootNode.styleSheets)
+            : [];
+        return sheets.filter(sheet => sheet.ownerNode !== style);
+    };
     function assertRule(selector: string) {
-        return cy.getRule(selector, reportAssertion);
+        return cy.getRule(selector, reportAssertion, cellStyleSheets());
     }
     function wrap(object: any) {
         return cy.wrap(object, reportAssertion);
@@ -249,17 +339,91 @@ export function render({ container, feedback, mime, value, style, addStyle, cons
         return () => window.clearTimeout(timer);
     }
 
+    // React roots this run created, through renderReact or a direct
+    // ReactDOM.createRoot; all of them unmount on the next run.
+    const reactRoots = new Set<Root>();
+    const reactRootOptions: RootOptions = {
+        // React reports a render error here instead of throwing it to the
+        // cell's code, so without this a broken component is a blank output.
+        onUncaughtError: error => reportUncaught(describeAsyncError(error, 'uncaught'))
+    };
+    const createCellRoot = (host: Element | DocumentFragment, options?: RootOptions) => {
+        const created = createRoot(host, { ...reactRootOptions, ...options });
+        reactRoots.add(created);
+        // Commit synchronously, so the cell's own tests (which run right
+        // after its code) see what was rendered.
+        const wrapped: Root = {
+            render: (children: React.ReactNode) => flushSync(() => created.render(children)),
+            unmount: () => {
+                reactRoots.delete(created);
+                created.unmount();
+            }
+        };
+        return wrapped;
+    };
+
     // Every exit path returns this same cleanup — a missed early return here
     // used to leak the xterm instance when compilation failed.
     const cleanup = () => {
         htmlConsoleCleanup?.();
         refreshCleanup?.();
         walkthroughHoverBridge?.dispose();
-        reactRoot?.unmount();
+        for (const created of reactRoots) {
+            created.unmount();
+        }
+        reactRoots.clear();
         terminalController.dispose();
+        cellScope.dispose();
     };
 
     terminalController.mount();
+
+    // The runtime names evaluated code can use, in every cell type.
+    const ReactDOM = { createRoot: createCellRoot };
+    const runtimeRequire = createRuntimeRequire(ReactDOM);
+    const nodeProcess = createNodeProcess();
+    // Rebound as a local because webpack rewrites import bindings — the
+    // bare name must survive in scope for eval'd cell code that uses it.
+    const pathModule = importedPathModule;
+    const renderReact = (element: React.ReactNode, selector = '#root') => {
+        const host = container.querySelector(selector);
+        if (!host) {
+            throw new Error(`React mount target \`${selector}\` was not found. Add matching HTML or use the default #root.`);
+        }
+        reactRoot?.unmount();
+        reactRoot = createCellRoot(host);
+        reactRoot.render(element);
+    };
+    const loopFailure = createLoopFailure();
+
+    /**
+     * Runs notebook or addon code with a direct eval, so it sees this
+     * function's locals (see the header) plus the cell-scoped page globals
+     * declared here. The sourceURL suffix lets an error the code throws later
+     * be traced back to this cell.
+     */
+    const evalCellCode = (code: string): unknown => {
+        // Unused as far as the type checker can tell: they exist for the eval.
+        // (A minifier keeps every binding in a scope that contains a direct eval.)
+        const { document, window, setTimeout, clearTimeout, setInterval, clearInterval, requestAnimationFrame, cancelAnimationFrame } = cellScope;
+        const __webnbNow = Date.now;
+        const __webnbLoopFail = loopFailure;
+        cellScope.markActive();
+        return eval(code + cellScope.sourceUrlComment);
+    };
+
+    /**
+     * An error thrown while a cell's test code runs. When an earlier check
+     * already failed, the throw is almost always that same failure one step
+     * later (an element the test needs is missing), so the learner is pointed
+     * at the first failure rather than at a stack trace.
+     */
+    const reportScriptError = (error: unknown, what: string) => {
+        const earlierFailure = Array.from(feedback.children).some(child => child.classList.contains('error'));
+        appendFeedback(earlierFailure
+            ? 'The remaining checks could not run until the ones above pass.'
+            : `Error in ${what}: ${error}`, 'error');
+    };
 
     // Code cells get their action strip (View solution / Reset code) before the
     // dispatch below, so a cell whose code throws still shows its actions.
@@ -269,6 +433,7 @@ export function render({ container, feedback, mime, value, style, addStyle, cons
             language,
             source,
             defaultSource,
+            hasDefault: hasAddon(activeAddons, 'default'),
             solution: solutionAddon?.content,
             reveal,
             onReset: value.cellUri && typeof context.postMessage === 'function'
@@ -286,10 +451,16 @@ export function render({ container, feedback, mime, value, style, addStyle, cons
         container.innerHTML = source;
         htmlConsoleCleanup = attachHtmlConsoleCapture(container, recordConsoleMessage);
 
+        if (activeAddons.some(addon => isScriptAddon(addon.type))) {
+            feedback.innerHTML = '';
+        }
         for (const { type, content } of activeAddons) {
             if (isScriptAddon(type)) {
-                feedback.innerHTML = '';
-                eval(content);
+                try {
+                    evalCellCode(content);
+                } catch (error) {
+                    reportScriptError(error, 'test code');
+                }
             } else if (isCssAddon(type)) {
                 addStyle(content);
             }
@@ -303,7 +474,11 @@ export function render({ container, feedback, mime, value, style, addStyle, cons
             } else if (isCssAddon(type)) {
                 addStyle(content);
             } else if (isScriptAddon(type)) {
-                eval(content);
+                try {
+                    evalCellCode(content);
+                } catch (error) {
+                    reportScriptError(error, 'test code');
+                }
             }
         }
     } else if (isExternalCheckLanguage(language)) {
@@ -315,7 +490,7 @@ export function render({ container, feedback, mime, value, style, addStyle, cons
         for (const { type, content } of activeAddons) {
             if (isScriptAddon(type)) {
                 try {
-                    eval(content);
+                    evalCellCode(content);
                 } catch (error) {
                     results.push(createFileResult(`Error in external check test: ${error}`, false, `${error}`));
                 }
@@ -324,7 +499,9 @@ export function render({ container, feedback, mime, value, style, addStyle, cons
         const deferred = checkApi.getDeferred();
         results.push(...deferred.results);
 
-        const shouldRefresh = results.length > 0 && !terminalConfig;
+        // Re-checking needs the host; without it, do not promise a re-check.
+        const canRefresh = !!value.cellUri && typeof context.postMessage === 'function';
+        const shouldRefresh = results.length > 0 && !terminalConfig && canRefresh;
         const allPassed = addChecklistFeedback(results, parsedChecklist.title || deferred.title, {
             checkedAt: value.checkedAt,
             intervalMs: parsedChecklist.intervalMs,
@@ -402,25 +579,6 @@ export function render({ container, feedback, mime, value, style, addStyle, cons
             container.innerHTML = '<div id="root"></div>';
         }
 
-        const document = container;
-        (document as any).body = container;
-
-        const ReactDOM = { createRoot };
-        const runtimeRequire = createRuntimeRequire(ReactDOM);
-        const nodeProcess = createNodeProcess();
-        // Rebound as a local because webpack rewrites import bindings — the
-        // bare name must survive in scope for eval'd cell code that uses it.
-        const pathModule = importedPathModule;
-        const renderReact = (element: React.ReactNode, selector = '#root') => {
-            const host = container.querySelector(selector);
-            if (!host) {
-                throw new Error(`React mount target \`${selector}\` was not found. Add matching HTML or use the default #root.`);
-            }
-            reactRoot?.unmount();
-            reactRoot = createRoot(host as Element);
-            reactRoot.render(element);
-        };
-
         const runCompiledCode = (compiledCode: string) => {
             const nodeModule: { exports: unknown } = { exports: {} };
 
@@ -429,8 +587,14 @@ export function render({ container, feedback, mime, value, style, addStyle, cons
             // cannot drift out of sync.
             const sandboxScope: Record<string, unknown> = {
                 console,
-                document,
-                window,
+                document: cellScope.document,
+                window: cellScope.window,
+                setTimeout: cellScope.setTimeout,
+                clearTimeout: cellScope.clearTimeout,
+                setInterval: cellScope.setInterval,
+                clearInterval: cellScope.clearInterval,
+                requestAnimationFrame: cellScope.requestAnimationFrame,
+                cancelAnimationFrame: cellScope.cancelAnimationFrame,
                 assert,
                 assertRule,
                 wrap,
@@ -450,23 +614,37 @@ export function render({ container, feedback, mime, value, style, addStyle, cons
                 module: nodeModule,
                 exports: nodeModule.exports,
                 __dirname: '.',
-                __filename: 'cell.js'
+                __filename: 'cell.js',
+                __webnbNow: Date.now,
+                __webnbLoopFail: loopFailure
             };
-            const execute = new Function(...Object.keys(sandboxScope), compiledCode);
+            const execute = new Function(...Object.keys(sandboxScope), wrapInBlock(compiledCode) + cellScope.sourceUrlComment);
+            cellScope.markActive();
             execute(...Object.values(sandboxScope));
 
             return nodeModule.exports;
         };
 
         try {
+            // A referenced JavaScript cell (`+id=name`) runs first, the way an
+            // earlier <script> tag would: Course 3 teaches that "a library is
+            // just a script file that ran before yours". Tests and other script
+            // addons run after the cell's code.
+            let prelude = '';
             let toEval = source;
             let hasTestAddon = false;
-            for (const { type, content } of activeAddons) {
-                if (isScriptAddon(type)) {
+            for (const { type, content, id } of activeAddons) {
+                if (!isScriptAddon(type)) {
+                    continue;
+                }
+                if (id) {
+                    prelude += content + '\n\n';
+                } else {
                     toEval += '\n\n' + content;
                     hasTestAddon = true;
                 }
             }
+            toEval = prelude + toEval;
             if (hasTestAddon) {
                 feedback.innerHTML = '';
             }
@@ -482,6 +660,8 @@ export function render({ container, feedback, mime, value, style, addStyle, cons
             const hasDynamicImport = /\bimport\s*\(/.test(toEval);
             const needsModuleTransform = hasModuleSyntax || hasDynamicImport;
             const shouldCompileWithBabel = isReactLanguage || needsModuleTransform;
+            // Guard every loop against running forever (see loopGuard.ts).
+            const guarded = insertLoopGuards(toEval, { jsx: isReactLanguage, module: needsModuleTransform });
 
             if (shouldCompileWithBabel) {
                 const babelOptions: Record<string, unknown> = {};
@@ -507,7 +687,7 @@ export function render({ container, feedback, mime, value, style, addStyle, cons
                         : ['transform-modules-commonjs'];
                 }
 
-                const transformed = Babel.transform(toEval, babelOptions as any).code;
+                const transformed = Babel.transform(guarded, babelOptions as any)?.code;
                 if (!transformed) {
                     const compileTarget = isReactLanguage ? 'React' : 'module';
                     addFeedback(`${compileTarget} code could not be compiled.`, 'error');
@@ -516,13 +696,13 @@ export function render({ container, feedback, mime, value, style, addStyle, cons
 
                 runCompiledCode(transformed);
             } else if (isNodeLanguage) {
-                runCompiledCode(toEval);
+                runCompiledCode(guarded);
             } else {
-                eval(toEval);
+                evalCellCode(guarded);
             }
         } catch (error) {
             const runtimeName = runtimeLanguageKind === 'react' ? 'React' : runtimeLanguageKind === 'node' ? 'Node' : 'JavaScript';
-            addFeedback(`Error in ${runtimeName} code: ${error}`, 'error');
+            reportScriptError(error, `${runtimeName} code`);
         }
     } else {
         const pre = document.createElement('pre');

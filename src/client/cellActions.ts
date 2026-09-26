@@ -1,8 +1,8 @@
 /**
  * The action strip under a code cell's output: "View solution" (when the cell
- * carries a `+solution` addon and its fence opts in with the `reveal`
- * attribute) and "Reset code" (when a `+default` addon differs from what the
- * cell currently says). MCQ cells have their own controls in mcq.ts.
+ * carries a `+solution` addon and the `webnb.allowRevealingSolutions` setting
+ * is on) and "Reset code" (when a `+default` addon differs from what the cell
+ * currently says). MCQ cells have their own controls in mcq.ts.
  */
 import { renderCodeBlockHtml } from './syntaxHighlight';
 
@@ -19,18 +19,25 @@ export interface CellActionsOptions {
     source: string;
     /** The `+default` addon (starter code); empty when the cell has none. */
     defaultSource: string;
+    /** Whether the cell has a `+default` at all: an empty one is an empty starter. */
+    hasDefault: boolean;
     /** The `+solution` addon content; undefined when the cell has none. */
     solution?: string;
-    /** The cell's `reveal` attribute; without it the solution stays hidden. */
+    /** Whether solutions may be revealed (the webnb.allowRevealingSolutions setting). */
     reveal: boolean;
     /** Posts the reset request to the kernel; absent when the host cannot. */
     onReset?: () => void;
 }
 
-export function renderCellActions({ host, language, source, defaultSource, solution, reveal, onReset }: CellActionsOptions): void {
+/** Unique ids for aria wiring; outputs share one webview document. */
+let nextSolutionPanelId = 0;
+
+export function renderCellActions({ host, language, source, defaultSource, hasDefault, solution, reveal, onReset }: CellActionsOptions): void {
     const showSolution = reveal && typeof solution === 'string' && solution.trim().length > 0;
+    // An empty `+default` is a real starter (the cell shipped empty), so a
+    // learner who typed into an empty exercise can still reset it.
     const showReset = typeof onReset === 'function'
-        && defaultSource.trim().length > 0
+        && hasDefault
         && defaultSource !== source;
     if (!showSolution && !showReset) {
         return;
@@ -48,7 +55,10 @@ export function renderCellActions({ host, language, source, defaultSource, solut
 
         solutionPanel = document.createElement('div');
         solutionPanel.classList.add('webnb-solution-panel');
+        solutionPanel.id = `webnb-solution-${nextSolutionPanelId++}`;
         solutionPanel.hidden = true;
+        toggle.setAttribute('aria-expanded', 'false');
+        toggle.setAttribute('aria-controls', solutionPanel.id);
         solutionPanel.innerHTML = renderCodeBlockHtml({
             text: solution,
             lang: HIGHLIGHT_LANGUAGE_ALIASES[language] ?? language
@@ -60,6 +70,7 @@ export function renderCellActions({ host, language, source, defaultSource, solut
             }
             solutionPanel.hidden = !solutionPanel.hidden;
             toggle.textContent = solutionPanel.hidden ? 'View solution' : 'Hide solution';
+            toggle.setAttribute('aria-expanded', String(!solutionPanel.hidden));
         });
         actions.append(toggle);
     }

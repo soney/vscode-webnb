@@ -152,9 +152,9 @@
         "gen-vsix": "npm run compile && vsce package --no-dependencies --allow-missing-repository -o webnb-source-preview.vsix"
     },
     "devDependencies": {
-        "@types/node": "^22.10.2",
-        "@types/vscode": "^1.90.0",
-        "esbuild": "^0.28.1",
-        "typescript": "^5.7.2"
+        "@types/node": "^22.20.4",
+        "@types/vscode": "1.90.0",
+        "esbuild": "^0.28.2",
+        "typescript": "^7.0.2"
     }
 }

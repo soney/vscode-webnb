@@ -16,6 +16,8 @@
  *    not compared: a learner checking the shape of their object should not
  *    have to reproduce its class.
  *  - Circular structures terminate instead of overflowing the stack.
+ *  - DOM nodes compare by identity: two different <p> elements are two
+ *    elements, however alike their (enumerable, mostly empty) properties.
  */
 export function deepEqual(a: unknown, b: unknown): boolean {
     return equals(a, b, new Map());
@@ -29,9 +31,10 @@ function kindOf(value: object): string {
 /**
  * `seen` maps each left-hand object to the right-hand objects it is already
  * being compared against, which is what stops circular structures from
- * recursing forever. Pairs are never removed: a pair that finished comparing
- * unequal has already aborted the whole walk, so a pair seen twice is either
- * still in progress (circular) or known equal. Either way, `true` is right.
+ * recursing forever: a pair seen again while still in progress is circular,
+ * and counts as equal. A pair that finishes unequal is taken back out, because
+ * a Set's member search compares candidates that are allowed to fail without
+ * ending the walk, and a remembered failure would later read as equal.
  */
 function equals(a: unknown, b: unknown, seen: Map<object, Set<object>>): boolean {
     if (a === b) {
@@ -45,6 +48,10 @@ function equals(a: unknown, b: unknown, seen: Map<object, Set<object>>): boolean
     }
 
     if (a === null || b === null || typeof a !== 'object' || typeof b !== 'object') {
+        return false;
+    }
+
+    if (typeof Node !== 'undefined' && (a instanceof Node || b instanceof Node)) {
         return false;
     }
 
@@ -63,6 +70,14 @@ function equals(a: unknown, b: unknown, seen: Map<object, Set<object>>): boolean
         seen.set(a, new Set([b]));
     }
 
+    const result = compareSameKind(a, b, kind, seen);
+    if (!result) {
+        seen.get(a)?.delete(b);
+    }
+    return result;
+}
+
+function compareSameKind(a: object, b: object, kind: string, seen: Map<object, Set<object>>): boolean {
     switch (kind) {
         case 'Date':
             // Object.is so two Invalid Dates (both NaN) count as equal.

@@ -4,6 +4,7 @@
   "description": "Tiny .webnb-debug notebook extension used to isolate notebook open/execution URI issues.",
   "version": "0.0.1",
   "publisher": "oney",
+  "private": true,
   "license": "MIT",
   "engines": {
     "vscode": "^1.90.0"

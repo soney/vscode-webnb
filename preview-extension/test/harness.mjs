@@ -4,6 +4,7 @@
  * only uses it for the NotebookCellKind enum.
  */
 import { build } from 'esbuild';
+import { existsSync } from 'node:fs';
 import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -12,37 +13,32 @@ import { fileURLToPath } from 'node:url';
 const testDir = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(testDir, '..');
 export const samplesDir = path.resolve(root, '..', 'samplenotebooks');
-/** The course notebooks, when this repo is checked out inside that course. */
+
+/**
+ * The course notebooks, when this repo is the Practical JavaScript course's
+ * vscode-extensions/vscode-webnb submodule: content/notebooks/ since the
+ * course's 2026-08 restructure, notebooks/ before it. WEBNB_NOTEBOOKS points
+ * anywhere else.
+ */
+function defaultNotebooksDir() {
+    const courseRoot = path.resolve(root, '..', '..', '..');
+    const candidates = [path.join(courseRoot, 'content', 'notebooks'), path.join(courseRoot, 'notebooks')];
+    return candidates.find(candidate => existsSync(candidate)) ?? candidates[0];
+}
+
 export const notebooksDir = process.env.WEBNB_NOTEBOOKS
     ? path.resolve(process.env.WEBNB_NOTEBOOKS)
-    : path.resolve(root, '..', '..', '..', 'notebooks');
+    : defaultNotebooksDir();
 
 const ENTRY = `
 export { parseMarkdown, writeCellsToMarkdown } from '@webnb/extension/markdownParser';
+// The notebook's own open and save paths, metadata mapping and all, so a test
+// round-trips a file exactly the way VS Code does.
+export { deserializeWebnb, serializeWebnb } from '@webnb/extension/serializer';
 export { computeCellSpans } from '../src/extension/cellSpans.ts';
+export { parseDocumentCells } from '../src/extension/parseDocument.ts';
 export { blockSourceLines } from '../src/webview/markdown.ts';
 export const CODE = 2;
-
-/** The RawNotebookCell -> NotebookCellData mapping serializer.ts performs. */
-export function toCellData(raw) {
-    return raw.map(cell => ({
-        kind: cell.kind,
-        languageId: cell.language,
-        value: cell.content,
-        metadata: {
-            leadingWhitespace: cell.leadingWhitespace,
-            trailingWhitespace: cell.trailingWhitespace,
-            indentation: cell.indentation,
-            addons: cell.addons,
-            addonWhitespace: cell.addonWhitespace,
-            id: cell.id,
-            autorun: cell.autorun,
-            runonstart: cell.runonstart,
-            hidecode: cell.hidecode,
-            height: cell.height
-        }
-    }));
-}
 `;
 
 /**

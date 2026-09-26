@@ -10,6 +10,26 @@ import {
 
 suite('client/mcq', () => {
     suite('parseMcqSource', () => {
+        test('lines inside a code sample stay question text', () => {
+            const parsed = parseMcqSource([
+                'What does this log?',
+                '~~~js',
+                'const answer = {',
+                '  correct: false,',
+                '  wrong: 0,',
+                '};',
+                '[x] not an option',
+                '~~~',
+                '[x] false',
+                '[ ] 0',
+            ].join('\n'));
+            assert.strictEqual(parsed.correctFeedback, undefined);
+            assert.strictEqual(parsed.wrongFeedback, undefined);
+            assert.deepStrictEqual(parsed.options.map(option => option.text), ['false', '0']);
+            assert.ok(parsed.question.includes('  correct: false,'), parsed.question);
+            assert.ok(parsed.question.includes('[x] not an option'), parsed.question);
+        });
+
         test('parses question, options, per-option feedback, and top-level feedback', () => {
             const source = [
                 'What is 2+2?',

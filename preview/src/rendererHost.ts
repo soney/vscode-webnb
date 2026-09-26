@@ -17,8 +17,12 @@ export interface PreviewRendererContext {
     postMessage(message: RendererMessage): void;
 }
 
+/**
+ * Adds the error below whatever the failed render drew. The root is not
+ * cleared: the mount owns its children (the feedback pane may persist across
+ * renders) and removes this box itself on the next render.
+ */
 function renderError(root: HTMLElement, error: unknown): void {
-    root.innerHTML = '';
     const box = document.createElement('pre');
     box.className = 'webnb-render-error';
     box.textContent = `Renderer error:\n${error instanceof Error ? (error.stack || error.message) : String(error)}`;

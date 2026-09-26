@@ -15,6 +15,7 @@ import {
     RELATIVE_PATHS_ERROR,
     resolveWorkspaceRelativePath
 } from '../shared/filePaths';
+import { isRealPathInside } from './workspaceContainment';
 
 function fileTypeToString(type: vscode.FileType): WorkspaceFileSnapshotEntry['type'] {
     if (type & vscode.FileType.Directory) {
@@ -29,32 +30,59 @@ function fileTypeToString(type: vscode.FileType): WorkspaceFileSnapshotEntry['ty
     return 'unknown';
 }
 
-function getNotebookRelativeDir(cell: vscode.NotebookCell): string {
-    const notebookPath = vscode.workspace.asRelativePath(cell.notebook.uri, false).replace(/\\/g, '/');
-    const slashIndex = notebookPath.lastIndexOf('/');
-    if (slashIndex < 0) {
-        return '';
-    }
-
-    return notebookPath.slice(0, slashIndex);
+/** Where a cell's paths resolve from, and the notebook's own directory within it. */
+interface ResolutionRoot {
+    root: vscode.Uri;
+    notebookRelativeDir: string;
 }
 
-function getWorkspaceFolderFor(cell: vscode.NotebookCell): vscode.WorkspaceFolder | undefined {
-    return vscode.workspace.getWorkspaceFolder(cell.notebook.uri) ?? vscode.workspace.workspaceFolders?.[0];
+/**
+ * The workspace folder holding the notebook, with the notebook's directory
+ * relative to it. A notebook no folder holds -- one opened on its own -- uses
+ * its own directory for both, so its relative paths still resolve where the
+ * author meant; an untitled notebook has no directory at all.
+ */
+function getResolutionRoot(cell: vscode.NotebookCell): ResolutionRoot | undefined {
+    const folder = vscode.workspace.getWorkspaceFolder(cell.notebook.uri);
+    if (folder) {
+        const notebookPath = vscode.workspace.asRelativePath(cell.notebook.uri, false).replace(/\\/g, '/');
+        const slashIndex = notebookPath.lastIndexOf('/');
+        return { root: folder.uri, notebookRelativeDir: slashIndex < 0 ? '' : notebookPath.slice(0, slashIndex) };
+    }
+    if (cell.notebook.isUntitled || cell.notebook.uri.scheme === 'untitled') {
+        return undefined;
+    }
+    return { root: vscode.Uri.joinPath(cell.notebook.uri, '..'), notebookRelativeDir: '' };
+}
+
+function resolveInRoot(resolution: ResolutionRoot, reference: Parameters<typeof resolveWorkspaceRelativePath>[0], normalizedPath: string): vscode.Uri {
+    const workspaceResolvedPath = resolveWorkspaceRelativePath(reference, normalizedPath, resolution.notebookRelativeDir);
+    return vscode.Uri.joinPath(resolution.root, ...workspaceResolvedPath.split('/'));
 }
 
 /** Resolves a `file:` path written in a cell to a workspace file URI. */
 export function resolveWorkspaceFileUri(cell: vscode.NotebookCell, requestPath: string): vscode.Uri | undefined {
     const reference = parseRequestedPathReference(requestPath);
     const normalizedPath = normalizeWorkspacePath(reference.path);
-    const workspaceFolder = getWorkspaceFolderFor(cell);
-    if (!normalizedPath || !workspaceFolder) {
+    const resolution = getResolutionRoot(cell);
+    if (!normalizedPath || !resolution) {
         return undefined;
     }
 
-    const notebookRelativeDir = getNotebookRelativeDir(cell);
-    const workspaceResolvedPath = resolveWorkspaceRelativePath(reference, normalizedPath, notebookRelativeDir);
-    return vscode.Uri.joinPath(workspaceFolder.uri, ...workspaceResolvedPath.split('/'));
+    return resolveInRoot(resolution, reference, normalizedPath);
+}
+
+/**
+ * resolveWorkspaceFileUri, for a file that is about to be read or opened: also
+ * undefined when the path escapes the workspace through a symlink.
+ */
+export async function resolveContainedWorkspaceFileUri(cell: vscode.NotebookCell, requestPath: string): Promise<vscode.Uri | undefined> {
+    const uri = resolveWorkspaceFileUri(cell, requestPath);
+    const resolution = getResolutionRoot(cell);
+    if (!uri || !resolution) {
+        return undefined;
+    }
+    return await isRealPathInside(resolution.root, uri) ? uri : undefined;
 }
 
 export async function snapshotWorkspaceFiles(cell: vscode.NotebookCell, addons: Addon[], languageId: string, source: string): Promise<Record<string, WorkspaceFileSnapshotEntry>> {
@@ -63,11 +91,10 @@ export async function snapshotWorkspaceFiles(cell: vscode.NotebookCell, addons: 
         return {};
     }
 
-    const workspaceFolder = getWorkspaceFolderFor(cell);
+    const resolution = getResolutionRoot(cell);
     const snapshots: Record<string, WorkspaceFileSnapshotEntry> = {};
-    const notebookRelativeDir = workspaceFolder ? getNotebookRelativeDir(cell) : '';
 
-    if (!workspaceFolder) {
+    if (!resolution) {
         for (const requestedPath of requestedPaths) {
             snapshots[requestedPath.requestPath] = {
                 path: requestedPath.requestPath,
@@ -91,9 +118,13 @@ export async function snapshotWorkspaceFiles(cell: vscode.NotebookCell, addons: 
             continue;
         }
 
-        const workspaceResolvedPath = resolveWorkspaceRelativePath(requestedPath, normalizedPath, notebookRelativeDir);
-        const uri = vscode.Uri.joinPath(workspaceFolder.uri, ...workspaceResolvedPath.split('/'));
+        const uri = resolveInRoot(resolution, requestedPath, normalizedPath);
         try {
+            // A symlink that leads outside the workspace reads as missing:
+            // a check must never report on, or show, a file outside it.
+            if (!await isRealPathInside(resolution.root, uri)) {
+                throw new Error('outside the workspace');
+            }
             const stat = await vscode.workspace.fs.stat(uri);
             const type = fileTypeToString(stat.type);
             const snapshot: WorkspaceFileSnapshotEntry = {

@@ -1,6 +1,6 @@
 # Web Notebook Syntax
 
-A Web Notebook (`.webnb`) file is a Markdown document with executable tutorial cells. Prose between cells is ordinary Markdown; a fenced code block whose language is wrapped in braces — ` ```{html} ` — becomes a learner-editable cell, and fenced blocks starting with `+` attach addons (fixtures, styles, tests, references) to the cell above them.
+A Web Notebook (`.webnb`) file is a Markdown document with executable tutorial cells. Prose between cells is ordinary Markdown; a fenced code block whose language is wrapped in braces -- ` ```{html} ` -- becomes a learner-editable cell, and fenced blocks starting with `+` attach addons (fixtures, styles, tests, references) to the cell above them.
 
 This file is the complete, self-contained authoring reference for the `.webnb` format.
 
@@ -84,6 +84,25 @@ Common cell languages include:
 - `external` for automatically checked workspace files and directories.
 - `walkthrough` for annotated code walkthroughs of workspace files.
 
+### Fences and Attributes
+
+A cell or addon fence is three or more backticks, and it ends at the first line
+that is only a backtick fence at least as long (CommonMark's rule), so a line
+like ```` ```js ```` inside a cell is content, not an end. A cell whose content
+itself has a line starting with ```` ``` ```` is saved with a longer fence
+(```` ```` ````) so the file reads back the same.
+
+The words after the language are read one at a time: `id=name`, `height=300`,
+and the flags `autorun`, `runonstart` and `hidecode`. Anything else is kept as
+written, in its place, and so is the language spelling (`{jsx}` stays `{jsx}`),
+so saving a notebook never rewrites a fence header.
+
+A block the notebook cannot use -- an addon with no code cell directly above
+it, a `+id=` naming no cell above it, a fence that is never closed -- is shown
+as plain text, with a warning in the "Web Notebook" log, and saved back exactly
+as it was. An addon belongs to the code cell directly above it: only blank lines
+and that cell's other addons may come between them.
+
 ## Output Pane Height
 
 A cell's output pane is at least 120 pixels tall and grows with its content. Add
@@ -95,7 +114,8 @@ A cell's output pane is at least 120 pixels tall and grows with its content. Add
 ```
 ````
 
-A bare number is pixels, as with image sizes; any CSS length unit works too:
+A bare number is pixels, as with image sizes; these CSS units work too: `px`,
+`em`, `rem`, `%`, `vh`, `vw`, `ch`, `ex`, `pt`, `pc`, `cm`, `mm`, and `in`:
 
 ```
 {html height=300}     300 pixels
@@ -154,20 +174,34 @@ Recap: [how events work](events.webnb#listening-for-a-click).
 
 A section anchor is a heading turned into a slug: lowercased, spaces replaced by
 hyphens, punctuation dropped. `## Listening For A Click` is `#listening-for-a-click`,
-and `## The \`fetch\` API, really?` is `#the-fetch-api-really` -- the markup comes
+and ``## The `fetch` API, really?`` is `#the-fetch-api-really` -- the markup comes
 off, because the slug is built from the words a reader sees. If it is easier, write
 the heading out and let the notebook slugify it: `[...](<events.webnb#Listening For A Click>)`
 finds the same section. Anchors match the heading `id`s VS Code renders, so the
 same `#section` also works in the outline and in a copied heading link.
+
+Two details of those `id`s carry over. The text of a code span counts as written,
+so ``## The `<style>` Element`` is `#the-style-element`. And a heading repeated
+within one markdown cell gets a number: the second `## Summary` in a cell is
+`#summary-1`, the third `#summary-2`.
+
+For a section of the *same* notebook, write the slug itself (`[x](#listening-for-a-click)`),
+not the spelled-out heading: VS Code rewrites a link that starts with `#` before
+the notebook ever sees it, and a spelled-out heading does not survive that.
 
 ### Where the link can point
 
 | Written as | Resolves to |
 | --- | --- |
 | `[x](events.webnb)` | Next to the notebook the link is in |
-| `[x](../Module 2/events.webnb)` | Relative to the notebook the link is in |
-| `[x](/Course 1/Module 2/events.webnb)` | From the workspace root |
+| `[x](<../Module 2/events.webnb>)` | Relative to the notebook the link is in |
+| `[x](</Course 1/Module 2/events.webnb>)` | From the workspace root |
 | `[x](#a-section-here)` | A section of this same notebook |
+
+Prefer relative links: the workspace root is not the same folder everywhere a
+notebook is opened (one deployment opens the notebooks folder itself, another a
+repository that contains it), so a link starting with `/` may resolve in one and
+not the other. A link cannot leave the workspace folder.
 
 Filenames with spaces in them need angle brackets, because a Markdown link
 destination cannot contain a bare space:
@@ -180,7 +214,8 @@ destination cannot contain a bare space:
 Links work in prose between cells and in the Markdown shown inside outputs (MCQ
 questions, checklists, walkthrough notes). Links to anything that is not a
 notebook -- a web page, a source file in the workspace -- behave as they always
-have.
+have, and so do links inside a learner's own rendered page: an `<a href="#settings">`
+in an HTML cell's output belongs to that page.
 
 ### When a link cannot be followed
 
@@ -220,6 +255,27 @@ assert('#message').should('have.text', 'Hello').run('The message was not updated
 ```
 ````
 
+### The Page a Cell Sees
+
+Each cell's code runs as if its output were the whole page:
+
+- `document` is scoped to the cell. `document.querySelector` and `getElementById`
+  find the cell's own elements, `document.body` is its output pane, and
+  `document.createElement` works as usual. `window.document === document`.
+- Timers (`setTimeout`, `setInterval`, `requestAnimationFrame`) and listeners added
+  to `window` or `document` stop when the cell runs again, so re-running an
+  animation does not start a second copy of it.
+- An error thrown later -- from a timer, an event listener, or a rejected
+  promise nobody caught -- appears in the cell's console as `Uncaught ...` or
+  `Uncaught (in promise) ...`, the way a browser console shows it. These lines
+  are not console calls, so `console.history()` does not include them.
+- A loop that keeps running for more than 5 seconds is stopped with an error
+  that says so. (A deliberate short busy-wait, such as a 1.5 second demo of a
+  frozen page, runs to completion.)
+- `{javascript}` cells, and any cell that uses `import`/`export`, run in strict
+  mode, so assigning to a name that was never declared (`x = 5`) throws a
+  `ReferenceError` there.
+
 ## Node Cells
 
 Node cells run with Node-like globals (`process`, `module`, `exports`, `__dirname`, `__filename`) so learners can practice server-side JavaScript syntax and patterns.
@@ -231,7 +287,9 @@ module.exports = { answer: 42 };
 ```
 ````
 
-`require(...)` is not available in the web notebook runtime, so dependency loading should be simulated or expressed with plain JavaScript.
+`require(...)` resolves the same small set of modules `import` does (listed under Module Syntax below): `react`, `react-dom/client`, `marked`, and `path`. Any other module name throws an error saying it is not available in the notebook runtime, so other dependency loading should be simulated or expressed with plain JavaScript.
+
+A Node cell's own declarations may reuse the names of the notebook helpers (`const file = 'notes.txt'` is fine); inside that cell the name then means the learner's value.
 
 ## Module Syntax (`import` / `export`)
 
@@ -273,6 +331,8 @@ renderReact(<Badge text="JSX alias works" />);
 
 By default, a `#root` mount node is created automatically. If you add a custom `+html` fixture, you can mount anywhere by passing a selector, for example `renderReact(<App />, '#app')`.
 
+`renderReact` renders synchronously, so a `+test` can check the output right away, and `assert(...).click()` (or `.type()`) in a React cell applies the state update it causes before the next assertion: a test can click a button and check the new count on the next line, with no `setTimeout`. `ReactDOM.createRoot(el).render(...)` behaves the same way. A component that throws while rendering shows its error in the cell's console instead of leaving the output blank.
+
 ## Addon Blocks
 
 Addon blocks start with `+` and attach to the code cell immediately above them. Use addons to provide supporting code, styles, tests, or referenced content without making that content the main learner-editable cell.
@@ -281,7 +341,7 @@ Addon blocks start with `+` and attach to the code cell immediately above them. 
 
 Use `+solution` to attach a reference answer to a cell.
 
-`+solution` never runs and never affects test execution. Every cell with a `+solution` gives readers a **"View solution"** button beneath its output; the solution (syntax-highlighted) appears only when the reader chooses to click it. A deployment can remove those buttons entirely — for example during an assessment — with the host's reveal setting (in VS Code, **`webnb.allowRevealingSolutions`**, on by default); cells that are already rendered refresh on their own when it changes.
+`+solution` never runs and never affects test execution. Every cell with a `+solution` gives readers a **"View solution"** button beneath its output; the solution (syntax-highlighted) appears only when the reader chooses to click it. A deployment can remove those buttons entirely -- for example during an assessment -- with the host's reveal setting (in VS Code, **`webnb.allowRevealingSolutions`**, on by default); cells that are already rendered refresh on their own when it changes.
 
 ````
 ```{javascript}
@@ -301,18 +361,18 @@ function triple(n) {
 
 Use `+default` to preserve starter code separately from the learner-edited cell source.
 
-Cells without a `+default` take care of themselves: the first time someone edits such a cell, the text it had when the notebook was opened is captured as its `+default` automatically (and persists into the file on save). Leaving an empty `+default` block also works — it fills in the same way. Write an explicit non-empty `+default` only when the starter should differ from the text the cell ships with.
+Cells without a `+default` take care of themselves: the first time someone edits such a cell, the text it had when the notebook was opened -- even if that was nothing -- is captured as its `+default` automatically (and persists into the file on save). Running a cell never changes its addons, and an existing `+default` is never rewritten. An empty `+default` means the starter is empty: the cell shipped empty. Write an explicit `+default` only when the starter should differ from the text the cell ships with.
 
-Whenever a cell's code differs from its starter, learners get a **"Reset code"** button under the cell's output. Clicking it restores the starter source and re-runs the cell. The reset button does not depend on the show-solutions setting — restoring starter code never leaks an answer.
+Whenever a cell's code differs from its starter, learners get a **"Reset code"** button under the cell's output. Clicking it restores the starter source and re-runs the cell. The reset button does not depend on the show-solutions setting -- restoring starter code never leaks an answer.
 
-A whole notebook can be restored in one step with the **"Restore Notebook to Starter State"** command (in VS Code: the notebook toolbar or the command palette). It resets every cell that has a starter and clears saved multiple choice answers — useful after accidentally working through a notebook in a source checkout.
+A whole notebook can be restored in one step with the **"Restore Notebook to Starter State"** command (in VS Code: the notebook toolbar, or the editor title bar where the notebook toolbar is hidden, or the command palette). After asking, it resets every cell that has a starter, clears saved multiple choice answers and terminal history, and re-runs the cells that run on their own. One undo brings everything back -- useful after accidentally working through a notebook in a source checkout.
 
-`````
+````
 ```{html}
 <!-- learner edits this -->
 ```
 ```+default
-<!-- optional: author-defined starter code, or leave empty to auto-capture on first run -->
+<!-- optional: author-defined starter code (leave out to capture the shipped text on first edit) -->
 ```
 ````
 
@@ -410,6 +470,8 @@ Edit the CSS below so the heading is green:
 
 The `+id=layout` addon copies the HTML from the non-editable `id=layout` cell and attaches it as a fixture, so the CSS cell output renders the HTML with the learner's styles applied. IDs work the same on editable (`{lang id=...}`) and non-editable (`` ```lang id=...``) cells.
 
+The referenced cell must come earlier in the notebook than the `+id=` that names it; a reference to a later or missing cell is shown as plain text (see Fences and Attributes).
+
 ## Tests
 
 Tests are JavaScript snippets in a `+test` addon. They run when the cell runs, after the cell has been rendered or evaluated.
@@ -422,7 +484,7 @@ The most common helpers are:
 - `assertRule(selector)` finds a CSS rule by its selector text.
 - `wrap(value)` checks a JavaScript value directly.
 
-Each helper returns a chain. Finish the chain with `.run(failMessage, successMessage)` to report feedback:
+Each helper returns a chain. Finish the chain with `.run(failMessage, successMessage)` to report feedback. Every `.run()` adds its result to the ones already reported (results from `check.*().run()` and `file().run()` included), so a test shows every check it made, in order:
 
 ````
 ```{html}
@@ -439,22 +501,46 @@ assert('h1').should('exist').run('Failed; could not find h1 element', 'Created h
 Supported element assertions:
 
 - `.should('exist')`
-- `.should('have.text', 'Hello')`
+- `.should('have.text', 'Hello')` -- compared the way a reader sees the text:
+  runs of whitespace count as one space and the ends are trimmed, so the line
+  breaks Format Document puts inside `<li>` do not matter. Capitalization and
+  punctuation still do.
+- `.should('contain.text', 'Hel')` -- the text includes the expected part.
 - `.should('have.class', 'active')`
-- `.should('have.attribute', 'disabled')`
+- `.should('have.attr', 'href')` / `.should('have.attribute', 'disabled')` --
+  pass a third argument to check the value too: `.should('have.attr', 'x', '20')`.
 - `.should('have.css', 'color: blue')`
-- `.should('have.property', 'value', 'Ada')` — the DOM *property*, not the
+- `.should('have.length', 3)` -- how many elements matched.
+- `.should('contain', 'li')` -- each matched element has a descendant matching
+  that *selector* (not text; use `contain.text` for text).
+- `.should('have.value', 'Ada')` -- a form field's current value.
+- `.should('be.visible')`, `.should('be.checked')`, `.should('be.disabled')`
+- `.should('have.property', 'value', 'Ada')` -- the DOM *property*, not the
   attribute. Use this when the two diverge: typing into an `<input>` changes
   `.value` but leaves the `value` attribute at whatever the HTML said. The
   expected value is optional; without it the assertion only checks the property
   exists.
 
+Every assertion also has a negated form with a `not.` prefix: `.should('not.exist')`,
+`.should('not.have.class', 'active')`. They work on SVG elements as well as HTML
+ones.
+
+An assertion name the notebook does not know fails the test with a message listing
+the ones it does, rather than passing by accident. A chain that selects elements
+and asserts nothing, such as `assert('#go').click().run(...)`, fails when the
+selector matched nothing.
+
 Supported actions:
 
 - `.click()`
-- `.type('hello')` for `<input>` and `<textarea>` elements
+- `.type('hello')` for `<input>` and `<textarea>` elements (React controlled
+  inputs see the change too)
 - `.clear()` for `<input>` and `<textarea>` elements
 - `.find(selector)` or `.get(selector)` to search within the current matched elements
+- `.contains('text')` to narrow to the innermost matched elements whose text includes it
+
+An action on a selector that matched nothing fails the test instead of quietly
+doing nothing.
 
 For example:
 
@@ -493,6 +579,11 @@ assertRule('h1').should('have.css', 'color: red').run('Missing the h1 color rule
 ```
 ````
 
+`assertRule(selector)` reads only the cell's own CSS: the cell, its `+css` addons,
+and any `<style>` in its markup, never another cell's rules. When several rules
+use exactly that selector, their declarations are combined in order and later
+ones win, as they do on a page.
+
 ### JavaScript Value Tests
 
 For JavaScript cells, tests run after the learner's code and can inspect variables from that code:
@@ -510,21 +601,32 @@ wrap(user).should('equal', { name: 'Ada' }).run('user should match', 'user match
 
 `equal` compares deeply, so objects, arrays, `Date`s, `Map`s and `Set`s are
 compared by what they hold rather than by identity. Values of different kinds
-are never equal — `[1, 2]` does not match `{ 0: 1, 1: 2 }` — and `NaN` equals
+are never equal -- `[1, 2]` does not match `{ 0: 1, 1: 2 }` -- and `NaN` equals
 `NaN`, so a test can assert a computation produced it.
 
-Two more assertions work on wrapped values:
+`eq` and `deep.equal` are accepted as other names for `equal`.
 
-- `.should('be.an', 'array')` / `.should('be.a', 'string')` — checks the type.
-  Accepts `array`, `object`, `string`, `number`, `boolean`, `null`, `function`,
-  `date`, `regexp`, `map`, `set`, `error`, `promise`, `symbol`, `bigint`, and
-  `element` for a DOM node. `object` means a plain object or class instance:
-  unlike `typeof`, an array and a `null` are not objects here. (`wrap()` cannot
-  carry an `undefined` value, so there is no `be.an('undefined')` — check with
-  `wrap(typeof x).should('equal', 'undefined')` instead.)
-- `.should('have.property', 'name')` — checks the property exists. Pass a third
+More assertions work on wrapped values:
+
+- `.should('be.an', 'array')` / `.should('be.a', 'string')` -- checks the type.
+  Accepts `array`, `object`, `string`, `number`, `boolean`, `null`, `function`
+  (async and generator functions count), `date`, `regexp`, `map`, `set`,
+  `error`, `promise`, `symbol`, `bigint`, and `element` for a DOM node. `object`
+  means a plain object or class instance: unlike `typeof`, an array and a
+  `null` are not objects here.
+- `.should('be.true')`, `.should('be.false')`, `.should('be.null')`,
+  `.should('be.undefined')` -- exactly that value.
+- `.should('include', part)` -- a string contains `part`, or an array contains
+  an element deeply equal to it.
+- `.should('have.property', 'name')` -- checks the property exists. Pass a third
   argument to check its value too, compared with the same deep equality as
   `equal`.
+- `.should('have.length', 2)` and `.should('exist')` also work on wrapped values.
+
+`wrap()` of a DOM element (or a list of them) takes the element assertions
+above: `wrap(document.querySelector('p')).should('have.text', 'Hi')`. An element
+assertion on a plain value, or a value assertion such as `equal` on
+`assert(...)`, fails with a message saying so.
 
 ````
 ```{javascript}
@@ -555,6 +657,9 @@ assert('#hello-button').click().run('Click the button', 'Clicked the button');
 check.consoleLogged('Hello!').run('The button should log `Hello!`', 'The button logged `Hello!`');
 ```
 ````
+
+An uncaught error shown in the console (see The Page a Cell Sees) is not part of
+its history.
 
 For custom assertions, use the `console` helper directly:
 
@@ -590,6 +695,14 @@ In JavaScript cells, `console.log(source)` prints the cell source while you are 
 
 Addon order matters for HTML and CSS cells. Put `+css` or `+html` addons before a `+test` addon when the test depends on those styles or fixtures.
 
+In JavaScript, Node, and React cells, a `+id=name` reference to another JavaScript
+cell runs *before* the cell's own code, the way an earlier `<script>` tag would;
+`+test` and `+js` addons run after it.
+
+When test code throws after an earlier check has already failed (typically
+because an element the test needs is missing), the cell reports "The remaining
+checks could not run until the ones above pass" instead of the raw error.
+
 ## Automatic Running
 
 Web Notebook supports automatic execution for selected code cells when a notebook opens.
@@ -611,7 +724,7 @@ console.log('This runs when the notebook opens.');
 Notes:
 
 - `autorun` applies to code cells (`{javascript}`, `{html}`, `{css}`, `{node}`, `{react}`, `{jsx}`, etc.).
-- Autorun cells execute automatically when the notebook becomes active.
+- Autorun cells execute when the notebook is first shown, and again whenever that cell's own text changes: editing one autorun cell re-runs only that cell. Showing the notebook again does not re-run them.
 - Autorun is intended for setup, starter rendering, or instructions that should appear immediately.
 - Re-run manually after edits if you want to refresh output right away.
 
@@ -633,7 +746,7 @@ console.log('This runs once on first open.');
 Notes:
 
 - `runonstart` runs the cell once per notebook session. Switching tabs or re-activating the notebook does not re-run it.
-- `autorun` re-runs whenever the cell content changes or the notebook becomes active again. `runonstart` does not.
+- `autorun` re-runs whenever the cell's content changes. `runonstart` does not.
 - Closing and reopening the notebook resets the flag, so the cell runs again on the next open.
 - You can combine flags: `{html id=intro runonstart}` gives the cell an ID and runs it once on open.
 
@@ -662,13 +775,14 @@ Notes:
   execute something they cannot see, so `hidecode` implies auto-running, the
   same way `{mcq}` and `{external}` cells do.
 - Add `runonstart` alongside it if the cell must run exactly once per session
-  rather than whenever the notebook becomes active again.
+  rather than again after each edit.
 - Build the widget in a `{javascript}` cell with a `+html` addon for its markup,
   as above. An `{html}` cell is set with `innerHTML`, so a `<script>` tag inside
   one never runs -- put the script in the cell, not in the markup.
 - The output is unaffected: only the input is collapsed.
-- **It is not a secret.** A reader can still expand the cell, because collapsing
-  is as far as the notebook API goes. Use `hidecode` for code that is noise --
+- **It is not a secret.** A reader can still expand the cell (it then stays
+  expanded for the session), because collapsing is as far as the notebook API
+  goes. Use `hidecode` for code that is noise --
   the plumbing behind a widget -- and `+solution` (with
   `webnb.allowRevealingSolutions`) for anything a reader is not meant to see
   yet.
@@ -750,10 +864,13 @@ let y = 2;
 ```
 ````
 
-Tildes are what make this work: the cell itself ends at the first line starting
-with ```` ``` ````, so a backtick fence inside a question would cut the cell in
-half. A `~~~` fence is invisible to that rule, and it takes a language, so the
-sample is syntax-highlighted like any other code block.
+Tildes are what make this work: the cell's own ```` ``` ```` fence ends at the
+first line with a backtick fence at least as long, so a backtick fence inside a
+question would cut the cell in half. A `~~~` fence is invisible to that rule, and
+it takes a language, so the sample is syntax-highlighted like any other code block.
+
+Lines inside the sample are code, never question syntax: a `correct: false,` or a
+`[x]` inside the fence is shown as written, not read as feedback or an option.
 
 Indenting a sample by four spaces also produces a code block, but Markdown's
 indented code carries no language, so it renders unhighlighted. Prefer `~~~`.
@@ -854,7 +971,7 @@ Which of these are fruits?
 
 Use external checks when the learner needs to create files or folders in the workspace. External check cells are little widgets: they run automatically when the notebook opens, collapse their source like multiple choice cells, show each item as pass/fix feedback, and keep checking periodically until every item passes.
 
-Paths are relative to the notebook file's directory by default. To resolve from the workspace root instead, prefix the path with `workspace:`.
+Paths are relative to the notebook file's directory by default. To resolve from the workspace root instead, prefix the path with `workspace:`. A path may not contain `..` segments or be absolute, and cannot reach outside the workspace folder (a symbolic link that leads out of it reads as missing).
 
 Examples:
 
@@ -874,7 +991,7 @@ interval: 2s
 ```
 ````
 
-The widget re-runs every `interval` until all items pass. Use `interval: off` for an external check that only runs when the cell is executed.
+The widget re-runs every `interval` until all items pass. Use `interval: off` for an external check that only runs when the cell is executed. A cell with a `+terminal` addon ignores `interval`: it re-checks each time a command runs instead.
 
 ### External Check Syntax
 
@@ -889,7 +1006,9 @@ External check cells support these lines:
 - `path: path | optional label`
 - `contains: path | text | optional label`
 - `not contains: path | text | optional label`
-- `matches: path | regex | optional label`
+- `matches: path | regex | optional label` -- written as `/pattern/flags` or a
+  bare pattern. The `s` flag is always added, so `.` also matches a line break
+  and a pattern can span lines.
 - `equals: path | exact text | optional label`
 - `has entry: directory | child name | optional label`
 - `command: command text | optional label`
@@ -968,6 +1087,11 @@ prompt: $
 - `run: ...` execute a simulated startup command
 - `- ...` list form for additional startup commands
 
+The commands a learner runs are saved in the cell (as a `+history` addon the
+notebook writes itself), so a terminal checklist keeps its progress when the
+notebook is closed or the lab reloads. Restoring the notebook to its starter
+state clears it. Startup commands are not saved on their own.
+
 Inside `+test` addons, the `terminal` helper is available:
 
 - `terminal.run(command)` runs a simulated command and records it
@@ -994,7 +1118,7 @@ check.file('xyz/index.html')
 
 ## Code Walkthroughs
 
-Use `{walkthrough}` cells to offer commentary on snippets of a larger codebase. A walkthrough is a sequence of steps; each step points at a workspace file, selects which lines to show, and attaches markdown commentary — including annotations pinned to specific lines. Walkthrough cells are widgets like `{mcq}` and `{external}` cells: they render automatically when the notebook opens and collapse their source.
+Use `{walkthrough}` cells to offer commentary on snippets of a larger codebase. A walkthrough is a sequence of steps; each step points at a workspace file, selects which lines to show, and attaches markdown commentary -- including annotations pinned to specific lines. Walkthrough cells are widgets like `{mcq}` and `{external}` cells: they render automatically when the notebook opens and collapse their source.
 
 ````
 ```{walkthrough}
@@ -1025,7 +1149,7 @@ Each line of a walkthrough cell is one of three things:
 
 Steps are shown in the order they appear, numbered automatically when there is more than one. A walkthrough cell can mix files freely: each step names its own `file:`, so one walkthrough can read across a whole directory.
 
-Because the cell is itself a fenced code block, commentary cannot contain a ` ``` ` fence — that would end the cell. Indent code by four spaces instead to get a code block inside commentary.
+Because the cell is itself a fenced code block, a ` ``` ` fence in its commentary would end the cell. Indent code by four spaces instead to get a code block inside commentary, or use `~~~` fences (or open the walkthrough cell itself with a longer fence, ```` ```` ````, which a three-backtick line cannot close).
 
 The code comes from a snapshot of the files taken when the cell runs, which happens automatically when the notebook opens. Re-run the cell to pick up later edits, or add `watch:` so it re-reads them on an interval.
 
@@ -1040,7 +1164,7 @@ app.use(express.json());
 // #endregion
 ```
 
-The marker comments themselves are not shown, the displayed line numbers match the real file, and the snippet keeps tracking the region as the file grows or shifts — which makes regions more robust than line numbers. Regions can nest; the marker names are matched case-insensitively. These are the same `#region` markers VS Code uses for code folding.
+The marker comments themselves are not shown, the displayed line numbers match the real file, and the snippet keeps tracking the region as the file grows or shifts -- which makes regions more robust than line numbers. Regions can nest; the marker names are matched case-insensitively. These are the same `#region` markers VS Code uses for code folding.
 
 ### Picking Lines By Number
 
@@ -1050,12 +1174,12 @@ The marker comments themselves are not shown, the displayed line numbers match t
 lines: 3-18, 20-23
 ```
 
-Disjoint ranges render with a `⋯` separator between them. A step with neither `region:` nor `lines:` shows the whole file. If a step has both, the region wins.
+Disjoint ranges render with a separator (a midline ellipsis) between them. A step with neither `region:` nor `lines:` shows the whole file. If a step has both, the region wins.
 
 ### Step Keys
 
 - `step: title` starts a new step (a bare `file:` line also starts one).
-- `file: path` is the file to show. Paths resolve relative to the notebook file; use a `workspace:` prefix (for example `workspace:src/app.js`) to resolve from the workspace root, matching external checks.
+- `file: path` is the file to show. Paths resolve relative to the notebook file; use a `workspace:` prefix (for example `workspace:src/app.js`) to resolve from the workspace root, matching external checks. As there, `..` segments and absolute paths are not allowed; the step says so rather than reporting the file missing.
 - `region: name` / `lines: ranges` select what to show.
 - `highlight: ranges` emphasizes lines without attaching a note.
 - `language: name` (or `lang:`) overrides the language used for syntax highlighting (`language: none` shows the snippet as plain text).
@@ -1091,6 +1215,6 @@ Web languages (JavaScript, TypeScript, JSX, HTML, CSS, SCSS, JSON, Markdown) are
 
 Hovering a line of a snippet tints it, the way VS Code highlights the row under the pointer, which makes it easy to keep your place while reading and to see which line a note belongs to. This is separate from `highlight:` and annotation emphasis, which stay visible on their own.
 
-If the file is already open in another editor tab, the walkthrough mirrors your reading position there. Hovering anywhere in a step marks every line that step shows; pointing at one line of the snippet marks that line more strongly within the region. The editor scrolls to whatever you point at when it sits outside the viewport. Only editors that already show the file react — hovering never opens one — and the marks clear when the pointer leaves the step.
+If the file is already open in another editor tab, the walkthrough mirrors your reading position there. Hovering anywhere in a step marks every line that step shows; pointing at one line of the snippet marks that line more strongly within the region. The editor scrolls to whatever you point at when it sits outside the viewport. Only editors that already show the file react -- hovering never opens one -- and the marks clear when the pointer leaves the step.
 
-Every rendered snippet also links back to the source. The file name above the code opens the real file beside the notebook, scrolled to the first shown line, and each line number in the gutter opens the file at that exact line — hovering a line brightens its number to point that out.
+Every rendered snippet also links back to the source. The file name above the code opens the real file beside the notebook, scrolled to the first shown line, and each line number in the gutter opens the file at that exact line -- hovering a line brightens its number to point that out.

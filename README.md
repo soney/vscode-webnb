@@ -72,7 +72,7 @@ you can add, remove, and reorder cells.
 | `webnb.lockCellStructure` | `true` | Stops cells being added, removed, or reordered. Contents stay editable, so learners can still edit code and answer questions. Turn off to author. |
 | `webnb.allowRevealingSolutions` | `true` | Shows the "View solution" and "Show Answer" buttons. Turn off during an assessment. |
 | `webnb.lockMarkdown` | `false` | Makes prose cells read-only so instructions stay intact; code cells stay editable and runnable. |
-| `webnb.readOnly` | `false` | Makes `.webnb` files fully read-only, for notebooks meant purely for reading. Nothing is written back — not outputs, not saved answers. |
+| `webnb.readOnly` | `false` | Makes `.webnb` files fully read-only, for notebooks meant purely for reading: nothing is written back, not saved answers or terminal history. It works by adding `**/*.webnb` to `files.readonlyInclude` in the same settings scope, and removes only that again when turned off. |
 
 ## Authoring reference
 
@@ -105,8 +105,19 @@ Coursera Docker harness and start code-server with:
 npm run coursera:start
 ```
 
-That command looks for `~/teaching/Practical-JavaScript` by default. If the
-course repo lives somewhere else, pass it once:
+When this checkout is the course repo's `vscode-extensions/vscode-webnb`
+submodule, the command finds the course repo on its own. Otherwise it looks for
+`~/teaching/Practical-JavaScript`, then for a `Practical-JavaScript` checkout
+next to this one (or one level up). A folder counts as the course repo when it
+holds `coursera/docker-dev/dev.sh` (or `tools/coursera-docker-dev/dev.sh`, its
+location before the course's 2026-08 restructure). To see which repo would be
+used, without running anything:
+
+```bash
+node scripts/coursera-docker-dev.js where
+```
+
+If the course repo lives somewhere else, pass it once:
 
 ```bash
 npm run coursera:start -- --repo /path/to/Practical-JavaScript
@@ -130,8 +141,11 @@ To stop the Coursera Docker dev container:
 npm run coursera:stop
 ```
 
-Both commands use this extension checkout as the source, so they do not depend
-on your shell being inside the course repo.
+`coursera:start` skips the harness's content rebuild by default; pass
+`-- --prepare` to rebuild the notebooks, assignments, and vendored extensions
+first. Import, start, and that rebuild all use this extension checkout as the
+web-notebook source, so they do not depend on your shell being inside the
+course repo.
 
 ## Development Loop
 
@@ -191,21 +205,35 @@ The address in your browser must literally be `localhost` — not `127.0.0.1`, n
 - Browsers grant plain-HTTP [secure-context](https://developer.mozilla.org/en-US/docs/Web/Security/Secure_Contexts) APIs (like `crypto.subtle`, which VS Code Web requires) only to `localhost`.
 - `@vscode/test-web` serves the web-worker extension host from a generated subdomain of whatever host the browser used (`v--<uuid>.localhost` resolves to loopback in every browser; subdomains of IP addresses are invalid URLs and subdomains of ordinary hostnames do not resolve).
 
-On a non-localhost origin the workbench shell still loads, but the extension host cannot start, so the Explorer shows no files (`ENOPRO: no file system provider for vscode-test-web://mount`) and no extensions run. The launcher prints a warning about this when it binds a non-localhost host.
+On a non-localhost origin the workbench shell still loads, but the extension host cannot start, so the Explorer shows no files (`ENOPRO: no file system provider for vscode-test-web://mount`) and no extensions run. In server-only mode the launcher prints this requirement next to the URL to open.
 
 `--host 0.0.0.0` is still useful whenever the port is reached through a mapping that ends in a localhost URL: a Docker/devcontainer port map (`-p 3000:3000`), `kubectl port-forward`, or an SSH tunnel all qualify.
 
-`--remote` is shorthand for `--browser none` and works with any of the launcher's modes. Anyone who can reach the port gets a full VS Code Web session with the mounted workspace (edits stay in browser memory and are not written back to disk) — another reason to keep it behind a tunnel on shared networks.
+`--remote` is shorthand for `--browser none` and works with any of the launcher's modes. The server has no authentication: anyone who can reach the port can read this whole extension checkout (dotfiles included) and the mounted workspace as static files, and gets a full VS Code Web session on the workspace (edits stay in browser memory and are not written back to disk). The launcher prints a warning whenever it binds anything but localhost; on shared networks, keep the default bind and use a tunnel.
 
 ## Verifying course notebooks (yours or another repo's)
 
 `scripts/verify-notebooks.js` renders and runs every cell of every `.webnb`
 in a workspace through the extension's real `render()` (via the preview
 harness) and reports whether the content is structurally healthy: every
-notebook parses and loads, every cell renders, and nothing throws an uncaught
-page error. Exercise checks that intentionally start unsatisfied (checklists,
-tests a learner must make pass) are listed as warnings, not failures —
-`--strict-feedback` promotes them.
+notebook parses and loads, every code cell renders (a render that throws, or
+a cell left with no output, fails), and nothing throws an uncaught page error.
+Exercise checks that intentionally start unsatisfied (checklists, tests a
+learner must make pass) are listed as warnings, not failures, and so are
+errors a cell's code throws later (a timer, a listener, a rejected promise),
+which the renderer prints in that cell's console as "Uncaught ...".
+`--strict-feedback` promotes them all.
+
+`--solutions` checks the answers instead: every HTML, CSS, JavaScript, Node,
+and React cell that has a `+solution` is rendered with that solution in place
+of its source (the preview's `?solutions` mode; nothing is copied or written),
+and any error feedback or uncaught error from such a cell fails the run.
+Cells without a `+solution` keep the normal rules, because some lessons show
+an error on purpose.
+
+```sh
+npm run verify:notebooks -- /path/to/course --solutions
+```
 
 From a course-content repo, with this repo checked out and `npm install`-ed
 next to it:
@@ -238,6 +266,14 @@ node ../vscode-webnb/scripts/verify-notebooks.js --baseline .webnb-baseline.json
 node ../vscode-webnb/scripts/verify-notebooks.js --baseline .webnb-baseline.json
 ```
 
+The capture has one entry per code cell, in document order: what its output,
+feedback, console, and action strip ("View solution", "Reset code") show,
+whether it ran on open, whether its render threw, and how its multiple choice
+question grades with the revealed answer (see the header of
+`tests/lib/capture.js`). A baseline saved by an older version of the capture
+is reported as out of date rather than diffed cell by cell; refresh it with
+`--update-baseline`. A `--solutions` run needs a baseline of its own.
+
 ### CI for a course repo
 
 ```yaml
@@ -264,4 +300,13 @@ course root explicitly rather than relying on the default working directory.)
 
 `npm run gen-vsix` builds and packages `web-notebook.vsix`. Bump `version` in
 `package.json` and add a `CHANGELOG.md` entry before publishing with
-`npx vsce publish`.
+`npx vsce publish --no-dependencies`, the same flag `gen-vsix` uses. Webpack
+already bundles every runtime dependency into `out/`, so vsce's npm dependency
+scan has nothing to add, and on this tree it breaks packaging outright (vsce
+reports the `out/extension` entry points as missing).
+
+`npm run check:vsix` packages the extension into a temporary folder and fails
+if anything ships outside the expected files (`out/client`, `out/extension`,
+`out/markdownItPlugin`, `icons/`, and the top-level docs and manifests), if an
+entry point `package.json` names is missing, or if the VSIX grows past 2 MiB.
+CI runs it on every push.

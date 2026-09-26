@@ -12,7 +12,6 @@
  * root is a prerequisite -- checked below.
  */
 import { build, context } from 'esbuild';
-import { createRequire } from 'node:module';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -28,9 +27,6 @@ if (!existsSync(path.join(webnbDir, 'node_modules', 'react'))) {
     console.error('Run `npm install` in the repo root first.');
     process.exit(1);
 }
-
-// webpack gives the renderer a `util` fallback; esbuild needs it spelled out.
-const webnbRequire = createRequire(path.join(webnbDir, 'package.json'));
 
 /** Reports failures the way the VS Code problem matcher expects. */
 const logResults = {
@@ -87,8 +83,7 @@ const webviewBuild = {
     // Stylesheets are injected as text, exactly as webpack's asset/source does
     // for the extension's own renderer build.
     loader: { '.css': 'text' },
-    define: { 'process.env.NODE_ENV': production ? '"production"' : '"development"' },
-    alias: { util: path.dirname(webnbRequire.resolve('util/package.json')) }
+    define: { 'process.env.NODE_ENV': production ? '"production"' : '"development"' }
 };
 
 if (watch) {

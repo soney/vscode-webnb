@@ -11,8 +11,14 @@ import { marked } from 'marked';
 
 export { renderMarkdownBlock } from '@webnb/client/markdown';
 
-/** The attribute a clickable element carries its source line in. */
-export const SOURCE_LINE_ATTRIBUTE = 'data-webnb-line';
+/**
+ * The attribute a clickable element carries its source line in, counted from
+ * the cell's first line. Relative on purpose: a cell whose text is unchanged
+ * keeps its DOM when lines are added above it, and an absolute line baked in
+ * at render time would then point at the wrong place. The click adds the
+ * cell's current start line.
+ */
+export const SOURCE_LINE_OFFSET_ATTRIBUTE = 'data-webnb-line-offset';
 
 /**
  * The source line each rendered block starts on, relative to the cell, so a
@@ -48,14 +54,14 @@ export function blockSourceLines(source: string): number[] {
 }
 
 /** Apply those offsets to the rendered blocks, in order. */
-export function annotateBlockLines(container: HTMLElement, source: string, startLine: number): void {
+export function annotateBlockLines(container: HTMLElement, source: string): void {
     const offsets = blockSourceLines(source);
     const elements = Array.from(container.children).filter(
         (node): node is HTMLElement => node instanceof HTMLElement
     );
     elements.forEach((element, index) => {
         if (index < offsets.length) {
-            element.setAttribute(SOURCE_LINE_ATTRIBUTE, String(startLine + offsets[index]));
+            element.setAttribute(SOURCE_LINE_OFFSET_ATTRIBUTE, String(offsets[index]));
         }
     });
 }
@@ -84,7 +90,10 @@ function resolveAssetUrl(resolver: AssetResolver, relativePath: string): string 
 
 /**
  * Point relative media at the workspace through the webview asset base, and tag
- * relative links so a click can open the real file instead of navigating the
+ * relative links -- another notebook (`other.webnb#section`, `../x.webnb`,
+ * `%20`-encoded names), a section of this one (`#section`), a workspace file --
+ * so a click is handed to the extension host, which resolves it the way the
+ * notebook does (src/shared/notebookLinks.ts), instead of navigating the
  * preview away from itself.
  */
 export function resolveRelativeAssets(container: HTMLElement, resolver: AssetResolver): void {
@@ -107,11 +116,11 @@ export function resolveRelativeAssets(container: HTMLElement, resolver: AssetRes
             element.rel = 'noopener noreferrer';
             return;
         }
-        if (isExternalUrl(href)) {
+        // Other schemes (mailto:, command:, ...) keep the webview's behavior.
+        if (/^[a-z][a-z0-9+.-]*:/i.test(href) || href.startsWith('//')) {
             return;
         }
-        // A workspace-relative link: let the host open it in an editor.
-        element.dataset.webnbWorkspaceLink = href;
+        element.dataset.webnbLink = href;
         element.removeAttribute('href');
         element.classList.add('webnb-workspace-link');
         element.tabIndex = 0;

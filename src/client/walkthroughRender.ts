@@ -262,7 +262,11 @@ function renderWalkthroughStep(
         return stepEl;
     }
     if (!snapshot.exists) {
-        stepEl.appendChild(createWalkthroughMessage(`\`${step.file}\` was not found. Paths are relative to the notebook file; use a \`workspace:\` prefix to resolve from the workspace root.`, 'error'));
+        // A path the kernel refused (a `..` segment, an absolute path) comes
+        // back with its reason; only a missing file gets the not-found hint.
+        stepEl.appendChild(createWalkthroughMessage(snapshot.error
+            ? `\`${step.file}\`: ${snapshot.error}`
+            : `\`${step.file}\` was not found. Paths are relative to the notebook file; use a \`workspace:\` prefix to resolve from the workspace root.`, 'error'));
         return stepEl;
     }
     if (snapshot.type === 'directory') {

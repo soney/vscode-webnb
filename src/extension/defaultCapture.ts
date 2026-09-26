@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import type { Addon } from '../shared/protocol';
-import { getAddonContent, isAutoWidgetLanguage, upsertAddon } from '../shared/addons';
+import { hasAddon, isAutoWidgetLanguage, upsertAddon } from '../shared/addons';
 import { errorExecution, logExecution } from './log';
 
 const NOTEBOOK_TYPE = 'web-notebook';
@@ -12,38 +12,28 @@ interface ShadowEntry {
     text: string;
 }
 
-let current: DefaultCapture | undefined;
-
 export function activate(context: vscode.ExtensionContext) {
-    current = new DefaultCapture();
-    context.subscriptions.push(current);
+    context.subscriptions.push(new DefaultCapture());
 }
 
-export function deactivate() {
-    current = undefined;
-}
-
-/**
- * The text `cell` had before its first edit, when it is still awaiting one.
- *
- * The kernel asks this before recording a starter, so an empty `+default` is
- * filled with the same pre-edit text this module would capture rather than
- * with the cell's live (possibly already edited) source. One notion of
- * "starter", whichever writer gets there first.
- */
-export function getCapturedStarter(cell: vscode.NotebookCell): string | undefined {
-    return current?.starterFor(cell.document.uri.toString());
-}
+export function deactivate() { }
 
 /**
  * Remembers a code cell's pre-edit text as its `+default` starter.
  *
  * Authors can ship an explicit `+default` addon, but most cells have none.
- * This watches the code cells that lack one (or carry an empty one) and, the
- * first time somebody edits such a cell, writes the text the cell had when the
- * notebook opened into its `default` addon. From then on the cell behaves as
- * if the author had shipped that starter: the renderer offers "Reset code",
- * and saving the notebook persists the captured block into the file.
+ * This watches the code cells that have no `+default` at all and, the first
+ * time somebody edits one, writes the text the cell had when the notebook
+ * opened into its `default` addon -- even when that text is empty. From then
+ * on the cell behaves as if the author had shipped that starter: "Reset code"
+ * and "Restore Notebook" bring it back, and saving the notebook persists the
+ * captured block into the file.
+ *
+ * This is the only place a starter is ever recorded. A `+default` that is
+ * already there -- written by the author, or captured in an earlier session,
+ * empty or not -- is the starter and is never rewritten; an empty one means
+ * the starter is empty. (Filling an empty one from the cell's source when it
+ * ran, as the kernel used to, enshrined the learner's first attempt.)
  *
  * Widget cells (mcq / checklist / walkthrough) are skipped — their source is
  * not learner-editable prose, and markup cells are not code at all.
@@ -69,9 +59,6 @@ export class DefaultCapture implements vscode.Disposable {
     public dispose(): void {
         this._disposables.forEach(disposable => disposable.dispose());
         this._disposables.length = 0;
-        if (current === this) {
-            current = undefined;
-        }
     }
 
     /** The pre-edit text shadowed for a cell, if it is still awaiting its first edit. */
@@ -109,8 +96,8 @@ export class DefaultCapture implements vscode.Disposable {
 
         const currentMetadata = (cell.metadata ?? {}) as Record<string, unknown>;
         const currentAddons: Addon[] = Array.isArray(currentMetadata.addons) ? currentMetadata.addons as Addon[] : [];
-        // Someone else (a first run's empty-default capture) may have beaten us.
-        if ((getAddonContent(currentAddons, 'default') ?? '').trim().length > 0) {
+        // A starter arrived some other way (a reload, an undo) since tracking began.
+        if (hasAddon(currentAddons, 'default')) {
             this._shadow.delete(cellKey);
             return;
         }
@@ -172,8 +159,7 @@ export class DefaultCapture implements vscode.Disposable {
         // Cells that already have a starter need no capture — skipping them here
         // keeps the keystroke path a cheap map miss for most of the notebook.
         const addons = cell.metadata?.addons;
-        const existingDefault = Array.isArray(addons) ? getAddonContent(addons as Addon[], 'default') : undefined;
-        if ((existingDefault ?? '').trim().length > 0) {
+        if (Array.isArray(addons) && hasAddon(addons as Addon[], 'default')) {
             return;
         }
 
